@@ -42,7 +42,7 @@ const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/Em
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
-const CPManualToday = lazy(() => import('./products/classpilot/pages/ManualToday'));
+const CPTodaySchedule = lazy(() => import('./products/classpilot/pages/TodaySchedule'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
 const CPTeacherGuide = lazy(() => import('./products/classpilot/pages/TeacherGuide'));
@@ -303,7 +303,8 @@ function AppRoutes() {
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route element={<TeachingToolsLayout />}>
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
-            <Route path="/classpilot/my-settings/manual-today" element={<CPManualToday />} />
+            <Route path="/classpilot/my-settings/manual-today" element={<Navigate to="/classpilot/my-settings/today" replace />} />
+            <Route path="/classpilot/my-settings/today" element={<CPTodaySchedule />} />
             <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
             </Route>

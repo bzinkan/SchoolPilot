@@ -23,7 +23,7 @@ import { MANUAL_TODAY_QUERY } from '../hooks/useManualToday';
 const API = '/classpilot/admin/settings';
 const fieldLabels = {
   classroom: { maxTabsPerStudent: 'Maximum tabs per student', allowedDomains: 'Educational domains' },
-  scheduling: { allowTeacherManualToday: 'Teacher manual starts for today' },
+  scheduling: { allowTeacherManualToday: 'Allow teacher period swaps' },
   blockedWebsites: { blockedDomains: 'Blocked websites' },
   signIn: { sharedChromebookSignInEnabled: 'Shared Chromebook sign-in' },
   email: { centralEmailRecipientUserId: 'Copy recipient' },
@@ -228,9 +228,9 @@ function SettingsWorkspace({ currentUser, school, refetchUser }) {
     <section hidden={section !== 'school'} aria-label="School details" className="space-y-5">
       <SettingsCard title="School profile" description="The saved school identity is shared across SchoolPilot."><dl className="grid gap-5 sm:grid-cols-2"><div><dt className="text-sm text-muted-foreground">School name</dt><dd className="mt-1 font-medium">{settings.schoolName || 'Not configured'}</dd></div><div><dt className="text-sm text-muted-foreground">School timezone</dt><dd className="mt-1 font-medium">{settings.schoolTimezone}</dd></div></dl><p className="text-sm text-muted-foreground">Name and timezone are managed in the school profile. Contact your SchoolPilot administrator to request a change. The timezone also controls class schedules and school-local dates.</p>{currentUser.isSuperAdmin && <Link className="inline-block text-sm underline" to={`/super-admin/schools/${schoolId}`}>Open school profile</Link>}</SettingsCard>
       <SettingsCard title="School calendar" description="Set the actual start and end of the school year, closures, and class schedules."><Link className="text-sm underline" to="/classpilot/admin/scheduling?section=school-year">Open School year</Link></SettingsCard>
-      {settings.sections.scheduling ? <SectionEditor {...common} section="scheduling" title="Teacher schedule adjustments" description="Let teachers choose when to start their assigned classes for one school day." saveLabel="Save teacher adjustments">{editor => <>
-        <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={editor.draft.allowTeacherManualToday === true} onChange={event => editor.update('allowTeacherManualToday', event.target.checked)} data-testid="checkbox-allow-teacher-manual-today" />Allow teachers to use Manual for today for their assigned classes</label>
-        <p className="text-sm text-muted-foreground">Teachers can pause automatic starts for selected classes and start them manually today. Normal scheduling resumes tomorrow. Administrators can always make this adjustment.</p>
+      {settings.sections.scheduling ? <SectionEditor {...common} section="scheduling" title="Teacher period swaps" description="Let teachers coordinate today's class order in Teaching tools." saveLabel="Save teacher adjustments">{editor => <>
+        <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={editor.draft.allowTeacherManualToday === true} onChange={event => editor.update('allowTeacherManualToday', event.target.checked)} data-testid="checkbox-allow-teacher-manual-today" />Allow teacher period swaps</label>
+        <p className="text-sm text-muted-foreground">A teacher can swap today's periods for both teachers who already teach the same two cohorts. The other teacher accepts only if an affected class is Live. Automatic scheduling follows the new order today; regular times return tomorrow. All-day manual recovery remains administrator-only.</p>
       </>}</SectionEditor> : null}
     </section>
     <section hidden={section !== 'browsing'} aria-label="Browsing and monitoring" className="space-y-5">

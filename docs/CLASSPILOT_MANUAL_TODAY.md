@@ -1,5 +1,6 @@
 # ClassPilot Manual for today
 
+> Teacher all-day access is retired by the Today’s schedule successor. This document retains the administrator/legacy storage contract. See [Today’s schedule](CLASSPILOT_TODAY_SCHEDULE.md) for teacher period swaps, exact meeting identity and current rollout rules.
 Manual for today lets staff choose particular automatically scheduled classes to
 start themselves for the rest of the current school day. Recurring schedules,
 saved times, rosters, teachers, applied profiles and approved swaps are retained.

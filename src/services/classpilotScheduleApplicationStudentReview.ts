@@ -1,3 +1,4 @@
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { createHash } from "node:crypto";
 import { and, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
 import type db from "../db.js";
@@ -81,9 +82,16 @@ export async function reviewScheduleApplicationStudents(options: Options) {
   const staffByGroup = index(classStaff), rosterByGroup = index(classStudents), staffBySession = index(sessionStaff), rosterBySession = index(sessionStudents), rosterByContext = index(supervisedStudents);
   const staffNames = new Map(options.staff.map(s => [s.id, s]));
   const staff = (ids: string[]) => [...new Set(ids)].sort().flatMap(id => staffNames.has(id) ? [staffNames.get(id)!] : []);
-  const facts: ScheduleProfileValidationFacts = { schoolTimezone, tracking, calendar: options.calendar, config: options.config, today, approved,
+  const todayPlans = (await Promise.all(dates.map(async date => {
+    const plans = await loadClasspilotTodayOccurrences({ schoolId, scheduledDate: date, dbInstance: database });
+    return [...plans].map(([groupId, rows]) => ({ groupId, date, meetings: rows.flatMap(row => {
+      const window = todayOccurrenceWindow(row);
+      return window ? [{ id: window.scheduledOccurrenceId ?? window.preservedLegacySessionId ?? row.id, startAt: window.scheduledStartAt.toISOString(), endAt: window.scheduledEndAt.toISOString() }] : [];
+    }) }));
+  }))).flat();
+  const facts: ScheduleProfileValidationFacts = { schoolTimezone, tracking, calendar: options.calendar, config: options.config, today, approved, todayPlans,
     groups: classRows.map(g => ({ ...g, staffIds: [...new Set([g.teacherId, ...(staffByGroup.get(g.id) ?? [])])].sort(), studentIds: rosterByGroup.get(g.id) ?? [] })),
-    sessions: sessions.map(s => ({ id: s.id, groupId: s.groupId, name: s.classNameSnapshot || classRows.find(g => g.id === s.groupId)?.name || "Recorded class",
+    sessions: sessions.map(s => ({ id: s.id, scheduledOccurrenceId: s.scheduledOccurrenceId, groupId: s.groupId, name: s.classNameSnapshot || classRows.find(g => g.id === s.groupId)?.name || "Recorded class",
       date: s.scheduledDate, scheduledState: s.scheduledState, startAt: (s.scheduledStartAt ?? s.startTime).toISOString(),
       endAt: s.scheduledEndAt && s.endTime ? new Date(Math.min(s.scheduledEndAt.getTime(), s.endTime.getTime())).toISOString() : (s.scheduledEndAt ?? s.endTime)?.toISOString() ?? null,
       rosterComplete: Boolean(s.rosterSnapshotCompletedAt), staffIds: [...new Set([s.teacherId, ...(staffBySession.get(s.id) ?? [])])].sort(), studentIds: rosterBySession.get(s.id) ?? [] })),
@@ -95,6 +103,16 @@ export async function reviewScheduleApplicationStudents(options: Options) {
     const frozen = facts.sessions.filter(s => s.date === date), frozenIds = new Set(frozen.map(s => s.groupId));
     const rows: StudentAnalysisClass[] = [];
     for (const g of facts.groups) {
+      const plan = todayPlans.find(plan => plan.groupId === g.id && plan.date === date);
+      if (plan) {
+        for (const meeting of plan.meetings) {
+          if (facts.sessions.some(session => session.scheduledOccurrenceId === meeting.id || session.id === meeting.id)) continue;
+          rows.push({ classId: g.id, name: g.name, staff: staff(g.staffIds), studentIds: g.studentIds,
+            window: { start: Date.parse(meeting.startAt), end: Date.parse(meeting.endAt) },
+            unavailable: g.staffIds.some(id => !staffNames.has(id)) });
+        }
+        continue;
+      }
       if (frozenIds.has(g.id)) continue;
       const row: StudentAnalysisClass = { classId: g.id, name: g.name, staff: staff(g.staffIds), studentIds: g.studentIds, window: null };
       const legs = approved.filter(l => l.groupId === g.id && l.date === date);

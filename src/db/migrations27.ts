@@ -3,6 +3,8 @@ import { schoolDisciplineRedesignMigration } from "./schoolDisciplineRedesignMig
 import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigration.js";
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
 import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
+import { classpilotTodayScheduleMigration } from "./classpilotTodayScheduleMigration.js";
+import { classpilotTodayScheduleContractMigration } from "./classpilotTodayScheduleContractMigration.js";
 import { classpilotManualTodayMigration } from "./classpilotManualTodayMigration.js";
 import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
 import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
@@ -568,11 +570,13 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotWindowsHistoryMigration,
   classpilotWindowsActivityParentsMigration,
   classpilotManualTodayMigration,
+  classpilotTodayScheduleMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [
   staffIdentityIntegrityMigration.id,
 ] as const;
+export const TODAY_SCHEDULE_CONTRACT_MIGRATION_IDS = [classpilotTodayScheduleContractMigration.id] as const;
 
 const firstStaffIdentityContractIndex = schoolPilot27Migrations.findIndex(
   (migration) => migration.id === STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]
@@ -595,8 +599,13 @@ export const schoolPilot27ExpandMigrations: readonly SchoolPilotMigration[] =
 export function selectSchoolPilot27MigrationPlan(options: {
   contractRolloutRequested: boolean;
   contractPreviouslyApplied: boolean;
+  todayScheduleContractPreviouslyApplied?: boolean;
 }): readonly SchoolPilotMigration[] {
-  return options.contractRolloutRequested || options.contractPreviouslyApplied
+  const expansion = options.contractRolloutRequested || options.contractPreviouslyApplied
     ? schoolPilot27Migrations
     : schoolPilot27ExpandMigrations;
+  // Never contract during an ordinary rollout. Once the separately reviewed
+  // CLI completed it, retain the immutable checksum on every later deploy.
+  return options.todayScheduleContractPreviouslyApplied
+    ? [...expansion, classpilotTodayScheduleContractMigration] : expansion;
 }

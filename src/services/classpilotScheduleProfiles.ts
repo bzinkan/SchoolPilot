@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { loadClasspilotTodayOccurrences } from "./classpilotTodayOccurrences.js";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import { schools, schoolMemberships } from "../schema/core.js";
@@ -268,10 +269,12 @@ async function buildPreview(options: ProfileRequest, database: Database = db) {
       continue;
     }
     classWindows[date] = {};
+    const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: date, dbInstance: database });
     for (const row of selected) {
       const rule = definition.classRules.find((r) => r.classId === row.id);
       if (!rule) continue;
       const unavailable = (reason: string) => { block(row.name + ": " + reason, date); classResults.push({ date, classId: row.id, className: row.name, status: "unavailable", reason }); };
+      if (todayPlans.has(row.id)) { unavailable("has a today-only period change. Use administrator recovery before replacing it."); continue; }
       let before: BellWindow | null;
       try { before = resolveClassBaseWindow(row, date, data.context.config, data.context.calendar); }
       catch { block(row.name + ": resolve the missing period mapping before applying a profile.", date); classResults.push({ date, classId: row.id, className: row.name, status: "unavailable", reason: "The regular schedule mapping is unavailable." }); continue; }

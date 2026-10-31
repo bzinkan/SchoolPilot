@@ -371,7 +371,7 @@ try {
     foreach ($value in @(1, $true, @('on'))) {
         Assert-ThrowsMatch { ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_RULES_MODE = $value }) } 'JSON string' 'Non-string values must be refused.'
     }
-    foreach ($name in @('CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', 'PASSPILOT_RULES_MODE', 'PASSPILOT_APPOINTMENTS_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')) {
+    foreach ($name in @('CLASSPILOT_TODAY_SCHEDULE_MODE', 'CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', 'PASSPILOT_RULES_MODE', 'PASSPILOT_APPOINTMENTS_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')) {
         foreach ($value in @('off', 'on', $null)) {
             Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ $name = $value })).Contains($name)) "$name must accept '$value'."
         }
@@ -483,6 +483,7 @@ try {
 
     # --- RLS admission preconditions, per gate, per service ---
     foreach ($gate in @(
+            @{ Name = 'CLASSPILOT_TODAY_SCHEDULE_MODE'; Config = @{ CLASSPILOT_TODAY_SCHEDULE_MODE = 'on' }; Tables = @('classpilot_today_changes', 'classpilot_today_occurrences'); Live = @{} },
             @{ Name = 'PASSPILOT_RULES_MODE'; Config = @{ PASSPILOT_RULES_MODE = 'on' }; Tables = $script:RulesTables; Live = @{} },
             @{ Name = 'PASSPILOT_APPOINTMENTS_MODE'; Config = @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }; Tables = @('passpilot_appointments'); Live = @{} },
             @{ Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Config = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Live = @{} },

@@ -1,3 +1,4 @@
+import { classpilotTodayChanges } from "../schema/classpilot.js";
 import { expirePrivateChatDeliveries } from "./classpilotPrivateChatLifecycle.js";
 import { retireLegacyTabFocusBatch } from "./classpilotFocusRetirement.js";
 import { claimStudentInformationJobs, processStudentInformationClaim, cleanupStudentInformationImports } from "./studentInformationWorker.js";
@@ -68,7 +69,7 @@ import {
 } from "../schema/classpilot.js";
 import { activityLog, dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { students } from "../schema/students.js";
-import { eq, and, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { lte, eq, and, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   getWatchesDueForRenewal,
   upsertMailpilotWatch,
@@ -1514,6 +1515,17 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
       }
     }
 
+    // Pending consent expires even when new swaps are disabled or school access was revoked.
+    const todayLifecycleSchools = await schedulerDb.selectDistinct({ schoolId: classpilotTodayChanges.schoolId })
+      .from(classpilotTodayChanges).where(and(eq(classpilotTodayChanges.status, "pending"),
+        lte(classpilotTodayChanges.cutoffAt, now), schoolId ? eq(classpilotTodayChanges.schoolId, schoolId) : undefined)).limit(500);
+    const { expireClasspilotTodayScheduleChanges } = await import("./classpilotTodaySchedule.js");
+    for (const pendingSchool of todayLifecycleSchools) await expireClasspilotTodayScheduleChanges({
+      schoolId: pendingSchool.schoolId, now, dbInstance: schedulerDb,
+    }).catch(error => errorMonitor.trackError("scheduler_failure", error as Error, {
+      job: "reconcileClasspilotScheduledSessions", errorCode: "TODAY_SCHEDULE_EXPIRY_FAILED",
+    }));
+
     // Keep candidate discovery aligned with the authoritative entitlement
     // check used again under the occurrence-creation lock. This prevents an
     // expired or disabled tenant from reaching the effective-window overlay
@@ -1583,7 +1595,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           school.id,
           schedulerDb
         );
-        if (!frozenGroup || !frozenSession.scheduledDate || frozenGroup.scheduleManualDate === frozenSession.scheduledDate) continue;
+        if (!frozenGroup || !frozenSession.scheduledDate || !frozenSession.scheduledOccurrenceId && frozenGroup.scheduleManualDate === frozenSession.scheduledDate) continue;
         try {
           await processScheduledClassAutoStart({
             group: frozenGroup,

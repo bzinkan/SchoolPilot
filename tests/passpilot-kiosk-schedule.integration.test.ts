@@ -22,6 +22,7 @@ import kioskRouter from "../src/routes/passpilot/kiosk.js";
 import passesRouter from "../src/routes/passpilot/passes.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
+import { createOrReuseScheduledReportSession } from "../src/services/storage.js";
 
 const schoolIds: string[] = [], userIds: string[] = [];
 const scoped = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
@@ -40,7 +41,7 @@ after(async () => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN"); await client.query("SET LOCAL app.is_super='on'");
-    for (const table of ["student_timeline_events", "passes", "passpilot_teacher_kiosk_settings", "passpilot_kiosk_devices", "passpilot_kiosk_sessions", "classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "classpilot_scheduled_conflicts", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "classpilot_school_schedules", "audit_logs"]) await client.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schoolIds]);
+    for (const table of ["student_timeline_events", "passes", "passpilot_teacher_kiosk_settings", "passpilot_kiosk_devices", "passpilot_kiosk_sessions", "classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "classpilot_scheduled_conflicts", "classpilot_today_occurrences", "classpilot_today_changes", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "classpilot_school_schedules", "audit_logs"]) await client.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schoolIds]);
     for (const table of ["group_students", "group_teachers"]) await client.query(`DELETE FROM ${table} WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))`, [schoolIds]);
     await client.query("DELETE FROM teacher_grades WHERE teacher_id=ANY($1::text[])", [userIds]);
     for (const table of ["passpilot_grade_students", "groups", "students", "grades", "settings", "school_memberships", "product_licenses"]) await client.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schoolIds]);
@@ -128,6 +129,92 @@ async function teacherTimetable(actual = false) {
     scheduleRule: defaultClassScheduleRule() }));
   return { ...f, classIds, names };
 }
+
+test("ClassPilot kiosks follow dated meetings, exact carried identities and suppression while new writes are off", async () => {
+  const f = await fixture("classpilot_groups");
+  await save(f);
+  const before = await resolve(f);
+  assert.equal(before.current?.classId, f.classId);
+  const priorMode = process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+  process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = "off";
+  try {
+    // An ended original period remains historical; it cannot suppress a new
+    // occurrence of the same class later on this date.
+    await pool.query(`INSERT INTO teaching_sessions(school_id,group_id,teacher_id,scheduled_date,scheduled_timezone,
+      scheduled_start_at,scheduled_end_at,scheduled_state,start_time,end_time,session_mode)
+      VALUES($1,$2,$3,'2026-09-24','UTC','2026-09-24T13:00Z','2026-09-24T14:00Z','finalized',
+      '2026-09-24T13:00Z','2026-09-24T13:15Z','scheduled_report')`, [f.schoolId, f.classId, f.teacherId]);
+    const change = async (generation: number, groupIds: string[]) => {
+      const id = randomUUID();
+      await pool.query(`INSERT INTO classpilot_today_changes(id,school_id,scheduled_date,timezone_snapshot,status,generation,
+        requested_by_user_id,idempotency_key,request_hash,review_snapshot,plan_snapshot,affected_group_ids,cutoff_at,applied_at,applied_by_user_id)
+        VALUES($1,$2,'2026-09-24','UTC','applied',$3,$4,$5,$6,'{}','{}',$7,'2026-09-25T00:00Z',now(),$4)`,
+      [id, f.schoolId, generation, f.adminId, randomUUID(), "a".repeat(64), JSON.stringify(groupIds)]);
+      return id;
+    };
+    const meeting = async (changeId: string, generation: number, groupId: string, name: string,
+      start: string, end: string, source: Record<string, unknown> = {}) => {
+      const id = randomUUID();
+      await pool.query(`INSERT INTO classpilot_today_occurrences(id,school_id,change_id,scheduled_date,group_id,generation,
+        kind,scheduled_start_at,scheduled_end_at,source,primary_teacher_id_snapshot,class_name_snapshot,timezone_snapshot)
+        VALUES($1,$2,$3,'2026-09-24',$4,$5,'meeting',$6,$7,$8,$9,$10,'UTC')`,
+      [id, f.schoolId, changeId, groupId, generation, start, end, JSON.stringify(source), f.teacherId, name]);
+      return id;
+    };
+    const first = await change(1, [f.classId, f.nextClassId]);
+    const currentId = await meeting(first, 1, f.nextClassId, "Reading now", "2026-09-24T13:15Z", "2026-09-24T14:00Z");
+    await meeting(first, 1, f.classId, "Math later", "2026-09-24T14:00Z", "2026-09-24T15:00Z");
+    await pool.query("UPDATE groups SET schedule_skipped_date='2026-09-24',schedule_manual_date='2026-09-24' WHERE school_id=$1 AND id=$2", [f.schoolId, f.nextClassId]);
+    const changed = await resolve(f);
+    assert.equal(changed.status, "ready");
+    assert.equal(changed.current?.classId, f.nextClassId);
+    assert.equal(changed.current?.startsAt, "2026-09-24T13:15:00.000Z");
+    assert.deepEqual(changed.roster.map(row => row.id), [f.nextStudentId]);
+    assert.notEqual(changed.revision, before.revision);
+    const frozen = await scoped(f.schoolId, () => createOrReuseScheduledReportSession({ schoolId: f.schoolId,
+      groupId: f.nextClassId, teacherId: f.teacherId, scheduledDate: "2026-09-24", scheduledOccurrenceId: currentId,
+      scheduledTimezone: "UTC", scheduledStartAt: new Date("2026-09-24T13:15Z"), scheduledEndAt: new Date("2026-09-24T14:00Z") }));
+    const carriedChange = await change(2, [f.nextClassId]);
+    await meeting(carriedChange, 2, f.nextClassId, "Reading now", "2026-09-24T13:15Z", "2026-09-24T14:00Z", { preservedOccurrenceId: currentId });
+    const carried = await resolve(f);
+    assert.equal(carried.status, "ready", "a carried frozen meeting appears once, without a duplicate conflict");
+    assert.equal(carried.current?.teachingSessionId, frozen.id);
+    const skippedChange = await change(3, [f.nextClassId]);
+    await pool.query(`INSERT INTO classpilot_today_occurrences(school_id,change_id,scheduled_date,group_id,generation,kind,
+      source,primary_teacher_id_snapshot,class_name_snapshot,timezone_snapshot)
+      VALUES($1,$2,'2026-09-24',$3,3,'suppression','{}',$4,'Skipped Reading','UTC')`, [f.schoolId, skippedChange, f.nextClassId, f.teacherId]);
+    const skipped = await resolve(f);
+    assert.equal(skipped.status, "idle", "suppression hides the replaced frozen session before row cleanup");
+    assert.equal(skipped.next?.classId, f.classId, "the other group's latest applied meeting remains automatic");
+    assert.equal(skipped.next?.startsAt, "2026-09-24T14:00:00.000Z");
+    const tomorrow = await resolve(f, new Date("2026-09-25T13:30Z"));
+    assert.equal(tomorrow.current?.classId, f.classId);
+  } finally {
+    if (priorMode === undefined) delete process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+    else process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = priorMode;
+  }
+});
+
+test("a dated carry preserves the kiosk's original legacy session and frozen roster", async () => {
+  const f = await fixture("classpilot_groups");
+  await save(f);
+  const legacy = await scoped(f.schoolId, () => createOrReuseScheduledReportSession({ schoolId: f.schoolId,
+    groupId: f.classId, teacherId: f.teacherId, scheduledDate: "2026-09-24", scheduledTimezone: "UTC",
+    scheduledStartAt: new Date("2026-09-24T13:00Z"), scheduledEndAt: new Date("2026-09-24T14:00Z") }));
+  const changeId = randomUUID();
+  await pool.query(`INSERT INTO classpilot_today_changes(id,school_id,scheduled_date,timezone_snapshot,status,generation,
+    requested_by_user_id,idempotency_key,request_hash,review_snapshot,plan_snapshot,affected_group_ids,cutoff_at,applied_at,applied_by_user_id)
+    VALUES($1,$2,'2026-09-24','UTC','applied',1,$3,$4,$5,'{}','{}',$6,'2026-09-25T00:00Z',now(),$3)`,
+  [changeId, f.schoolId, f.adminId, randomUUID(), "b".repeat(64), JSON.stringify([f.classId])]);
+  await pool.query(`INSERT INTO classpilot_today_occurrences(school_id,change_id,scheduled_date,group_id,generation,
+    kind,scheduled_start_at,scheduled_end_at,source,primary_teacher_id_snapshot,class_name_snapshot,timezone_snapshot)
+    VALUES($1,$2,'2026-09-24',$3,1,'meeting','2026-09-24T13:00Z','2026-09-24T14:00Z',$4,$5,'Carried Math','UTC')`,
+  [f.schoolId, changeId, f.classId, JSON.stringify({ preservedLegacySessionId: legacy.id }), f.teacherId]);
+  const carried = await resolve(f);
+  assert.equal(carried.status, "ready");
+  assert.equal(carried.current?.teachingSessionId, legacy.id);
+  assert.deepEqual(carried.roster.map(row => row.id), [f.studentId]);
+});
 
 test("standalone schools opt each teacher into their own ClassPilot timetable without migrating grades", async () => {
   const f = await teacherTimetable();

@@ -15,6 +15,7 @@ process.env.SENDGRID_API_KEY = "";
 
 const tag = `manual_start_switch_${randomUUID()}`;
 const timezone = "America/New_York";
+const priorTodayMode = process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
 const startPath = "/classpilot/teaching-sessions/start";
 let database: typeof import("../src/db.js").default;
 let storage: typeof import("../src/services/storage.js");
@@ -207,6 +208,9 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   beforeEach(async () => {
+    // This suite retains administrator legacy recovery compatibility. The new
+    // Today schedule workflow has its own dedicated integration coverage.
+    process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = "off";
     await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=true WHERE school_id=${school.id}`));
   });
 
@@ -216,6 +220,8 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   after(async () => {
+    if (priorTodayMode === undefined) delete process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+    else process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = priorTodayMode;
     try {
       if (server) {
         server.closeIdleConnections();
@@ -234,7 +240,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("requires an explicit manual review for a finished scheduled occurrence without mutating it", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     const scheduled = await occurrence(selected);
     await inSchool(() => lifecycle.finalizeClasspilotSession({ schoolId: school.id, sessionId: scheduled.id, reason: "teacher_end" }));
@@ -250,7 +256,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("enables only the selected class and starts it in the same request while preserving its recurring schedule", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     const untouched = await classroom(actor, { scheduled: true });
     const response = await request(actor, review(selected));
@@ -275,7 +281,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("switches and finalizes both the old owned class and selected automatic occurrence exactly once", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const previousGroup = await classroom(actor);
     const selected = await classroom(actor, { scheduled: true });
     const automatic = await occurrence(selected);
@@ -304,7 +310,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("rolls back override, scheduled finalization, owned-class finalization and outbox together on start failure", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const previousGroup = await classroom(actor);
     const selected = await classroom(actor, { scheduled: true });
     const automatic = await occurrence(selected);
@@ -326,7 +332,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("rejects a stale reviewed active session before ending or overriding any class", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const previousGroup = await classroom(actor);
     const previous = await ordinarySession(previousGroup);
     const selected = await classroom(actor, { scheduled: true });
@@ -343,7 +349,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("rejects a stale school date and extra manual-date authority fields without mutation", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     const stale = await request(actor, { ...review(selected), manualToday: { expectedSchoolDate: "2001-01-01" } });
     assert.equal(stale.status, 409);
@@ -356,7 +362,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("requires the explicit reviewed active-session field for the new manual action", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     const response = await request(actor, { groupId: selected.id, manualToday: { expectedSchoolDate: schoolDate() } });
     assert.equal(response.status, 400);
@@ -366,45 +372,58 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
     assert.equal(await enabledAuditCount(selected), 0);
   });
 
-  it("requires policy and assignment for new overrides while administrators may start an explicit selected class", async () => {
+  it("retires teacher all-day writes regardless of old permission, assignment, or Today kill switch", async () => {
     const actor = await staff();
+    const coTeacher = await staff();
     const outsider = await staff();
     const selected = await classroom(actor, { scheduled: true });
-    await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=false WHERE school_id=${school.id}`));
-    const disabled = await request(actor, review(selected));
-    assert.equal(disabled.status, 403);
-    assert.equal(disabled.body.code, "MANUAL_TODAY_TEACHER_DISABLED");
-    assert.equal((await currentGroup(selected)).scheduleManualDate, null);
-    await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=true WHERE school_id=${school.id}`));
-    const unassigned = await request(outsider, review(selected));
-    assert.equal(unassigned.status, 403);
-    assert.equal((await currentGroup(selected)).scheduleManualDate, null);
-    await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=false WHERE school_id=${school.id}`));
+    await inSchool(() => storage.addGroupTeacher(selected.id, coTeacher.id, "co-teacher"));
+    for (const mode of ["off", "on"]) {
+      process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = mode;
+      for (const allowed of [false, true]) {
+        await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=${allowed} WHERE school_id=${school.id}`));
+        for (const teacher of [actor, coTeacher, outsider]) {
+          const denied = await request(teacher, review(selected));
+          assert.equal(denied.status, teacher.id === outsider.id ? 403 : 409);
+          if (teacher.id !== outsider.id) assert.equal(denied.body.code, "TODAY_SCHEDULE_CHANGE_REQUIRED");
+          const standalone = await request(teacher, { expectedSchoolDate: schoolDate() }, `/classpilot/groups/${selected.id}/manual-today`);
+          assert.equal(standalone.status, 409);
+          assert.equal(standalone.body.code, "TODAY_SCHEDULE_CHANGE_REQUIRED");
+        }
+        assert.equal((await currentGroup(selected)).scheduleManualDate, null);
+        assert.equal(await liveSessionCount(selected), 0);
+      }
+    }
+    process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = "off";
     const admin = await request(administrator, review(selected));
     assert.equal(admin.status, 201);
     assert.equal(admin.body.session.teacherId, administrator.id);
     assert.equal((await currentGroup(selected)).scheduleManualDate, schoolDate());
   });
 
-  it("allows assigned teachers to start an already-enabled override after self-service permission is revoked", async () => {
+  it("allows an assigned teacher to join existing admin recovery without granting an all-day write", async () => {
     const actor = await staff();
     const selected = await classroom(actor, { scheduled: true });
-    await inSchool(() => storage.enableClasspilotManualToday({ schoolId: school.id, actorId: administrator.id,
-      groupId: selected.id, expectedSchoolDate: schoolDate() }));
+    const started = await request(administrator, review(selected));
+    assert.equal(started.status, 201);
     await inSchool(() => database.execute(sql`UPDATE settings SET allow_teacher_manual_today=false WHERE school_id=${school.id}`));
-    const first = await request(actor, review(selected));
-    assert.equal(first.status, 201);
-    assert.equal(first.body.session.teacherId, actor.id);
-    const repeat = await request(actor, review(selected));
-    assert.equal(repeat.status, 200);
-    assert.equal(repeat.body.reused, true);
-    assert.equal(repeat.body.session.id, first.body.session.id);
+    const before = await currentGroup(selected);
+    const denied = await request(actor, review(selected));
+    assert.equal(denied.status, 409);
+    assert.equal(denied.body.code, "TODAY_SCHEDULE_CHANGE_REQUIRED");
+    const joined = await request(actor, { groupId: selected.id, expectedActiveSessionId: null });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.reused, true);
+    assert.equal(joined.body.session.id, started.body.session.id);
+    assert.equal(joined.body.session.teacherId, administrator.id);
+    assert.equal(joined.body.session.manualExpiresAt, started.body.session.manualExpiresAt);
+    assert.deepEqual(await currentGroup(selected), before);
     assert.equal(await enabledAuditCount(selected), 1);
   });
 
   it("reuses one shared manual class for concurrent primary/co-teacher reviews without duplicate sessions", async () => {
-    const actor = await staff();
-    const coTeacher = await staff();
+    const actor = await staff("admin");
+    const coTeacher = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     await inSchool(() => storage.addGroupTeacher(selected.id, coTeacher.id, "co-teacher"));
     const responses = await Promise.all([request(actor, review(selected)), request(coTeacher, review(selected))]);
@@ -420,8 +439,8 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("does not reuse a shared target over a newer owned class until that replacement is freshly reviewed", async () => {
-    const actor = await staff();
-    const coTeacher = await staff();
+    const actor = await staff("admin");
+    const coTeacher = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     await inSchool(() => storage.addGroupTeacher(selected.id, coTeacher.id, "co-teacher"));
     const target = await request(actor, review(selected));
@@ -441,7 +460,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("keeps the override and current owner unchanged until the combined review acknowledges roster overlap", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const otherTeacher = await staff();
     const studentId = await student();
     const other = await classroom(otherTeacher, { students: [studentId] });
@@ -499,7 +518,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   });
 
   it("an unaffected class's automatic bell still replaces the teacher's selected manual class", async () => {
-    const actor = await staff();
+    const actor = await staff("admin");
     const selected = await classroom(actor, { scheduled: true });
     const manual = await request(actor, review(selected));
     assert.equal(manual.status, 201);
@@ -556,7 +575,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
 
   it("caps a reused ordinary manual session at midnight after a real recurring-schedule change and combined review", async () => {
     await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
-      const actor = await staff();
+      const actor = await staff("admin");
       const studentId = await student();
       const selected = await classroom(actor, { students: [studentId] });
       const legacy = await ordinarySession(selected);
@@ -594,7 +613,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
 
   it("standalone Manual today caps existing work before a normal Start reuses its identity and choices", async () => {
     await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
-      const actor = await staff();
+      const actor = await staff("admin");
       const studentId = await student();
       const selected = await classroom(actor, { students: [studentId] });
       const legacy = await ordinarySession(selected);
@@ -621,7 +640,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   it("co-teacher deadline reuse preserves an off preset and never acquires students held by another class or supervision", async () => {
     await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
       const primary = await staff();
-      const coTeacher = await staff();
+      const coTeacher = await staff("admin");
       const thirdTeacher = await staff();
       const [ownStudent, thirdClassStudent, supervisedStudent] = await Promise.all([student(), student(), student()]);
       const selected = await classroom(primary, { students: [ownStudent, thirdClassStudent, supervisedStudent] });
@@ -671,7 +690,7 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
   it("retains earlier existing session and per-student deadlines instead of extending them to midnight", async () => {
     await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
       for (const existingManualLimit of [false, true]) {
-        const actor = await staff();
+        const actor = await staff("admin");
         const studentId = await student();
         const selected = await classroom(actor, { students: [studentId] });
         const startTime = new Date(Date.now() - (existingManualLimit ? 60_000 : 11 * 3_600_000));

@@ -44,6 +44,7 @@ type Registry = {
     classpilotPrivateChatLifecyclePostExpand: RegistryInventory;
     classpilotNativeVisibilityPostExpand: RegistryInventory;
     classpilotWindowsBrowserPostExpand: RegistryInventory;
+    classpilotTodaySchedulePostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -95,6 +96,17 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("adds today's two-table admission after the immutable Windows inventory", () => {
+    const previous = registry.inventories.classpilotWindowsBrowserPostExpand;
+    const current = registry.inventories.classpilotTodaySchedulePostExpand;
+    assert.equal(previous.count, 138);
+    assert.equal(current.count, 140);
+    assert.deepEqual(current.tables, [...previous.tables, "classpilot_today_changes", "classpilot_today_occurrences"]);
+    assert.equal(current.sha256, sha256(current.tables));
+    assert.deepEqual(RLS_REVIEWED_ENABLEMENT_REQUESTS.classpilotTodaySchedule, ["classpilot_today_changes", "classpilot_today_occurrences"]);
+    assert.equal(isReviewedRlsEnforcementRequest(["classpilot_today_changes"]), false);
+    assert.equal(isReviewedRlsEnforcementRequest(["classpilot_today_occurrences", "classpilot_today_changes"]), false);
+  });
   it("appends the complete Windows bundle after the immutable native inventory", () => {
     const previous=registry.inventories.classpilotNativeVisibilityPostExpand;
     const next=registry.inventories.classpilotWindowsBrowserPostExpand;
@@ -279,7 +291,7 @@ describe("semantic RLS registry", () => {
     // CI admits the reviewed PassPilot rule bundle and the usage rollup table
     // ahead of production, which keeps the observed 121-table baseline until a
     // later adoption PR.
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotWindowsBrowserPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotTodaySchedulePostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

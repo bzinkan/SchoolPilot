@@ -411,11 +411,27 @@ run "classpilot_windows_browser_target" {
   }
   assert {
     condition = (
-      length(local.rls_post_expand_tables) == 138 &&
       length(local.rls_configured_tables) == 138 &&
       toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotNativeVisibilityPostExpand.tables, ["classpilot_windows_guards", "classpilot_windows_browsers", "classpilot_windows_pairing_proofs", "classpilot_windows_commands", "classpilot_windows_command_targets", "classpilot_windows_browser_events"])) &&
-      toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The Windows browser target must append exactly six independent identity, command and browser-history tables after the preserved native inventory."
+  }
+}
+
+run "classpilot_today_schedule_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotTodaySchedulePostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 140 &&
+      length(local.rls_configured_tables) == 140 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotWindowsBrowserPostExpand.tables, ["classpilot_today_changes", "classpilot_today_occurrences"])) &&
+      toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
+    )
+    error_message = "The Today schedule target must append exactly the reviewed change and occurrence tables after the preserved 138-table Windows inventory."
   }
 }

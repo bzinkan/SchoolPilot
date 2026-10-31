@@ -1173,7 +1173,7 @@ test('classroom dialogs freeze recipients when they open and send them as explic
     /setRecipientSnapshot\(\(current\) => \(\['flight-path', 'block-list'\]\.includes\(current\?\.kind\) \? current : null\)\);/,
     'a deferred-restriction selection must discard frozen recipients only with the dialogs it closes',
   );
-  assert.match(between('const handleAdminObservedSessionChange', 'const handleStopLiveView'), /setSkipTodayGroup\(null\);\s*setRecipientSnapshot\(null\);/);
+  assert.match(between('const handleAdminObservedSessionChange', 'const handleStopLiveView'), /setEndClassTarget\(null\);\s*setRecipientSnapshot\(null\);/);
   assert.match(dashboard, /throw new Error\(RECIPIENTS_UNAVAILABLE_MESSAGE\);/);
   assert.doesNotMatch(dashboard, /Clear the selection and try again/);
 });

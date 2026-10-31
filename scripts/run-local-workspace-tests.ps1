@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory = $true)][ValidatePattern('^schoolpilot_redesign_[a-z0-9_]+$')][string]$Database,
   [Parameter(Mandatory = $true)][string[]]$TestFiles,
   [switch]$Restricted,
-  [ValidateSet('passpilotAppointmentsPostExpand','classpilotPrivateChatLifecyclePostExpand','classpilotNativeVisibilityPostExpand','classpilotWindowsBrowserPostExpand')][string]$RlsInventory = 'passpilotAppointmentsPostExpand'
+  [ValidateSet('passpilotAppointmentsPostExpand','classpilotPrivateChatLifecyclePostExpand','classpilotNativeVisibilityPostExpand','classpilotWindowsBrowserPostExpand','classpilotTodaySchedulePostExpand')][string]$RlsInventory = 'passpilotAppointmentsPostExpand'
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

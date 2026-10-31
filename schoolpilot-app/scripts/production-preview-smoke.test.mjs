@@ -131,6 +131,20 @@ test('manual-today preview allowlist admits only the exact read under the curren
   }
 });
 
+test('Today schedule preview fixture exposes only the exact disabled school-bound read', () => {
+  const url = `${baseUrl}/api/classpilot/today-schedule`;
+  const schoolId = personas.classpilotTeacher.schoolId;
+  assert.deepEqual(respond(personas.classpilotTeacher, { url, schoolId }), {
+    enabled: false, schoolDate: '2026-07-24', timeZone: 'America/New_York',
+    resumesAt: '2026-07-25T04:00:00.000Z', canRequest: false, permissionSettingEnabled: false, classes: [], changes: [],
+  });
+  assert.throws(() => respond(personas.classpilotTeacher, { url, method: 'POST', schoolId }), /preview_api_method_invalid/);
+  assert.throws(() => respond(personas.classpilotTeacher, { url, schoolId: 'another-school' }), /preview_api_school_binding_invalid/);
+  for (const suffix of ['/preview', '/changes', '/changes/another-change']) {
+    assert.throws(() => respond(personas.classpilotTeacher, { url: url + suffix, schoolId }), /preview_api_request_not_allowlisted/);
+  }
+});
+
 test('does not allow historical GoPilot parent routes to fetch product data', () => {
   assert.throws(
     () => respond(personas.gopilotHistoricalParent, {

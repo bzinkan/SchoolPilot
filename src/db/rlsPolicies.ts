@@ -43,7 +43,8 @@ const usageDaysInventory: RlsRegistryInventory = rlsRegistry.inventories.classpi
 const appointmentsInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotAppointmentsPostExpand;
 const privateChatInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotPrivateChatLifecyclePostExpand;
 const nativeInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotNativeVisibilityPostExpand;
-const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotWindowsBrowserPostExpand;
+const windowsInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotWindowsBrowserPostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotTodaySchedulePostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -93,7 +94,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, usageRollupsInventory, usageDaysInventory, appointmentsInventory, privateChatInventory, nativeInventory, currentInventory];
+  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, usageRollupsInventory, usageDaysInventory, appointmentsInventory, privateChatInventory, nativeInventory, windowsInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(

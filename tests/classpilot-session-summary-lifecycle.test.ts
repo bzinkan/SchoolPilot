@@ -8,6 +8,10 @@ import WebSocket from "ws";
 const TAG = `cp_summary_lifecycle_${Date.now()}`;
 const ORIGINAL_SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const ORIGINAL_REDIS_URL = process.env.REDIS_URL;
+const ORIGINAL_TODAY_MODE = process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+// Dedicated Today schedule tests cover the new writer; retain admin recovery
+// and historical scheduler compatibility here with new Today writes disabled.
+process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = "off";
 process.env.SENDGRID_API_KEY = "SG.classpilot-session-summary.lifecycle-test";
 // This suite validates database lifecycle and durable-delivery semantics. Keep
 // realtime/rate-limit Redis clients in local-only mode so importing the full
@@ -167,6 +171,15 @@ async function createClass(options: {
     );
   }
   return group;
+}
+
+// Create old, pre-scheduling work through the ordinary writer before restoring
+// its recurring schedule. New teachers cannot create all-day scheduled manual
+// sessions, while retained legacy rows still require reconciliation coverage.
+async function seedLegacyTeachingSession(data: Parameters<typeof import("../dist/services/storage.js").createTeachingSession>[0]) {
+  await db.execute(sql`UPDATE groups SET schedule_enabled=false WHERE school_id=${school.id} AND id=${data.groupId}`);
+  try { return await storage.createTeachingSession(data); }
+  finally { await db.execute(sql`UPDATE groups SET schedule_enabled=true WHERE school_id=${school.id} AND id=${data.groupId}`); }
 }
 
 async function deliveryRows(sessionId: string, targetSchoolId = school.id): Promise<any[]> {
@@ -448,6 +461,8 @@ before(async () => {
 });
 
 after(async () => {
+  if (ORIGINAL_TODAY_MODE === undefined) delete process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+  else process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = ORIGINAL_TODAY_MODE;
   try {
     if (server) {
       await new Promise<void>((resolve, reject) =>
@@ -3934,7 +3949,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       conflictPayload: {},
       scheduledTeacherConnected: false,
     } as any));
-    const openLegacy = await inSchool(school.id, () => storage.createTeachingSession({
+    const openLegacy = await inSchool(school.id, () => seedLegacyTeachingSession({
       groupId: openGroup.id,
       teacherId: teacher.id,
       sessionMode: "scheduled_report",
@@ -3954,7 +3969,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       conflictPayload: {},
       scheduledTeacherConnected: false,
     } as any));
-    const endedLegacy = await inSchool(school.id, () => storage.createTeachingSession({
+    const endedLegacy = await inSchool(school.id, () => seedLegacyTeachingSession({
       groupId: endedGroup.id,
       teacherId: teacher.id,
       sessionMode: "scheduled_report",
@@ -4015,7 +4030,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       conflictPayload: {},
       scheduledTeacherConnected: false,
     } as any));
-    const duplicate = await inSchool(school.id, () => storage.createTeachingSession({
+    const duplicate = await inSchool(school.id, () => seedLegacyTeachingSession({
       groupId: group.id,
       teacherId: teacher.id,
       sessionMode: "scheduled_report",
@@ -4128,7 +4143,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
   it("derives a prior-date no-conflict legacy occurrence from startTime and finalizes it without consulting today's schedule", async () => {
     await setCentralRecipient(null);
     const group = await createClass({ name: "legacy_prior_date_no_conflict", scheduled: true });
-    const legacy = await inSchool(school.id, () => storage.createTeachingSession({
+    const legacy = await inSchool(school.id, () => seedLegacyTeachingSession({
       groupId: group.id,
       teacherId: teacher.id,
       sessionMode: "live",
@@ -4366,7 +4381,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
     assert.equal(saved.status, 200);
   }
 
-  it("requires administrator permission and exact class assignment, then permits primary and co-teachers", async () => {
+  it("keeps all-day recovery admin-only while primary and co-teachers retain read visibility", async () => {
     await policy(false);
     const first = await createClass({ name: "manual_permission_primary", scheduled: true });
     const second = await createClass({ name: "manual_permission_co", scheduled: true, start: "10:00", end: "11:00" });
@@ -4375,7 +4390,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
     assert.equal(current.body.canManageManualToday, false);
     assert.equal(current.body.teacherManualTodayAllowed, false);
     const body = { expectedSchoolDate: current.body.schoolDate };
-    assert.equal((await requestJson("POST", `/classpilot/groups/${first.id}/manual-today`, body, authFor(teacher))).status, 403);
+    assert.equal((await requestJson("POST", `/classpilot/groups/${first.id}/manual-today`, body, authFor(teacher))).status, 409);
     const admin = await requestJson("POST", `/classpilot/groups/${first.id}/manual-today`, body, authFor(centralRecipient));
     assert.equal(admin.status, 200);
     assert.equal(admin.body.class.isManualToday, true);
@@ -4385,12 +4400,14 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
     assert.equal(untouched.blockEndTime, "10:00");
     await policy(true);
     const forbidden = await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher));
-    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.status, 409);
     await inSchool(school.id, () => storage.addGroupTeacher(second.id, secondTeacher.id, "co-teacher"));
     const co = await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher));
-    assert.equal(co.status, 200);
+    assert.equal(co.status, 409);
+    const recovery = await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(centralRecipient));
+    assert.equal(recovery.status, 200);
     await policy(false);
-    assert.equal((await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher))).status, 403);
+    assert.equal((await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher))).status, 409);
     const retained = await requestJson("GET", "/classpilot/groups/manual-today", undefined, authFor(secondTeacher));
     assert.equal(retained.body.classes.find((row: any) => row.id === second.id)?.isManualToday, true);
   });
@@ -4422,7 +4439,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
     const before = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, date));
     const enabled = await requestJson("POST", `/classpilot/groups/${group.id}/manual-today`, { expectedSchoolDate: date }, authFor(centralRecipient));
     assert.equal(enabled.status, 200);
-    const started = await requestJson("POST", "/classpilot/teaching-sessions/start", { groupId: group.id, acknowledgeOverlap: true }, authFor(teacher));
+    const started = await requestJson("POST", "/classpilot/teaching-sessions/start", { groupId: group.id, acknowledgeOverlap: true }, authFor(centralRecipient));
     assert.equal(started.status, 201);
     const session = started.body.session;
     assert.equal(session.scheduledDate, null);
@@ -4526,7 +4543,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
       expectedSchoolDate: "2031-04-01", now: start,
     }));
     const session = await inSchool(school.id, () => storage.createTeachingSession({
-      groupId: group.id, teacherId: user.id, startTime: start,
+      groupId: group.id, teacherId: centralRecipient.id, startTime: start,
     }));
     const active = await inSchool(school.id, () => getClasspilotDashboardActivity(school.id, user.id, new Date("2031-04-01T13:16:00Z")));
     assert.equal(active.current?.id, session.id);
@@ -4555,7 +4572,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
       expectedSchoolDate: "2031-04-03", now: start,
     }));
     const session = await inSchool(school.id, () => storage.createTeachingSession({
-      groupId: group.id, teacherId: user.id, startTime: start,
+      groupId: group.id, teacherId: centralRecipient.id, startTime: start,
     }));
     // Earlier lifecycle cases intentionally retain frozen occurrences. Drain
     // their overdue work so this assertion measures the new manual deadline.

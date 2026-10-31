@@ -177,6 +177,10 @@ async function configurePage(page, kind, options = {}) {
       await route.fulfill({ json: { session: currentSession } });
       return;
     }
+    if (pathname === '/api/classpilot/today-schedule' && request.method() === 'GET') {
+      await route.fulfill({ json: { enabled: false, schoolDate: manualToday.schoolDate, timeZone: manualToday.timezone, classes: [], changes: [] } });
+      return;
+    }
     if (pathname === '/api/classpilot/groups/manual-today' && request.method() === 'GET') {
       await route.fulfill({ json: manualToday });
       return;
@@ -556,19 +560,11 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     scheduledPrestartPage = await browser.newPage();
     const scheduledPrestart = await configurePage(scheduledPrestartPage, "scheduled", { active: false });
     await scheduledPrestartPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-    await scheduledPrestartPage.getByTestId("button-skip-scheduled-class-today").click();
-    await scheduledPrestartPage.getByTestId("dialog-skip-scheduled-class-today").waitFor();
-    await scheduledPrestartPage.getByTestId("text-skip-scheduled-class-consequence").getByText(
-      /No Session Summary will be sent/,
-    ).waitFor();
-    await scheduledPrestartPage.getByTestId("button-confirm-skip-scheduled-class-today").click();
-    await scheduledPrestartPage.getByText(
-      "Today’s automatic class was canceled. No Session Summary will be sent.",
-      { exact: true },
-    ).waitFor();
-    assert.equal(scheduledPrestart.skipTodayRequests.length, 1, "pre-start Skip Today must submit exactly once");
-    assert.equal(scheduledPrestart.endRequests.length, 0, "pre-start Skip Today must not end a session");
-    assert.equal(scheduledPrestart.logoutRequests.length, 0, "pre-start Skip Today must not log the teacher out");
+    await scheduledPrestartPage.getByTestId("button-start-session").waitFor();
+    assert.equal(await scheduledPrestartPage.getByTestId("button-skip-scheduled-class-today").count(), 0, "Skip belongs in Teaching tools, not the Dashboard header");
+    assert.equal(scheduledPrestart.skipTodayRequests.length, 0);
+    assert.equal(scheduledPrestart.endRequests.length, 0);
+    assert.equal(scheduledPrestart.logoutRequests.length, 0);
   } finally {
     await scheduledLogoutPage?.close().catch(() => {});
     await scheduledPage?.close().catch(() => {});
@@ -582,124 +578,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
   }
 });
 
-test('Teaching tools Manual for today changes only reviewed classes and preserves Dashboard starts and school-date expiry', { timeout: 90_000 }, async t => {
-  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', cacheDir: `node_modules/.vite-manual-today-${process.pid}`, server: { host: '127.0.0.1', port: 0 } });
-  await vite.listen();
-  const address = vite.httpServer.address();
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await vite.close(); });
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  page.setDefaultTimeout(15_000);
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  const chemistryId = '44444444-4444-4444-8444-444444444444';
-  const groups = [
-    { id: GROUP_ID, name: 'Biology', teacherId: TEACHER_ID, scheduleEnabled: true, blockStartTime: '13:30', blockEndTime: '14:45' },
-    { id: chemistryId, name: 'Chemistry', teacherId: TEACHER_ID, scheduleEnabled: true, blockStartTime: '14:45', blockEndTime: '15:30' },
-  ];
-  const original = { schoolDate: '2026-10-30', timezone: 'America/New_York', resumesOn: '2026-10-31', resumesAt: '2026-10-31T04:00:00.000Z', canManageManualToday: true, teacherManualTodayAllowed: true,
-    classes: groups.map(group => ({ ...group, scheduleManualDate: null, isManualToday: false, activeScheduledSessionId: group.id === GROUP_ID ? 'scheduled-session' : null })) };
-  const harness = await configurePage(page, 'scheduled', { groups, manualToday: original });
-  await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await page.getByTestId('badge-automatic-session').waitFor();
-  assert.equal(await page.getByTestId('button-manual-today').count(), 0, 'The Dashboard has no standalone manual manager');
-  const openManager = async target => {
-    await target.getByTestId('button-my-settings').click();
-    await target.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Manual for today', exact: true }).click();
-    await target.getByTestId('manual-today-manager').waitFor();
-    assert.equal(new URL(target.url()).pathname, '/classpilot/my-settings/manual-today');
-    return target.getByTestId('manual-today-manager');
-  };
-  const manager = await openManager(page);
-  assert.equal(await page.getByTestId('dialog-manual-today').count(), 0, 'Teaching tools renders the manager inline');
-  assert.equal(await manager.getByRole('button', { name: 'Done', exact: true }).count(), 0);
-  await manager.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
-  await manager.getByRole('heading', { name: 'Make Biology manual for today?' }).waitFor();
-  await manager.getByText('If an automatic session for this class is running, it will end.', { exact: false }).waitFor();
-  assert.equal(harness.manualTodayRequests.length, 0, 'Reviewing a named class does not mutate scheduling');
-  await manager.getByRole('button', { name: 'Back to classes' }).click();
-  assert.equal(harness.manualTodayRequests.length, 0, 'Backing out leaves automatic scheduling intact');
-  await manager.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
-  await manager.getByTestId('button-confirm-manual-today').click();
-  await manager.getByTestId('manual-today-success').getByText(/Biology is manual for today/).waitFor();
-  assert.deepEqual(harness.manualTodayRequests, [{ groupId: GROUP_ID, body: { expectedSchoolDate: '2026-10-30' }, schoolId: SCHOOL_ID }]);
-  assert.equal(harness.startRequests.length, 0, 'Enabling manual mode does not start a class');
-  await manager.getByTestId(`manual-today-class-${chemistryId}`).getByRole('button', { name: 'Manual for today', exact: true }).waitFor();
-  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'The inline manager fits a mobile viewport');
-  await page.screenshot({ path: path.join(tmpdir(), 'classpilot-manual-today-teaching-tools-mobile.png'), fullPage: true, animations: 'disabled' });
-  await page.getByTestId('button-back-classpilot').click();
-  await page.getByTestId('button-start-session').waitFor();
-  assert.equal(await page.getByTestId('button-skip-scheduled-class-today').count(), 0, 'Manual mode does not offer Skip Today for the selected class');
-  await page.getByTestId('manual-today-status').getByText(/Biology/).waitFor();
-  assert.ok(!(await page.getByTestId('manual-today-status').textContent()).includes('Chemistry'), 'The other class remains automatic');
-
-  await page.reload();
-  await page.getByTestId('manual-today-status').getByText(/Biology/).waitFor();
-  await openManager(page);
-  await page.getByTestId(`button-review-manual-today-${chemistryId}`).click();
-  await page.getByTestId('button-confirm-manual-today').click();
-  await page.getByTestId('manual-today-success').getByText(/Chemistry is manual for today/).waitFor();
-  await page.reload();
-  await page.getByTestId(`manual-today-class-${chemistryId}`).getByText('Manual for today', { exact: false }).waitFor();
-  await page.getByTestId('button-back-classpilot').click();
-  assert.deepEqual(harness.manualTodayRequests.map(request => request.groupId), [GROUP_ID, chemistryId]);
-  await page.getByTestId('select-start-session-group').selectOption(chemistryId);
-  assert.equal(harness.startRequests.length, 0, 'Selecting the class still requires Start Class');
-  await page.getByTestId('button-start-session').click();
-  await page.getByTestId('badge-active-session').getByText('Chemistry', { exact: true }).waitFor();
-  assert.deepEqual(harness.startRequests, [{ groupId: chemistryId, expectedActiveSessionId: null }]);
-  assert.equal(harness.endRequests.length, 0, 'Override uses its exact class endpoint rather than a separate current-session end request');
-  assert.equal(harness.skipTodayRequests.length, 0, 'Override never uses Skip Today');
-  assert.equal(harness.logoutRequests.length, 0);
-
-  harness.clearActiveSession();
-  const nextDay = { ...original, schoolDate: '2026-10-31', resumesOn: '2026-11-01', resumesAt: '2026-11-01T04:00:00.000Z', classes: original.classes.map(group => ({ ...group, scheduleManualDate: '2026-10-30', isManualToday: false, activeScheduledSessionId: null })) };
-  harness.setManualToday(nextDay);
-  await page.reload();
-  await page.getByTestId('button-skip-scheduled-class-today').waitFor();
-  assert.equal(await page.getByTestId('manual-today-status').count(), 0, 'Yesterday’s override does not appear active on the next school date');
-  await openManager(page);
-  await page.getByTestId(`button-review-manual-today-${GROUP_ID}`).waitFor();
-  await page.getByTestId(`button-review-manual-today-${chemistryId}`).waitFor();
-  assert.match(await page.getByTestId('manual-today-date').textContent(), /Oct 31, 2026.*America\/New_York.*Nov 1, 2026/);
-  assert.deepEqual(errors, []);
-
-  const overnightPage = await browser.newPage();
-  await overnightPage.clock.install({ time: new Date('2026-10-31T03:59:00.000Z') });
-  const overnight = await configurePage(overnightPage, 'scheduled', { active: false, preserveClock: true, manualToday: { ...original, classes: original.classes.map(group => ({ ...group, isManualToday: group.id === GROUP_ID, activeScheduledSessionId: null })) } });
-  await overnightPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await overnightPage.getByTestId('manual-today-status').waitFor();
-  await openManager(overnightPage);
-  await overnightPage.getByTestId(`button-review-manual-today-${chemistryId}`).click();
-  await overnightPage.clock.pauseAt(new Date('2026-10-31T03:59:59.000Z'));
-  overnight.setManualToday(nextDay);
-  await overnightPage.clock.fastForward(1_000);
-  await overnightPage.getByText('The school date changed while this review was open.', { exact: false }).waitFor();
-  assert.equal(await overnightPage.getByTestId('button-confirm-manual-today').isDisabled(), true, 'An overnight review cannot silently enable the next day');
-  assert.equal(overnight.manualTodayRequests.length, 0);
-  await overnightPage.getByRole('button', { name: 'Back to classes' }).click();
-  await overnightPage.getByTestId('button-back-classpilot').click();
-  await overnightPage.getByTestId('button-start-session').waitFor();
-  assert.equal(await overnightPage.getByTestId('manual-today-status').count(), 0, 'The school-midnight boundary clears yesterday’s Dashboard override without a reload');
-
-  const deniedPage = await browser.newPage();
-  const denied = await configurePage(deniedPage, 'scheduled', { active: false, manualToday: original, manualTodayDenied: true });
-  await deniedPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await openManager(deniedPage);
-  await deniedPage.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
-  await deniedPage.getByTestId('button-confirm-manual-today').click();
-  await deniedPage.getByRole('alert').getByText('Teacher adjustments are no longer allowed.', { exact: true }).waitFor();
-  assert.equal(await deniedPage.getByTestId('button-confirm-manual-today').isDisabled(), true, 'Revoked school permission disables confirmation after refresh');
-  assert.equal(denied.manualTodayRequests.length, 1);
-  assert.equal(denied.startRequests.length, 0);
-  await deniedPage.getByRole('button', { name: 'Back to classes' }).click();
-  await deniedPage.getByText('Your school administrator has not enabled teacher adjustments.', { exact: false }).waitFor();
-  assert.equal(await deniedPage.getByTestId(`button-review-manual-today-${GROUP_ID}`).count(), 0, 'The tab retains status access while permission denial removes adjustments');
-  await deniedPage.getByTestId('button-back-classpilot').click();
-  assert.equal(await deniedPage.getByTestId('button-manual-today').count(), 0);
-});
-
-test('persistent class picker reviews atomic manual Start and Switch for teachers and admins', { timeout: 90_000 }, async t => {
+test('Dashboard preserves ordinary guarded Start and Switch and sends timing changes to Teaching tools', { timeout: 90_000 }, async t => {
   const vite = await createServer({ root: APP_ROOT, logLevel: 'error', cacheDir: `node_modules/.vite-class-start-${process.pid}`, server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const address = vite.httpServer.address();
@@ -707,99 +586,46 @@ test('persistent class picker reviews atomic manual Start and Switch for teacher
   t.after(async () => { await browser.close(); await vite.close(); });
   const chemistryId = '44444444-4444-4444-8444-444444444444';
   const groups = [{ id: GROUP_ID, name: 'Biology', teacherId: TEACHER_ID, scheduleEnabled: true }, { id: chemistryId, name: 'Chemistry', teacherId: TEACHER_ID, scheduleEnabled: true }];
-  const status = { schoolDate: '2026-10-30', timezone: 'America/New_York', resumesOn: '2026-10-31', resumesAt: '2026-10-31T04:00:00.000Z', canManageManualToday: true, teacherManualTodayAllowed: true,
-    classes: groups.map(group => ({ ...group, isManualToday: false, scheduleManualDate: null })) };
   for (const role of ['teacher', 'admin']) {
-    const page = await browser.newPage({ viewport: role === 'teacher' ? { width: 390, height: 844 } : { width: 1280, height: 900 } });
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
-    const harness = await configurePage(page, 'scheduled', { role, groups, manualToday: status,
-      automaticFlightPath: { policy: { enabled: true }, eligible: true, flightPath: { flightPathName: 'Chemistry resources' } },
-      startResponse(body, state) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const harness = await configurePage(page, 'scheduled', { role, groups,
+      startResponse(body) {
         if (!body.acknowledgeOverlap) return { status: 409, json: { code: 'CLASS_ROSTER_ACTIVE_OVERLAP', totalOverlapCount: 2, selectedClass: groups[1], groups: [{ sessionId: 'other-session', teacherName: 'Other teacher', className: 'Math', affectedCount: 2 }] } };
-        const updated = { ...state.manualToday, classes: state.manualToday.classes.map(group => group.id === chemistryId ? { ...group, isManualToday: true, scheduleManualDate: status.schoolDate } : group) };
-        const session = activeSession('manual', { id: 'chemistry-manual-session', groupId: chemistryId });
-        return { session, manualToday: updated, json: { session, manualToday: updated } };
+        const session = activeSession('manual', { id: 'chemistry-session', groupId: chemistryId });
+        return { session, json: { session } };
       },
     });
     await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
     const selector = page.getByTestId(role === 'admin' ? 'select-admin-start-session-group' : 'select-start-session-group');
     const start = page.getByTestId(role === 'admin' ? 'button-admin-start-session' : 'button-start-session');
-    const manual = page.getByTestId(role === 'admin' ? 'button-admin-start-manually-today' : 'button-start-manually-today');
     await selector.waitFor();
-    assert.equal(await page.getByTestId('button-manual-today').count(), 0, 'Only the explicit Start/Switch manual action remains on the Dashboard');
-    assert.equal((await start.textContent()).trim(), 'Teaching');
-    assert.equal(await start.isDisabled(), true);
-    await selector.focus();
-    await selector.press('ArrowDown');
-    await selector.press('Enter');
-    assert.equal(await selector.inputValue(), chemistryId, 'The persistent picker works with the keyboard');
-    assert.equal(harness.startRequests.length, 0, 'Picking another class does not start or end a session');
-    assert.equal((await start.textContent()).trim(), 'Switch Class');
-    await start.click();
-    await page.getByTestId('dialog-class-start-review').getByRole('heading', { name: 'Switch Chemistry?' }).waitFor();
-    await page.keyboard.press('Escape');
-    await page.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
-    await page.waitForFunction(testId => document.activeElement?.getAttribute('data-testid') === testId,
-      role === 'admin' ? 'button-admin-start-session' : 'button-start-session', { timeout: 2_000 });
-    assert.equal(await start.evaluate(element => element === document.activeElement), true, 'Escape restores focus to the Switch action');
-    await manual.click();
+    assert.equal(await page.locator('[data-testid*="start-manually-today"]').count(), 0);
+    assert.equal(await page.locator('[data-testid*="skip-scheduled-class-today"]').count(), 0);
+    await selector.selectOption(chemistryId); assert.equal(harness.startRequests.length, 0);
+    await start.focus(); await page.keyboard.press('Enter');
     const review = page.getByTestId('dialog-class-start-review');
-    await review.getByRole('heading', { name: 'Switch Chemistry manually today?' }).waitFor();
-    await review.getByTestId('class-start-replacement').getByText('Biology', { exact: false }).waitFor();
-    await review.getByTestId('class-start-flight-path').getByText('Chemistry resources', { exact: true }).waitFor();
-    await review.getByText(/all assigned teachers and co-teachers/).waitFor();
-    for (let tab = 0; tab < 8; tab += 1) {
-      await page.keyboard.press('Tab');
-      assert.equal(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="dialog-class-start-review"]')), true, 'Keyboard focus stays inside the review');
-    }
-    await page.screenshot({ path: path.join(tmpdir(), `classpilot-manual-start-switch-${role}.png`) });
-    assert.equal(harness.startRequests.length, 0, 'Reviewing and cancelling do not mutate class mode');
-    await review.getByTestId('button-confirm-class-start-review').click();
+    await review.getByRole('heading', { name: 'Switch Chemistry?' }).waitFor();
+    await page.keyboard.press('Escape'); await review.waitFor({ state: 'detached' });
+    assert.equal(await start.evaluate(element => element === document.activeElement), true);
+    await start.click(); await review.getByTestId('button-confirm-class-start-review').click();
     await review.getByTestId('class-start-review-overlap').waitFor();
-    assert.equal(await page.getByTestId('dialog-class-start-overlap').count(), 0, 'Overlap stays in the combined review');
-    assert.deepEqual(harness.startRequests[0], { groupId: chemistryId, expectedActiveSessionId: 'scheduled-session', manualToday: { expectedSchoolDate: '2026-10-30' } });
-    assert.equal(harness.manualTodayRequests.length, 0, 'Atomic Start never calls the separate pause-only endpoint');
     await review.getByRole('button', { name: 'Switch and move 2 students', exact: true }).click();
     await review.waitFor({ state: 'detached' });
-    assert.deepEqual(harness.startRequests[1], { ...harness.startRequests[0], acknowledgeOverlap: true });
-    await page.getByTestId('manual-today-status').getByText(/Chemistry/).waitFor();
-    await page.getByTestId('selected-class-schedule-status').getByText('Manual today · Teaching', { exact: true }).waitFor();
-    assert.equal(harness.endRequests.length, 0, 'Switch ends the previous session only through the atomic server action');
-    assert.deepEqual(errors, []);
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Persistent controls fit desktop and mobile viewports');
+    assert.deepEqual(harness.startRequests, [{ groupId: chemistryId, expectedActiveSessionId: 'scheduled-session' }, { groupId: chemistryId, expectedActiveSessionId: 'scheduled-session', acknowledgeOverlap: true }]);
+    assert.equal(harness.manualTodayRequests.length, 0);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.close();
   }
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const idle = await configurePage(page, 'scheduled', { active: false, manualToday: status, groups,
-    startResponse(body) {
-      if (!body.manualToday) return { status: 409, json: { code: 'MANUAL_TODAY_REQUIRED', schoolDate: status.schoolDate, canManageManualToday: true, error: 'Manual start required.' } };
-      const session = activeSession('manual');
-      return { session, json: { session } };
-    },
-  });
+  const page = await browser.newPage();
+  const idle = await configurePage(page, 'scheduled', { active: false, groups, startResponse() { return { status: 409, json: { code: 'TODAY_SCHEDULE_CHANGE_REQUIRED', error: 'Use Teaching tools.' } }; } });
   await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await page.waitForFunction(() => document.querySelector('[data-testid="button-start-session"]')?.disabled === false);
-  await page.getByTestId('button-start-session').focus();
-  await page.keyboard.press('Enter');
-  await page.getByTestId('dialog-class-start-review').getByRole('heading', { name: 'Start Biology manually today?' }).waitFor();
-  await page.getByTestId('button-confirm-class-start-review').click();
-  await page.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
-  assert.deepEqual(idle.startRequests, [{ groupId: GROUP_ID, expectedActiveSessionId: null }, { groupId: GROUP_ID, expectedActiveSessionId: null, manualToday: { expectedSchoolDate: status.schoolDate } }]);
-  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Idle keyboard start also fits the mobile viewport');
-  const overlapPage = await browser.newPage();
-  const overlapIdle = await configurePage(overlapPage, 'manual', { active: false,
-    startResponse(body) {
-      if (!body.acknowledgeOverlap) return { status: 409, json: { code: 'CLASS_ROSTER_ACTIVE_OVERLAP', totalOverlapCount: 1, selectedClass: groups[0], groups: [{ sessionId: 'overlap-other', teacherName: 'Other teacher', className: 'Math', affectedCount: 1 }] } };
-      const session = activeSession('manual');
-      return { session, json: { session } };
-    },
-  });
-  await overlapPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await overlapPage.getByTestId('button-start-session').click();
-  await overlapPage.getByTestId('class-start-review-overlap').waitFor();
-  assert.equal(await overlapPage.getByTestId('dialog-class-start-overlap').count(), 0);
-  await overlapPage.getByRole('button', { name: 'Start and move 1 student', exact: true }).click();
-  await overlapPage.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
-  assert.deepEqual(overlapIdle.startRequests, [{ groupId: GROUP_ID, expectedActiveSessionId: null }, { groupId: GROUP_ID, expectedActiveSessionId: null, acknowledgeOverlap: true }]);
+  await page.getByTestId('button-start-session').click();
+  await page.getByTestId('class-start-timing-notice').waitFor();
+  assert.equal(await page.getByTestId('dialog-class-start-review').count(), 0);
+  assert.deepEqual(idle.startRequests, [{ groupId: GROUP_ID, expectedActiveSessionId: null }]);
+  await page.getByRole('button', { name: 'Open Today schedule' }).click();
+  await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/classpilot/my-settings/today');
+  assert.equal(new URL(page.url()).searchParams.get('selectedGroupId'), GROUP_ID);
+  assert.equal(idle.manualTodayRequests.length, 0);
 });

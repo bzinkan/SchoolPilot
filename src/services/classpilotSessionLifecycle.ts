@@ -273,7 +273,7 @@ export async function startManualClasspilotSession(options: {
   teacherId: string;
   groupId: string;
   requiredManualDate?: string;
-  manualToday?: { expectedSchoolDate: string };
+  manualToday?: { expectedSchoolDate: string; expectedTodayRevision?: number };
   expectedActiveSessionId?: string | null;
   acknowledgeOverlap?: boolean;
   dbInstance?: typeof db;
@@ -299,7 +299,7 @@ export async function startManualClasspilotSession(options: {
       const manualDate = options.manualToday?.expectedSchoolDate ?? options.requiredManualDate;
       const manualToday = options.manualToday ? await enableClasspilotManualToday({
         schoolId: options.schoolId, actorId: options.teacherId, groupId: options.groupId,
-        expectedSchoolDate: options.manualToday.expectedSchoolDate, allowExisting: true,
+        expectedSchoolDate: options.manualToday.expectedSchoolDate, expectedTodayRevision: options.manualToday.expectedTodayRevision, allowExisting: true,
       }, lockedDb) : undefined;
       await assertClasspilotManualStartMode(options.schoolId, options.groupId, manualDate, lockedDb);
       const reusableResult = await getReusableClasspilotManualSession(options.schoolId, options.teacherId, options.groupId, lockedDb);

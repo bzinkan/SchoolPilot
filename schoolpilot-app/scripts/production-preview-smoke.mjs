@@ -213,6 +213,26 @@ const cases = [
     surface: 'retired parent route without parent-data calls',
   },
   {
+    requestedPath: '/classpilot/my-settings/today',
+    expectedPath: '/classpilot/my-settings/today',
+    persona: personas.classpilotTeacher,
+    assertion: async page => {
+      await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor({ state: 'visible' });
+      await page.getByText('New period swaps are not available at your school yet.', { exact: false }).waitFor({ state: 'visible' });
+    },
+    surface: 'Today schedule retains a read-only surface while runtime is off',
+  },
+  {
+    requestedPath: '/classpilot/my-settings/manual-today',
+    expectedPath: '/classpilot/my-settings/today',
+    expectRedirect: true,
+    persona: personas.classpilotTeacher,
+    assertion: async page => {
+      await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor({ state: 'visible' });
+    },
+    surface: 'former teacher manual-day link redirects to Today schedule',
+  },
+  {
     requestedPath: '/preview-smoke/unknown-route',
     expectedPath: '/classpilot',
     expectRedirect: true,
@@ -439,6 +459,11 @@ export function responseBodyFor(
       canManageManualToday: false,
       teacherManualTodayAllowed: false,
       classes: [],
+    },
+    '/api/classpilot/today-schedule': {
+      enabled: false, schoolDate, timeZone: schoolTimezone,
+      resumesAt: fromZonedTime(`${resumesOn}T00:00:00`, schoolTimezone).toISOString(),
+      canRequest: false, permissionSettingEnabled: false, classes: [], changes: [],
     },
     '/api/students-aggregated': { students: [] },
     '/api/settings': { settings: {} },

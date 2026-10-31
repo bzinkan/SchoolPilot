@@ -9,6 +9,7 @@ import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { getApprovedScheduleChangeLegsForSchoolDate } from "./classpilotScheduleChanges.js";
 import { profileSupervisionOutcomeKey } from "./classpilotScheduleProfileSupervision.js";
 import { isScheduleProfileBlockCancelled } from "./classpilotScheduleProfileModel.js";
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import type { ClasspilotDashboardActivity } from "./classpilotDashboardActivity.js";
 
 export type PlannedActivity = { id: string; source: "scheduled_class" | "scheduled_testing" | "scheduled_coverage"; name: string;
@@ -37,9 +38,9 @@ export async function getDashboardSchedule(schoolId: string, viewerId: string,
     .where(and(eq(teachingSessions.schoolId, schoolId), gte(teachingSessions.scheduledDate, today))).limit(limit + 1);
   if (recorded.length > limit) throw new Error("DASHBOARD_SCHEDULE_INCOMPLETE");
   const candidates: PlannedActivity[] = [...scheduledContexts];
-  const frozen = new Set(recorded.map(({ session }) => `${session.scheduledDate}:${session.groupId}`));
+  const frozen = new Set(recorded.map(({ session }) => session.scheduledOccurrenceId ?? `${session.scheduledDate}:${session.groupId}`));
   for (const { session, manualDate } of recorded) {
-    if (session.scheduledDate === manualDate) continue;
+    if (!session.scheduledOccurrenceId && session.scheduledDate === manualDate) continue;
     if (session.endTime || session.scheduledState !== "active" || !session.scheduledStartAt || !session.scheduledEndAt || session.scheduledEndAt <= now) continue;
     candidates.push({ id: session.id, source: "scheduled_class", name: session.classNameSnapshot || "Scheduled class",
       startsAt: session.scheduledStartAt.toISOString(), endsAt: session.scheduledEndAt.toISOString(),
@@ -54,7 +55,20 @@ export async function getDashboardSchedule(schoolId: string, viewerId: string,
     for (const leg of legs) pairs.set(leg.swapId, (pairs.get(leg.swapId) ?? 0) + 1);
     if ([...pairs.values()].some((count) => count !== 2)) throw new Error("DASHBOARD_SCHEDULE_INCOMPLETE");
     const byClass = new Map(legs.map((leg) => [leg.groupId, leg]));
+    const todayPlans = offset === 0 ? await loadClasspilotTodayOccurrences({ schoolId, scheduledDate: date,
+      groupIds: personalRows.map(row => row.group.id), dbInstance: database }) : null;
     for (const { group } of personalRows) {
+      const plan = todayPlans?.get(group.id);
+      if (plan) {
+        for (const row of plan) {
+          const window = todayOccurrenceWindow(row);
+          if (!window || frozen.has(window.scheduledOccurrenceId ?? `${date}:${group.id}`) || window.scheduledEndAt <= now) continue;
+          candidates.push({ id: window.scheduledOccurrenceId ?? window.preservedLegacySessionId ?? `${date}:${group.id}`, source: "scheduled_class", name: row.classNameSnapshot,
+            startsAt: window.scheduledStartAt.toISOString(), endsAt: window.scheduledEndAt.toISOString(),
+            status: window.scheduledStartAt <= now ? "waiting" : "pending" });
+        }
+        continue;
+      }
       if (frozen.has(`${date}:${group.id}`) || group.scheduleSkippedDate === date || group.scheduleManualDate === date) continue;
       const window = resolveClassBaseWindow(group, date, scheduling.config, scheduling.calendar);
       if (!window) continue;

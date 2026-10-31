@@ -1,3 +1,4 @@
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { createHash } from "node:crypto";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import db from "../db.js";
@@ -115,7 +116,7 @@ export async function previewSchoolScheduling(options: {
   const classRows = await database.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.status, "active"), eq(groups.scheduleEnabled, true)));
   const [staff, frozen, approved] = await Promise.all([
     classRows.length ? database.select().from(groupTeachers).where(inArray(groupTeachers.groupId, classRows.map((g) => g.id))) : [],
-    database.select({ id: teachingSessions.id, groupId: teachingSessions.groupId, date: teachingSessions.scheduledDate,
+    database.select({ id: teachingSessions.id, groupId: teachingSessions.groupId, scheduledOccurrenceId: teachingSessions.scheduledOccurrenceId, actualEndAt: teachingSessions.endTime, date: teachingSessions.scheduledDate,
       teacherId: teachingSessions.teacherId, name: teachingSessions.classNameSnapshot, state: teachingSessions.scheduledState,
       startAt: teachingSessions.scheduledStartAt, endAt: teachingSessions.scheduledEndAt }).from(teachingSessions).where(and(eq(teachingSessions.schoolId, options.schoolId), sql`${teachingSessions.scheduledDate} >= ${fromDate}`)),
     database.select({ groupId: classpilotScheduleChangeLegs.groupId, date: classpilotScheduleChangeLegs.scheduledDate,
@@ -123,6 +124,7 @@ export async function previewSchoolScheduling(options: {
       .innerJoin(classpilotScheduleChanges, and(eq(classpilotScheduleChanges.id, classpilotScheduleChangeLegs.scheduleChangeId), eq(classpilotScheduleChanges.schoolId, classpilotScheduleChangeLegs.schoolId)))
       .where(and(eq(classpilotScheduleChangeLegs.schoolId, options.schoolId), eq(classpilotScheduleChanges.status, "approved"), eq(classpilotScheduleChanges.reservationActive, true), sql`${classpilotScheduleChangeLegs.scheduledDate} >= ${fromDate}`)),
   ]);
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: fromDate, dbInstance: database });
   const frozenStaff = frozen.length ? await database.select().from(classpilotSessionStaff).where(and(eq(classpilotSessionStaff.schoolId, options.schoolId), inArray(classpilotSessionStaff.teachingSessionId, frozen.map((row) => row.id)))) : [];
   const frozenKeys = new Set(frozen.map((r) => `${r.groupId}:${r.date}`));
   const approvedWindows = new Map(approved.map((r) => [`${r.groupId}:${r.date}`, { startTime: r.startTime, endTime: r.endTime }]));
@@ -179,9 +181,24 @@ export async function previewSchoolScheduling(options: {
       if (!occurrence.startAt || !occurrence.endAt) continue;
       resolved.push({ name: occurrence.name ?? classRows.find((g) => g.id === occurrence.groupId)?.name ?? "Frozen class",
         staff: new Set([occurrence.teacherId, ...frozenStaff.filter((row) => row.teachingSessionId === occurrence.id).map((row) => row.staffId)]),
-        startAt: occurrence.startAt.getTime(), endAt: occurrence.endAt.getTime() });
+        startAt: occurrence.startAt.getTime(), endAt: Math.min(occurrence.endAt.getTime(), occurrence.actualEndAt?.getTime() ?? Infinity) });
     }
     for (const group of classRows) {
+      const todayPlan = date === fromDate ? todayPlans.get(group.id) : undefined;
+      if (todayPlan) {
+        let before, after;
+        try { before = resolveClassBaseWindow(group, date, current.config, current.calendar, oldDay); after = resolveClassBaseWindow(group, date, config, calendar, nextDay); }
+        catch { block("TODAY_SCHEDULE_APPLIED", "Resolve today's period swaps before changing their calendar dependencies.", date); }
+        const meetings = todayPlan.flatMap(row => { const window = todayOccurrenceWindow(row); return window ? [{ row, window }] : []; });
+        if (meetings.some(({ window }) => window.scheduledEndAt > now)
+          && (!nextDay.instructional || JSON.stringify(before) !== JSON.stringify(after)))
+          block("TODAY_SCHEDULE_APPLIED", "Today's period swaps reserve these class times. Use administrator recovery before changing their calendar dependencies.", date);
+        for (const { window } of meetings) {
+          if (frozen.some(session => window.scheduledOccurrenceId ? session.scheduledOccurrenceId === window.scheduledOccurrenceId : session.id === window.preservedLegacySessionId)) continue;
+          resolved.push({ name: group.name, staff: staffByClass.get(group.id)!, startAt: window.scheduledStartAt.getTime(), endAt: window.scheduledEndAt.getTime() });
+        }
+        continue;
+      }
       if (frozenKeys.has(`${group.id}:${date}`)) continue;
       let before, after;
       try { before = resolveClassBaseWindow(group, date, current.config, current.calendar, oldDay); } catch { before = null; }
@@ -205,7 +222,7 @@ export async function previewSchoolScheduling(options: {
     }
   }
   const calendarIdentity = Object.fromEntries(Object.entries(calendar).sort(([a], [b]) => a.localeCompare(b)).map(([month, value]) => [month, [...(value.nonInstructionalDates ?? [])].sort()]));
-  const previewToken = createHash("sha256").update(JSON.stringify({ current, config, calendar: calendarIdentity, classRows, staff, frozen, frozenStaff, approved, fromDate })).digest("hex");
+  const previewToken = createHash("sha256").update(JSON.stringify({ current, config, calendar: calendarIdentity, classRows, staff, frozen, frozenStaff, approved, todayPlans: [...todayPlans], fromDate })).digest("hex");
   return { revision: current.revision, previewToken, schoolTimezone, fromDate, throughDate: days.at(-1)?.date ?? horizon, changedOccurrences, changes, blockers, days };
 }
 

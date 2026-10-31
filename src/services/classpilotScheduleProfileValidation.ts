@@ -6,12 +6,13 @@ import { SCHEDULE_PROFILE_LIMITS } from "./classpilotScheduleProfileModel.js";
 import { resolveClasspilotMonitoringPolicy } from "./classpilotMonitoringPolicy.js";
 import { isSchedulingInstructionalDate, normalizeSchoolSchedulingConfig, resolveClassBaseWindow,
   type SchedulingCalendar, type SchedulingGroup, type SchoolSchedulingConfig } from "./classpilotSchedulingRules.js";
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 
 type Blocker = { code: string; message: string; date?: string };
 type ObligationGroup = SchedulingGroup & { id: string; name: string; staffIds: string[]; studentIds: string[] };
 type ObligationSession = {
-  id: string; groupId: string; name: string; date: string | null; scheduledState: string | null;
+  id: string; groupId: string; name: string; scheduledOccurrenceId?: string | null; date: string | null; scheduledState: string | null;
   startAt: string; endAt: string | null; rosterComplete: boolean; staffIds: string[]; studentIds: string[];
 };
 export type ScheduleProfileValidationFacts = {
@@ -23,6 +24,7 @@ export type ScheduleProfileValidationFacts = {
   sessions: ObligationSession[];
   approved: Array<{ id: string; groupId: string; date: string; startTime: string; endTime: string }>;
   today: string;
+  todayPlans?: Array<{ groupId: string; date: string; meetings: Array<{ id: string; startAt: string; endAt: string }> }>;
 };
 
 function stable(value: unknown): string {
@@ -86,7 +88,16 @@ export function evaluateScheduleProfileTestingWindows(testingWindows: SchedulePr
       if (sessionStart < end && sessionEnd > start) conflicts(session.name || classById.get(session.groupId)?.name || "Recorded class", session.studentIds, session.rosterComplete);
     }
     for (const group of facts.groups) {
-      if (!group.staffIds.includes(window.assignedStaffId) || frozen.has(`${group.id}:${window.date}`)) continue;
+      if (!group.staffIds.includes(window.assignedStaffId)) continue;
+      const todayPlan = facts.todayPlans?.find(plan => plan.groupId === group.id && plan.date === window.date);
+      if (todayPlan) {
+        for (const meeting of todayPlan.meetings) {
+          if (facts.sessions.some(session => session.scheduledOccurrenceId === meeting.id || session.id === meeting.id)) continue;
+          if (Date.parse(meeting.startAt) < end && Date.parse(meeting.endAt) > start) conflicts(group.name, group.studentIds, true);
+        }
+        continue;
+      }
+      if (frozen.has(`${group.id}:${window.date}`)) continue;
       let classWindow;
       try { classWindow = resolveClassBaseWindow(group, window.date, facts.config, facts.calendar); }
       catch { block("SCHEDULE_PROFILE_CLASS_WINDOW_UNAVAILABLE", `${window.name}: ${group.name} has an unresolved schedule. Fix its period or calendar mapping first.`, window.date); continue; }
@@ -181,12 +192,19 @@ export async function validateScheduleProfileTestingWindows(options: {
   const studentsByGroup = indexed(classStudents.map((r) => ({ parent: r.groupId, value: r.studentId })));
   const staffBySession = indexed(sessionStaff.map((r) => ({ parent: r.sessionId, value: r.staffId })));
   const studentsBySession = indexed(sessionStudents.map((r) => ({ parent: r.sessionId, value: r.studentId })));
+  const todayPlans = (await Promise.all(dates.map(async date => {
+    const plans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: date, groupIds, dbInstance: database });
+    return [...plans].map(([groupId, rows]) => ({ groupId, date, meetings: rows.flatMap(row => {
+      const window = todayOccurrenceWindow(row);
+      return window ? [{ id: window.scheduledOccurrenceId ?? window.preservedLegacySessionId ?? row.id, startAt: window.scheduledStartAt.toISOString(), endAt: window.scheduledEndAt.toISOString() }] : [];
+    }) }));
+  }))).flat();
   return evaluateScheduleProfileTestingWindows(options.testingWindows, {
-    schoolTimezone, tracking, config, calendar, today, approved,
+    schoolTimezone, tracking, config, calendar, today, approved, todayPlans,
     groups: selectedGroups.map((g) => ({ id: g.id, name: g.name, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime, scheduleRule: g.scheduleRule,
       staffIds: [...new Set([g.teacherId, ...(staffByGroup.get(g.id) ?? [])])].sort(), studentIds: studentsByGroup.get(g.id) ?? [] })),
-    sessions: sessions.map((s) => ({ id: s.id, groupId: s.groupId, name: s.classNameSnapshot || selectedGroups.find((g) => g.id === s.groupId)?.name || "Recorded class", date: s.scheduledDate,
-      scheduledState: s.scheduledState, startAt: (s.scheduledStartAt ?? s.startTime).toISOString(), endAt: (s.scheduledEndAt ?? s.endTime)?.toISOString() ?? null,
+    sessions: sessions.map((s) => ({ id: s.id, scheduledOccurrenceId: s.scheduledOccurrenceId, groupId: s.groupId, name: s.classNameSnapshot || selectedGroups.find((g) => g.id === s.groupId)?.name || "Recorded class", date: s.scheduledDate,
+      scheduledState: s.scheduledState, startAt: (s.scheduledStartAt ?? s.startTime).toISOString(), endAt: s.endTime && s.scheduledEndAt ? new Date(Math.min(s.endTime.getTime(), s.scheduledEndAt.getTime())).toISOString() : (s.scheduledEndAt ?? s.endTime)?.toISOString() ?? null,
       rosterComplete: Boolean(s.rosterSnapshotCompletedAt), staffIds: [...new Set([s.teacherId, ...(staffBySession.get(s.id) ?? [])])].sort(), studentIds: studentsBySession.get(s.id) ?? [] })),
   });
 }

@@ -13,6 +13,7 @@ import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { localDateInTimeZone, localDateTimeUtc, addLocalDays } from "../util/schoolTime.js";
 import { readStoredSchoolSchedulingConfig, resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { getApprovedScheduleChangeLegsForSchoolDate } from "./classpilotScheduleChanges.js";
+import { canonicalTodayOccurrenceId, loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { isScheduleProfileBlockCancelled } from "./classpilotScheduleProfileModel.js";
 import { assertClasspilotEntitled, isClasspilotSchoolActive } from "./classpilotEntitlement.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
@@ -62,7 +63,7 @@ async function classpilotCandidates(schoolId: string, teacherId: string, dates: 
     database.selectDistinct({ group: groups }).from(groups).leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
       .where(and(eq(groups.schoolId, schoolId), eq(groups.status, "active"), eq(groups.groupType, "admin_class"),
         or(eq(groups.teacherId, teacherId), eq(groupTeachers.teacherId, teacherId)))).limit(501),
-    database.select({ session: teachingSessions, authorizedStaff: classpilotSessionStaff.staffId, skippedDate: groups.scheduleSkippedDate }).from(teachingSessions)
+    database.select({ session: teachingSessions, authorizedStaff: classpilotSessionStaff.staffId, skippedDate: groups.scheduleSkippedDate, manualDate: groups.scheduleManualDate }).from(teachingSessions)
       .innerJoin(groups, and(eq(groups.id, teachingSessions.groupId), eq(groups.schoolId, schoolId),
         eq(groups.groupType, "admin_class"), eq(groups.status, "active")))
       .leftJoin(classpilotSessionStaff, and(eq(classpilotSessionStaff.schoolId, schoolId),
@@ -80,9 +81,18 @@ async function classpilotCandidates(schoolId: string, teacherId: string, dates: 
   if (personal.length > 500 || recorded.length > 1000 || contexts.length > 2500) throw kioskError("Schedule is too large to resolve completely.", "PASSPILOT_KIOSK_SCOPE_LIMIT", 422);
   const config = readStoredSchoolSchedulingConfig(scheduleRows[0]?.config);
   const candidates: KioskAssignment[] = [];
-  const frozen = new Set(recorded.map(({ session: s }) => `${s.scheduledDate}:${s.groupId}`));
-  for (const { session: s, authorizedStaff, skippedDate } of recorded) {
-    if (s.endTime || s.scheduledState === "skipped" || s.scheduledState === "finalized" || skippedDate === s.scheduledDate
+  const todayByDate = new Map(await Promise.all(dates.map(async date => [date, await loadClasspilotTodayOccurrences({
+    schoolId, scheduledDate: date, groupIds: personal.map(row => row.group.id), dbInstance: database,
+  })] as const)));
+  const frozen = new Set(recorded.map(({ session: s }) => s.scheduledOccurrenceId ?? `${s.scheduledDate}:${s.groupId}`));
+  for (const { session: s, authorizedStaff, skippedDate, manualDate } of recorded) {
+    const plan = todayByDate.get(s.scheduledDate!)?.get(s.groupId);
+    // A dated correction supersedes only its named meetings. Retained old
+    // session rows must not restore the previous kiosk assignment.
+    if (plan && !plan.some(row => row.kind === "meeting" && (s.scheduledOccurrenceId
+      ? canonicalTodayOccurrenceId(row) === s.scheduledOccurrenceId : row.source.preservedLegacySessionId === s.id))) continue;
+    if (s.endTime || s.scheduledState === "skipped" || s.scheduledState === "finalized"
+      || !plan && (skippedDate === s.scheduledDate || manualDate === s.scheduledDate)
       || !s.scheduledStartAt || !s.scheduledEndAt
       || (s.rosterSnapshotCompletedAt && !authorizedStaff)
       || calendar[s.scheduledDate!.slice(0, 7)]?.nonInstructionalDates?.includes(s.scheduledDate!)) continue;
@@ -92,7 +102,19 @@ async function classpilotCandidates(schoolId: string, teacherId: string, dates: 
   }
   for (const date of dates) {
     const windows = personal.flatMap(({ group }) => {
-      if (frozen.has(`${date}:${group.id}`) || group.scheduleSkippedDate === date) return [];
+      const plan = todayByDate.get(date)?.get(group.id);
+      if (plan) {
+        if (!calendar[date.slice(0, 7)]?.nonInstructionalDates?.includes(date)) for (const row of plan) {
+          const window = todayOccurrenceWindow(row);
+          if (!window || !window.scheduledOccurrenceId || frozen.has(window.scheduledOccurrenceId)
+            || typeof row.source.preservedLegacySessionId === "string") continue;
+          candidates.push({ id: `classpilot:occurrence:${window.scheduledOccurrenceId}`, kind: "class", name: row.classNameSnapshot,
+            classId: group.id, supervisionContextId: null, state: "ready", startsAt: window.scheduledStartAt.toISOString(),
+            endsAt: window.scheduledEndAt.toISOString() });
+        }
+        return [];
+      }
+      if (frozen.has(`${date}:${group.id}`) || group.scheduleSkippedDate === date || group.scheduleManualDate === date) return [];
       const window = resolveClassBaseWindow(group, date, config, calendar);
       return window ? [{ group, window }] : [];
     });

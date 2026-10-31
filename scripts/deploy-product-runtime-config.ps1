@@ -12,13 +12,14 @@ param(
 # transport, private files, task cloning, operation fence (the same DynamoDB
 # lease as the ClassPilot and My Desk tools, so one runtime-config operation
 # runs at a time), autoscaling hold, health checks and exact convergence. It
-# never invokes the capability workflow and writes no name outside the nine
+# never invokes the capability workflow and writes no name outside the ten
 # below: every other environment entry, secret and task field is fingerprinted
 # and must survive each clone unchanged.
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
 $script:ProductSchoolIdsName = 'CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS'
 $script:ProductModeValues = [ordered]@{
     CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = @('off', 'on')
+    CLASSPILOT_TODAY_SCHEDULE_MODE = @('off', 'on')
     PASSPILOT_RULES_MODE = @('off', 'on')
     PASSPILOT_APPOINTMENTS_MODE = @('off', 'on')
     PASSPILOT_REPORTS_MODE = @('off', 'v2')
@@ -33,12 +34,13 @@ $script:ProductModeValues = [ordered]@{
 }
 $script:RuntimeEnvironmentNames = @('CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', $script:ProductSchoolIdsName, 'PASSPILOT_RULES_MODE',
     'PASSPILOT_APPOINTMENTS_MODE', 'PASSPILOT_REPORTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE',
-    'CLASSPILOT_DASHBOARD_THEMES_ENABLED')
+    'CLASSPILOT_DASHBOARD_THEMES_ENABLED', 'CLASSPILOT_TODAY_SCHEDULE_MODE')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
 $script:AllowedSecretNames = @()
 # These features' mode readers stay off unless their whole table bundle is RLS
 # admitted on the task that reads them, so turning one on requires the same.
 $script:ProductRlsGates = @(
+    [pscustomobject]@{ Feature = 'todaySchedule'; Name = 'CLASSPILOT_TODAY_SCHEDULE_MODE'; Tables = @('classpilot_today_changes', 'classpilot_today_occurrences') },
     [pscustomobject]@{ Feature = 'passpilotRules'; Name = 'PASSPILOT_RULES_MODE'
         Tables = @('passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials') },
     [pscustomobject]@{ Feature = 'passpilotAppointments'; Name = 'PASSPILOT_APPOINTMENTS_MODE'; Tables = @('passpilot_appointments') },
@@ -201,6 +203,7 @@ function Get-ProductExposure {
         usageRollup = $State['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on'
         digitalUsage = $State['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on'
         dashboardThemes = $State['CLASSPILOT_DASHBOARD_THEMES_ENABLED'] -ceq 'true'
+        todaySchedule = $State['CLASSPILOT_TODAY_SCHEDULE_MODE'] -ceq 'on'
     }
 }
 
@@ -214,7 +217,7 @@ function Get-ProductActivations {
     if (-not $before.AllSchools -and ($after.AllSchools -or @($after.Schools | Where-Object { $_ -cnotin $before.Schools }).Count)) {
         $activations.Add('sharedTeachingResources')
     }
-    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage', 'dashboardThemes')) {
+    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage', 'dashboardThemes', 'todaySchedule')) {
         if ($after.$feature -and -not $before.$feature) { $activations.Add($feature) }
     }
     return ,$activations.ToArray()
