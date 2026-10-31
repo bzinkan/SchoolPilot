@@ -1,3 +1,4 @@
+import { isClasspilotTodayScheduleEnabled } from "../config/classpilotTodaySchedule.js";
 import { getWindowsReportObservations, getWindowsReportSessions, type WindowsReportContext } from "./classpilotWindowsReporting.js";
 import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, sealHeartbeatPreparedReads,
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
@@ -12685,6 +12686,7 @@ export async function createTeachingSession(
         schoolId: groups.schoolId,
         name: groups.name,
         scheduleManualDate: groups.scheduleManualDate,
+        scheduleEnabled: groups.scheduleEnabled,
         timezone: schools.schoolTimezone,
       })
       .from(groups)
@@ -12706,6 +12708,10 @@ export async function createTeachingSession(
       );
     }
     await assertClasspilotEntitled(group.schoolId, transactionDb, { lock: true });
+    if (!data.scheduledDate && !data.endTime && group.scheduleEnabled) {
+      const access = await classpilotManualTodayAccess(group.schoolId, data.teacherId, transactionDb);
+      if (!access.admin) throw manualTodayError("Use Teaching tools - Today's schedule to swap periods.", 409, "TODAY_SCHEDULE_CHANGE_REQUIRED");
+    }
     const startTime = data.startTime ?? new Date();
     const manualDate = localDateInTimeZone(startTime, group.timezone || "America/New_York");
     if (data.requiredManualDate && (manualDate !== data.requiredManualDate || group.scheduleManualDate !== data.requiredManualDate)) {
@@ -12769,7 +12775,8 @@ export async function getScheduledTeachingSessionOccurrence(
   schoolId: string,
   groupId: string,
   scheduledDate: string,
-  dbInstance: typeof db = db
+  dbInstance: typeof db = db,
+  scheduledOccurrenceId: string | null = null
 ): Promise<TeachingSession | undefined> {
   const [session] = await dbInstance
     .select()
@@ -12777,7 +12784,8 @@ export async function getScheduledTeachingSessionOccurrence(
     .where(and(
       eq(teachingSessions.schoolId, schoolId),
       eq(teachingSessions.groupId, groupId),
-      eq(teachingSessions.scheduledDate, scheduledDate)
+      eq(teachingSessions.scheduledDate, scheduledDate),
+      scheduledOccurrenceId ? eq(teachingSessions.scheduledOccurrenceId, scheduledOccurrenceId) : isNull(teachingSessions.scheduledOccurrenceId)
     ))
     .limit(1);
   return session;
@@ -12789,6 +12797,7 @@ export async function createOrReuseScheduledReportSession(
     groupId: string;
     teacherId: string;
     scheduledDate: string;
+    scheduledOccurrenceId?: string | null;
     scheduledTimezone: string;
     scheduledStartAt: Date;
     scheduledEndAt: Date;
@@ -12817,14 +12826,19 @@ export async function createOrReuseScheduledReportSession(
       // tombstone and canonical creation linearizable.
       .for("update");
     if (!groupSnapshot) throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
-    if (groupSnapshot.scheduleManualDate === data.scheduledDate) {
+    if (data.scheduledOccurrenceId) {
+      const { assertClasspilotTodayOccurrence } = await import("./classpilotTodayOccurrences.js");
+      await assertClasspilotTodayOccurrence({ ...data, scheduledOccurrenceId: data.scheduledOccurrenceId }, transactionDb);
+    }
+    if (!data.scheduledOccurrenceId && groupSnapshot.scheduleManualDate === data.scheduledDate) {
       throw manualTodayError("This class uses Manual for today.", 409, "MANUAL_TODAY_ACTIVE");
     }
     const existing = await getScheduledTeachingSessionOccurrence(
       data.schoolId,
       data.groupId,
       data.scheduledDate,
-      transactionDb
+      transactionDb,
+      data.scheduledOccurrenceId ?? null
     );
     if (existing) {
       // A live occurrence already owns its roster's control states; the
@@ -12864,6 +12878,7 @@ export async function createOrReuseScheduledReportSession(
         sessionMode: SCHEDULED_REPORT_SESSION_MODE,
         scheduledConflictId: data.scheduledConflictId || null,
         scheduledDate: data.scheduledDate,
+        scheduledOccurrenceId: data.scheduledOccurrenceId ?? null,
         scheduledTimezone: data.scheduledTimezone,
         scheduledStartAt: data.scheduledStartAt,
         scheduledEndAt: data.scheduledEndAt,
@@ -12896,7 +12911,8 @@ export async function createOrReuseScheduledReportSession(
       data.schoolId,
       data.groupId,
       data.scheduledDate,
-      transactionDb
+      transactionDb,
+      data.scheduledOccurrenceId ?? null
     );
     if (!raced) throw new Error("Scheduled occurrence conflict did not produce a session row");
     return raced;
@@ -13005,7 +13021,10 @@ export async function promoteScheduledReportSessionToLive(
     if (!current) return undefined;
     const [group] = await tx.select({ scheduleManualDate: groups.scheduleManualDate }).from(groups)
       .where(and(eq(groups.id, current.groupId), eq(groups.schoolId, data.schoolId))).for("share");
-    if (current.scheduledDate && group?.scheduleManualDate === current.scheduledDate) return undefined;
+    if (current.scheduledOccurrenceId && current.scheduledDate) {
+      const { assertClasspilotTodayOccurrence } = await import("./classpilotTodayOccurrences.js");
+      await assertClasspilotTodayOccurrence({ schoolId: data.schoolId, groupId: current.groupId, scheduledDate: current.scheduledDate, scheduledOccurrenceId: current.scheduledOccurrenceId }, transactionDb);
+    } else if (current.scheduledDate && group?.scheduleManualDate === current.scheduledDate) return undefined;
     await assertActiveClasspilotTeacherMembership(
       current.teacherId,
       data.schoolId,
@@ -13356,10 +13375,12 @@ export async function finalizeTeachingSession(
         }).replace(/^24:/, "00:")
       : null;
     const conflictIdentities: SQL[] = [];
-    if (session.scheduledConflictId) {
+    if (session.scheduledOccurrenceId) {
+      conflictIdentities.push(eq(classpilotScheduledConflicts.scheduledOccurrenceId, session.scheduledOccurrenceId));
+    } else if (session.scheduledConflictId) {
       conflictIdentities.push(eq(classpilotScheduledConflicts.id, session.scheduledConflictId));
     }
-    if (session.scheduledDate && frozenBlockStartTime) {
+    if (!session.scheduledOccurrenceId && session.scheduledDate && frozenBlockStartTime) {
       conflictIdentities.push(and(
         eq(classpilotScheduledConflicts.groupId, session.groupId),
         eq(classpilotScheduledConflicts.scheduledDate, session.scheduledDate),
@@ -13373,6 +13394,7 @@ export async function finalizeTeachingSession(
           .where(and(
             eq(classpilotScheduledConflicts.schoolId, options.schoolId),
             inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+            session.scheduledOccurrenceId ? undefined : isNull(classpilotScheduledConflicts.scheduledOccurrenceId),
             or(...conflictIdentities)
           ))
           .for("update")
@@ -13445,7 +13467,7 @@ export async function finalizeTeachingSession(
 
     // Any finalized scheduled occurrence is terminal for that local day. This
     // is especially important for an early teacher/admin End Class action.
-    if (session.scheduledDate) {
+    if (session.scheduledDate && !session.scheduledOccurrenceId) {
       await tx
         .update(groups)
         .set({ scheduleSkippedDate: session.scheduledDate })
@@ -15401,12 +15423,12 @@ async function upsertScheduledClassConflictLocked(
       updatedAt: now,
     })
     .onConflictDoUpdate({
-      target: [
-        classpilotScheduledConflicts.schoolId,
-        classpilotScheduledConflicts.groupId,
-        classpilotScheduledConflicts.scheduledDate,
-        classpilotScheduledConflicts.blockStartTime,
-      ],
+      target: data.scheduledOccurrenceId
+        ? [classpilotScheduledConflicts.schoolId, classpilotScheduledConflicts.scheduledOccurrenceId]
+        : [classpilotScheduledConflicts.schoolId, classpilotScheduledConflicts.groupId,
+          classpilotScheduledConflicts.scheduledDate, classpilotScheduledConflicts.blockStartTime],
+      targetWhere: data.scheduledOccurrenceId ? sql`${classpilotScheduledConflicts.scheduledOccurrenceId} IS NOT NULL`
+        : sql`${classpilotScheduledConflicts.scheduledOccurrenceId} IS NULL`,
       set: {
         teacherId: data.teacherId,
         blockEndTime: data.blockEndTime || null,
@@ -15498,7 +15520,8 @@ export async function upsertScheduledClassConflictForOccurrence(
         eq(classpilotScheduledConflicts.schoolId, data.schoolId),
         eq(classpilotScheduledConflicts.groupId, data.groupId),
         eq(classpilotScheduledConflicts.scheduledDate, data.scheduledDate),
-        eq(classpilotScheduledConflicts.blockStartTime, data.blockStartTime)
+        eq(classpilotScheduledConflicts.blockStartTime, data.blockStartTime),
+        data.scheduledOccurrenceId ? eq(classpilotScheduledConflicts.scheduledOccurrenceId, data.scheduledOccurrenceId) : isNull(classpilotScheduledConflicts.scheduledOccurrenceId)
       ))
       .limit(1);
     const existingAssignments = existingConflict
@@ -15531,6 +15554,7 @@ export async function upsertScheduledClassConflictForOccurrence(
       .limit(1)
       .for("update");
     if (!occurrence) throw new Error("Scheduled occurrence was not found while creating coverage");
+    if ((data.scheduledOccurrenceId ?? null) !== occurrence.scheduledOccurrenceId) throw new Error("SCHEDULED_CONFLICT_OCCURRENCE_MISMATCH");
 
     const occurrenceActive = !occurrence.endTime
       && occurrence.scheduledState === "active"
@@ -15639,7 +15663,7 @@ export async function getScheduledClassConflictByIdAndSchool(
 }
 
 export async function getScheduledClassConflictForSlot(
-  options: { schoolId: string; groupId: string; scheduledDate: string; blockStartTime: string },
+  options: { schoolId: string; groupId: string; scheduledDate: string; blockStartTime: string; scheduledOccurrenceId?: string | null },
   dbInstance: typeof db = db
 ): Promise<ClasspilotScheduledConflict | undefined> {
   const [row] = await dbInstance
@@ -15649,7 +15673,8 @@ export async function getScheduledClassConflictForSlot(
       eq(classpilotScheduledConflicts.schoolId, options.schoolId),
       eq(classpilotScheduledConflicts.groupId, options.groupId),
       eq(classpilotScheduledConflicts.scheduledDate, options.scheduledDate),
-      eq(classpilotScheduledConflicts.blockStartTime, options.blockStartTime)
+      eq(classpilotScheduledConflicts.blockStartTime, options.blockStartTime),
+      options.scheduledOccurrenceId ? eq(classpilotScheduledConflicts.scheduledOccurrenceId, options.scheduledOccurrenceId) : isNull(classpilotScheduledConflicts.scheduledOccurrenceId)
     ))
     .limit(1);
   return row;
@@ -15979,6 +16004,7 @@ export async function getActiveTeachingSessions(
       sessionMode: teachingSessions.sessionMode,
       scheduledConflictId: teachingSessions.scheduledConflictId,
       scheduledDate: teachingSessions.scheduledDate,
+      scheduledOccurrenceId: teachingSessions.scheduledOccurrenceId,
       scheduledTimezone: teachingSessions.scheduledTimezone,
       scheduledStartAt: teachingSessions.scheduledStartAt,
       scheduledEndAt: teachingSessions.scheduledEndAt,
@@ -33369,6 +33395,12 @@ export async function assertNoApprovedFutureScheduleChange(options: {
     );
   const policy = await getClasspilotScheduleChangeSettings(options.schoolId, dbInstance);
   const currentTimezone = policy?.schoolTimezone || "America/New_York";
+  const { loadClasspilotTodayOccurrences } = await import("./classpilotTodayOccurrences.js");
+  const localToday = localDateInTimeZone(now, currentTimezone);
+  const todayPlan = (await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: localToday,
+    groupIds: [options.groupId], dbInstance })).get(options.groupId);
+  if (todayPlan?.some(occurrence => occurrence.kind === "meeting" && occurrence.scheduledEndAt && occurrence.scheduledEndAt > now))
+    throw scheduleChangeError("TODAY_SCHEDULE_APPLIED", "Today's period swaps reserve this class. Use administrator recovery before changing its assignments or saved schedule.", 409);
   if (
     rows.some(
       (row) =>
@@ -33942,6 +33974,10 @@ async function validateScheduleChangeForDate(options: {
       message: typed.message || "One or more classes are no longer eligible.",
     });
   }
+  const { loadClasspilotTodayOccurrences } = await import("./classpilotTodayOccurrences.js");
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: options.scheduledDate,
+    groupIds: pairGroups.map(group => group.id), dbInstance: options.dbInstance });
+  if (todayPlans.size) blockers.push({ code: "TODAY_SCHEDULE_APPLIED", message: "Use Teaching tools - Today's schedule for these existing today-only meetings." });
   if (pairGroups.length !== 2) return { blockers };
   const tuple = pairGroups as [LockedScheduleChangeGroup, LockedScheduleChangeGroup];
   const firstWindow = {
@@ -34274,6 +34310,11 @@ export async function createClasspilotScheduleChange(options: {
         now,
         dbInstance: transactionDb,
       });
+      if (isClasspilotTodayScheduleEnabled()) {
+        const [school] = await transactionDb.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, options.schoolId));
+        if (options.scheduledDate === localDateInTimeZone(now, school?.timezone || "America/New_York"))
+          throw scheduleChangeError("TODAY_SCHEDULE_CHANGE_REQUIRED", "Use Teaching tools - Today's schedule for a same-day period swap.", 409);
+      }
       await lockClasspilotScheduleChangeSettingsRow(
         options.schoolId,
         transactionDb
@@ -36152,7 +36193,7 @@ async function classpilotManualTodayAccess(schoolId: string, actorId: string, da
   const [policy] = lock ? await settingQuery.for("update") : await settingQuery;
   const teacherManualTodayAllowed = policy?.allowed === true;
   const actorRole = actor?.isSuperAdmin ? "super_admin" : memberships.find(row => ["admin", "school_admin"].includes(row.role))?.role ?? "teacher";
-  return { admin, actorRole, teacherManualTodayAllowed, canManageManualToday: admin || teacherManualTodayAllowed };
+  return { admin, actorRole, teacherManualTodayAllowed, canManageManualToday: admin };
 }
 
 export async function getClasspilotManualTodayStatus(schoolId: string, actorId: string, now = new Date(), database: typeof db = db) {
@@ -36168,17 +36209,22 @@ export async function getClasspilotManualTodayStatus(schoolId: string, actorId: 
   const sessions = rows.length ? await database.select({ id: teachingSessions.id, groupId: teachingSessions.groupId }).from(teachingSessions)
     .where(and(eq(teachingSessions.schoolId, schoolId), eq(teachingSessions.scheduledDate, schoolDate),
       isNull(teachingSessions.endTime), inArray(teachingSessions.groupId, rows.map(row => row.id)))) : [];
+  const { loadClasspilotTodayOccurrences } = await import("./classpilotTodayOccurrences.js");
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId, scheduledDate: schoolDate, groupIds: rows.map(row => row.id), dbInstance: database });
   return { schoolDate, timezone, resumesOn: addLocalDays(schoolDate, 1),
     resumesAt: localDateTimeUtc(addLocalDays(schoolDate, 1), "00:00", timezone).toISOString(),
     canManageManualToday: access.canManageManualToday, teacherManualTodayAllowed: access.teacherManualTodayAllowed,
     classes: rows.map(row => ({ id: row.id, name: row.name, gradeLevel: row.gradeLevel, periodLabel: row.periodLabel,
       scheduleEnabled: row.scheduleEnabled, scheduleManualDate: row.scheduleManualDate,
       isManualToday: row.scheduleManualDate === schoolDate,
+      todayRevision: todayPlans.get(row.id)?.[0]?.generation ?? 0,
+      hasTodayPlan: todayPlans.get(row.id)?.some(occurrence => occurrence.kind === "meeting") ?? false,
+      activeScheduledSessionIds: sessions.filter(session => session.groupId === row.id).map(session => session.id),
       activeScheduledSessionId: sessions.find(session => session.groupId === row.id)?.id ?? null })) };
 }
 
 /** A dated exception, serialized with every scheduled/manual lifecycle writer. */
-export async function enableClasspilotManualToday(options: { schoolId: string; actorId: string; groupId: string; expectedSchoolDate: string; now?: Date; allowExisting?: boolean }, database: typeof db = db) {
+export async function enableClasspilotManualToday(options: { schoolId: string; actorId: string; groupId: string; expectedSchoolDate: string; expectedTodayRevision?: number; now?: Date; allowExisting?: boolean }, database: typeof db = db) {
   return database.transaction(async tx => {
     const transactionDb = tx as unknown as typeof db;
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw manualTodayError("School not found.", 404, "MANUAL_TODAY_NOT_FOUND");
@@ -36190,6 +36236,8 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     if (options.expectedSchoolDate !== schoolDate) throw manualTodayError("The school date changed. Review Manual for today again.", 409, "MANUAL_TODAY_DATE_CHANGED");
     await lockInstructionalCalendarDate(options.schoolId, schoolDate, transactionDb);
     const access = await classpilotManualTodayAccess(options.schoolId, options.actorId, transactionDb, true);
+    if (!access.admin) throw manualTodayError("Use Teaching tools - Today's schedule to swap periods.", 409, "TODAY_SCHEDULE_CHANGE_REQUIRED");
+    await takeClasspilotScheduleConfigLock(transactionDb, options.schoolId);
     const [group] = await tx.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).for("update");
     if (!group || group.status !== "active" || !group.scheduleEnabled) throw manualTodayError("Scheduled class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
     if (!access.canManageManualToday && !(options.allowExisting && group.scheduleManualDate === schoolDate))
@@ -36202,10 +36250,27 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     if (localDateInTimeZone(now, timezone) !== schoolDate) {
       throw manualTodayError("The school date changed. Review Manual for today again.", 409, "MANUAL_TODAY_DATE_CHANGED");
     }
+    const { loadClasspilotTodayOccurrences, recordClasspilotTodayManualRecovery } = await import("./classpilotTodayOccurrences.js");
+    const todayPlan = (await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: schoolDate,
+      groupIds: [group.id], dbInstance: transactionDb })).get(group.id);
+    if (todayPlan && options.expectedTodayRevision !== todayPlan[0]?.generation)
+      throw manualTodayError("Today's schedule changed. Review this recovery again.", 409, "TODAY_SCHEDULE_REVIEW_STALE");
     const finalizations: FinalizeTeachingSessionResult[] = [];
+    if (todayPlan) {
+      const activeSegments = await tx.select({ id: teachingSessions.id }).from(teachingSessions).where(and(
+        eq(teachingSessions.schoolId, options.schoolId), eq(teachingSessions.groupId, group.id),
+        eq(teachingSessions.scheduledDate, schoolDate), isNotNull(teachingSessions.scheduledOccurrenceId), isNull(teachingSessions.endTime)));
+      const { finalizeClasspilotSession } = await import("./classpilotSessionLifecycle.js");
+      for (const segment of activeSegments) {
+        const finalized = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId: segment.id,
+          reason: "admin_end", finalizedAt: now, dbInstance: transactionDb, deferSideEffects: true });
+        if (finalized) finalizations.push(finalized);
+      }
+    }
     // Preserve an immutable tombstone after tomorrow overwrites the date column,
     // so report backfill can never invent an automatic class for this manual day.
     const occurrence = await getScheduledTeachingSessionOccurrence(options.schoolId, group.id, schoolDate, transactionDb);
+    let recoveryStartsAt = occurrence?.scheduledStartAt, recoveryEndsAt = occurrence?.scheduledEndAt;
     if (occurrence && !occurrence.endTime) {
       const { finalizeClasspilotSession } = await import("./classpilotSessionLifecycle.js");
       const finalized = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId: occurrence.id,
@@ -36216,17 +36281,27 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
       const { getEffectiveClasspilotScheduleWindow } = await import("./classpilotScheduleChanges.js");
       const window = await getEffectiveClasspilotScheduleWindow({ schoolId: options.schoolId, group, scheduledDate: schoolDate, timeZone: timezone, dbInstance: transactionDb });
       const startAt = window?.scheduledStartAt ?? localDateTimeUtc(schoolDate, group.blockStartTime || "00:00", timezone);
+      recoveryStartsAt = startAt;
       const endAt = window?.scheduledEndAt ?? localDateTimeUtc(schoolDate, group.blockEndTime || "00:01", timezone);
+      recoveryEndsAt = endAt;
       await tx.insert(teachingSessions).values({ schoolId: options.schoolId, groupId: group.id, teacherId: group.teacherId,
         startTime: startAt, endTime: startAt, sessionMode: SCHEDULED_REPORT_SESSION_MODE, scheduledDate: schoolDate,
         scheduledTimezone: timezone, scheduledStartAt: startAt, scheduledEndAt: endAt, scheduledState: "skipped",
         scheduledFinalizationReason: "manual_override", classNameSnapshot: group.name, timezoneSnapshot: timezone });
     }
+    if (access.admin && (isClasspilotTodayScheduleEnabled() || todayPlan)) await recordClasspilotTodayManualRecovery({
+      schoolId: options.schoolId, groupId: group.id, teacherId: group.teacherId, className: group.name, actorId: options.actorId,
+      scheduledDate: schoolDate, timezone, now, cutoffAt: localDateTimeUtc(addLocalDays(schoolDate, 1), "00:00", timezone),
+      expectedTodayRevision: options.expectedTodayRevision, originalStartsAt: recoveryStartsAt, originalEndsAt: recoveryEndsAt,
+    }, transactionDb);
     if (group.scheduleManualDate !== schoolDate) {
       await tx.update(groups).set({ scheduleManualDate: schoolDate }).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, group.id)));
+    }
+    if (group.scheduleManualDate !== schoolDate || todayPlan || isClasspilotTodayScheduleEnabled()) {
       await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
         userRole: access.actorRole, action: "class.manual_today_enabled", entityType: "class", entityId: group.id,
-        metadata: { schoolDate, timezone, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
+        metadata: { schoolDate, timezone, priorTodayRevision: todayPlan?.[0]?.generation ?? 0,
+          endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
     }
     const { deadlineUpdatedSessionIds } = await capClasspilotManualSessionsForToday(options.schoolId, group.id, transactionDb,
       { schoolDate, timezone, now });

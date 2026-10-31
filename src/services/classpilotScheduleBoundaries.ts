@@ -7,6 +7,7 @@ import { schools } from "../schema/core.js";
 import { localDateInTimeZone, localDateTimeUtc, addLocalDays } from "../util/schoolTime.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { getSchoolSchedulingContext } from "./classpilotScheduling.js";
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { getApprovedScheduleChangeLegsForSchoolDate } from "./classpilotScheduleChanges.js";
 import { getClasspilotGroupsReadyAtEffectiveWindow, processScheduledClassAutoStart, expireScheduledClassConflictsForSchool } from "./classpilotScheduledStart.js";
@@ -95,7 +96,8 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
   for (const leg of approved) pairCounts.set(leg.swapId, (pairCounts.get(leg.swapId) ?? 0) + 1);
   if ([...pairCounts.values()].some((count) => count !== 2)) throw new Error("SCHEDULE_BOUNDARY_CHANGE_INCOMPLETE");
   const approvedByGroup = new Map(approved.map((leg) => [leg.groupId, leg]));
-  const frozen = new Set(sessionRows.filter((row) => row.scheduledDate === date).map((row) => row.groupId));
+  const frozen = new Set(sessionRows.filter((row) => row.scheduledDate === date).map((row) => row.scheduledOccurrenceId ?? row.groupId));
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId, scheduledDate: date, dbInstance: schedulerDb });
   for (const session of sessionRows) {
     if (session.manualExpiresAt) {
       windows.push(session.manualExpiresAt);
@@ -110,6 +112,16 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
     if (session.sessionMode === "scheduled_report" && session.scheduledStartAt && session.scheduledStartAt <= now && session.scheduledEndAt && session.scheduledEndAt > now) incomplete = true;
   }
   for (const group of classRows) {
+    const plan = todayPlans.get(group.id);
+    if (plan) {
+      for (const row of plan) {
+        const window = todayOccurrenceWindow(row);
+        if (!window || frozen.has(window.scheduledOccurrenceId ?? group.id)) continue;
+        windows.push(window.scheduledStartAt, window.scheduledEndAt);
+        if (window.scheduledStartAt <= now && window.scheduledEndAt > now) incomplete = true;
+      }
+      continue;
+    }
     if (frozen.has(group.id) || group.scheduleSkippedDate === date || group.scheduleManualDate === date) continue;
     const base = resolveClassBaseWindow(group, date, context.config, context.calendar);
     if (!base) continue;
@@ -139,6 +151,8 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
 
 /** Fast lifecycle pass: no historical roster backfills, report materialization or email delivery. */
 export async function reconcileSchoolScheduleBoundary(schoolId: string, now: Date): Promise<void> {
+  const { expireClasspilotTodayScheduleChanges } = await import("./classpilotTodaySchedule.js");
+  await expireClasspilotTodayScheduleChanges({ schoolId, now, dbInstance: schedulerDb });
   const due = await schedulerDb.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId),
     isNull(teachingSessions.endTime), or(
       and(eq(teachingSessions.scheduledState, "active"), lte(teachingSessions.scheduledEndAt, now)),
@@ -158,14 +172,14 @@ export async function reconcileSchoolScheduleBoundary(schoolId: string, now: Dat
   const time = now.toLocaleTimeString("en-GB", { timeZone: school.timezone, hour12: false, hour: "2-digit", minute: "2-digit" });
   await expireScheduledClassConflictsForSchool({ schoolId, scheduledDate: date, currentTimeHHMM: time, dbInstance: schedulerDb });
   const ready = await getClasspilotGroupsReadyAtEffectiveWindow({ schoolId, scheduledDate: date, currentTimeHHMM: time, dbInstance: schedulerDb });
-  const frozenReports = await schedulerDb.select({ group: groups, scheduledDate: teachingSessions.scheduledDate })
+  const frozenReports = await schedulerDb.select({ group: groups, scheduledDate: teachingSessions.scheduledDate, scheduledOccurrenceId: teachingSessions.scheduledOccurrenceId })
     .from(teachingSessions).innerJoin(groups, and(eq(groups.id, teachingSessions.groupId), eq(groups.schoolId, schoolId)))
     .where(and(eq(teachingSessions.schoolId, schoolId), eq(teachingSessions.scheduledState, "active"),
       eq(teachingSessions.sessionMode, "scheduled_report"), isNull(teachingSessions.endTime),
       lte(teachingSessions.scheduledStartAt, now), gt(teachingSessions.scheduledEndAt, now))).limit(MAX_DAY_CLASSES + 1);
   const readyById = new Map(ready.map((group) => [group.id, { group, scheduledDate: date }]));
   for (const frozen of frozenReports) {
-    if (frozen.scheduledDate && frozen.group.scheduleManualDate !== frozen.scheduledDate) {
+    if (frozen.scheduledDate && (frozen.scheduledOccurrenceId || frozen.group.scheduleManualDate !== frozen.scheduledDate)) {
       readyById.set(frozen.group.id, { group: frozen.group, scheduledDate: frozen.scheduledDate });
     }
   }

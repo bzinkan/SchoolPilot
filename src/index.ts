@@ -9,6 +9,7 @@ import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "./db/classpilotTeacherPreferencesMigration.js";
+import { CLASSPILOT_TODAY_SCHEDULE_SQL } from "./db/classpilotTodayScheduleMigration.js";
 import { CLASSPILOT_MANUAL_TODAY_SQL } from "./db/classpilotManualTodayMigration.js";
 import { IMPORT_PROCESSING_STAGES_SQL } from "./db/importProcessingStagesMigration.js";
 import {
@@ -65,6 +66,7 @@ import {
 } from "./db/migrationLedger.js";
 import {
   STAFF_IDENTITY_CONTRACT_MIGRATION_IDS,
+  TODAY_SCHEDULE_CONTRACT_MIGRATION_IDS,
   selectSchoolPilot27MigrationPlan,
 } from "./db/migrations27.js";
 import { safeErrorMetadata } from "./util/safeLogging.js";
@@ -336,11 +338,15 @@ export async function runVersionedMigrations(): Promise<void> {
   );
   const includeStaffIdentityContracts =
     contractRolloutRequested || contractPreviouslyApplied;
+  const todayScheduleContractPreviouslyApplied = await hasCompletedSchoolPilotMigration(
+    pool, TODAY_SCHEDULE_CONTRACT_MIGRATION_IDS
+  );
   const ledgerResults = await runSchoolPilotMigrationLedger({
     pool,
     migrations: selectSchoolPilot27MigrationPlan({
       contractRolloutRequested,
       contractPreviouslyApplied,
+      todayScheduleContractPreviouslyApplied,
     }),
   });
   if (!includeStaffIdentityContracts) {
@@ -2784,8 +2790,15 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS resolved_by TEXT`);
     await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS resolution TEXT`);
     await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
-      ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time)
+      DO $$ BEGIN
+        IF to_regclass('public.schema_migrations') IS NULL THEN
+          CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
+            ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time);
+        ELSIF NOT EXISTS(SELECT 1 FROM schema_migrations WHERE id='classpilot-today-conflict-identity-contract-20261031' AND status='complete') THEN
+          CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
+            ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time);
+        END IF;
+      END $$;
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_school_status_idx ON classpilot_scheduled_conflicts (school_id, status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_teacher_idx ON classpilot_scheduled_conflicts (school_id, teacher_id)`);
@@ -5004,6 +5017,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_WINDOWS_BROWSER_SQL);
   await pool.query(CLASSPILOT_WINDOWS_HISTORY_SQL);
   await pool.query(CLASSPILOT_WINDOWS_ACTIVITY_PARENTS_SQL);
+  await pool.query(CLASSPILOT_TODAY_SCHEDULE_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
   await pool.query(FLIGHT_PATH_CONTENT_REVISION_SQL);
   const screenshotInstaller = await pool.connect();

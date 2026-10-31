@@ -270,13 +270,14 @@ export function ScheduleChangeRequestDialog({
   const [pairId, setPairId] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const minimumDate = schoolLocalDate(timeZone);
+  const today = schoolLocalDate(timeZone);
+  const minimumDate = new Date(Date.parse(`${today}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
   const eligibilityQuery = useQuery({
     queryKey: scheduleChangeKeys.eligibility(schoolId, scheduledDate),
     queryFn: () => scheduleChangeApi.getEligibility(scheduledDate),
     select: unwrapEligibility,
-    enabled: open && Boolean(schoolId && scheduledDate),
+    enabled: open && Boolean(schoolId && scheduledDate && scheduledDate >= minimumDate),
     refetchInterval: open && scheduledDate ? 30_000 : false,
   });
 
@@ -309,7 +310,7 @@ export function ScheduleChangeRequestDialog({
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!selectedPair || !scheduledDate || (reasonRequired && !trimmedReason)) return;
+    if (!selectedPair || !scheduledDate || scheduledDate < minimumDate || (reasonRequired && !trimmedReason)) return;
     setError("");
     try {
       const payload = {
@@ -333,7 +334,7 @@ export function ScheduleChangeRequestDialog({
         <DialogHeader>
           <DialogTitle>{mode === "admin" ? "Create approved schedule change" : "Request time swap"}</DialogTitle>
           <DialogDescription>
-            Choose one school day and exchange the two class periods. Teachers, rosters, and recurring schedules stay the same.
+            Choose a future school day and exchange the two class periods. For changes today, use Teaching tools → Today’s schedule.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-5">
@@ -434,7 +435,7 @@ export function ScheduleChangeRequestDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => changeOpen(false)} disabled={isPending}>Cancel</Button>
-            <Button type="submit" disabled={!selectedPair || (reasonRequired && !trimmedReason) || isPending} data-testid="button-submit-schedule-change">
+            <Button type="submit" disabled={!selectedPair || scheduledDate < minimumDate || (reasonRequired && !trimmedReason) || isPending} data-testid="button-submit-schedule-change">
               {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {mode === "admin" ? "Create approved change" : "Send request"}
             </Button>

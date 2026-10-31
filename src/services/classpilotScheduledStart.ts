@@ -64,6 +64,7 @@ import {
 } from "./storage.js";
 import { scheduledClassStaffIds } from "./classpilotScheduledStaff.js";
 import { buildClassStartOverlapPayload } from "./classpilotStartOverlap.js";
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 
 type ReviewedClassStart = { actorId: string; expectedActiveSessionId: string | null; acknowledgeOverlap?: boolean };
 
@@ -254,7 +255,8 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
       status: 409,
     });
   }
-  const extraCandidateIds = new Set(approvedLegs.map((leg) => leg.groupId));
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: options.scheduledDate, dbInstance: options.dbInstance });
+  const extraCandidateIds = new Set([...approvedLegs.map((leg) => leg.groupId), ...todayPlans.keys()]);
   for (const application of scheduling.config.profileApplications ?? []) {
     if (application.status !== "scheduled" || !application.dates.includes(options.scheduledDate)) continue;
     for (const [classId, window] of Object.entries(application.classWindows[options.scheduledDate] ?? {})) {
@@ -280,6 +282,12 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
   const effectiveStarts = new Map<string, string>();
   return Array.from(candidatesById.values())
     .filter((group) => {
+      const plan = todayPlans.get(group.id);
+      if (plan) {
+        const window = plan.map(todayOccurrenceWindow).find(window => window && window.blockStartTime <= options.currentTimeHHMM && window.blockEndTime > options.currentTimeHHMM);
+        if (window) effectiveStarts.set(group.id, window.blockStartTime);
+        return group.status === "active" && !!window;
+      }
       if (
         group.status !== "active"
         || !group.scheduleEnabled
@@ -340,15 +348,15 @@ async function prepareScheduledOccurrence(options: {
       // must not restore reporting after Manual for today has committed.
       const currentGroup = await getGroupByIdAndSchool(options.group.id, options.group.schoolId, lockedDb);
       if (!currentGroup) return { reason: "missing_schedule_window" as const };
-      if (currentGroup.scheduleManualDate === options.scheduledDate) {
-        return { reason: "manual_today" as const };
-      }
-      const existing = await getScheduledTeachingSessionOccurrence(
-        options.group.schoolId,
-        options.group.id,
-        options.scheduledDate,
-        lockedDb
-      );
+      const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.group.schoolId,
+        scheduledDate: options.scheduledDate, groupIds: [options.group.id], dbInstance: lockedDb });
+      const todayPlan = todayPlans.get(options.group.id);
+      const todayWindow = todayPlan?.map(todayOccurrenceWindow).find(window => window
+        && window.scheduledStartAt <= options.now && window.scheduledEndAt > options.now);
+      if (todayPlan && !todayWindow) return { reason: "outside_schedule_window" as const };
+      if (!todayPlan && currentGroup.scheduleManualDate === options.scheduledDate) return { reason: "manual_today" as const };
+      const existing = await getScheduledTeachingSessionOccurrence(options.group.schoolId, options.group.id,
+        options.scheduledDate, lockedDb, todayWindow?.scheduledOccurrenceId ?? null);
       if (existing) return { occurrence: existing };
 
       // Approval/cancellation owns the date lock first, while class mutations
@@ -368,10 +376,10 @@ async function prepareScheduledOccurrence(options: {
       }
       if (!context) return { reason: "missing_schedule_window" as const };
       assertCompleteApprovedSwapContext(context);
-      if (context.group.scheduleManualDate === options.scheduledDate) {
+      if (!todayPlan && context.group.scheduleManualDate === options.scheduledDate) {
         return { reason: "manual_today" as const };
       }
-      if (context.group.scheduleSkippedDate === options.scheduledDate) {
+      if (!todayPlan && context.group.scheduleSkippedDate === options.scheduledDate) {
         return { reason: "skipped" as const };
       }
       if (
@@ -409,6 +417,7 @@ async function prepareScheduledOccurrence(options: {
           group: context.group,
           scheduledDate: options.scheduledDate,
           timeZone: scheduledTimezone,
+          now: options.now,
           dbInstance: lockedDb,
         });
       } catch (error) {
@@ -435,6 +444,7 @@ async function prepareScheduledOccurrence(options: {
         groupId: context.group.id,
         teacherId: context.group.teacherId,
         scheduledDate: options.scheduledDate,
+        scheduledOccurrenceId: effectiveWindow.scheduledOccurrenceId,
         scheduledTimezone: effectiveWindow.timeZone,
         scheduledStartAt: effectiveWindow.scheduledStartAt,
         scheduledEndAt: effectiveWindow.scheduledEndAt,
@@ -800,7 +810,7 @@ async function startScheduledClassLocked(options: {
     }
   }
   const currentGroup = await getGroupByIdAndSchool(options.group.id, options.group.schoolId, dbInstance);
-  if (!currentGroup || currentGroup.scheduleManualDate === options.scheduledSession.scheduledDate) {
+  if (!currentGroup || !options.scheduledSession.scheduledOccurrenceId && currentGroup.scheduleManualDate === options.scheduledSession.scheduledDate) {
     throw Object.assign(new Error("This class is manual for today. Start it with Teach Class."), {
       status: 409,
       code: "MANUAL_TODAY_ACTIVE",
@@ -822,7 +832,8 @@ async function startScheduledClassLocked(options: {
     options.group.schoolId,
     options.scheduledSession.groupId,
     options.scheduledSession.scheduledDate!,
-    dbInstance
+    dbInstance,
+    options.scheduledSession.scheduledOccurrenceId ?? null
   );
   const session = currentOccurrence?.sessionMode === "live"
     && !currentOccurrence.endTime
@@ -895,7 +906,7 @@ export async function startScheduledClassFromConflict(options: {
     options.dbInstance
   );
   if (!group) throw Object.assign(new Error("Class not found"), { status: 404 });
-  if (group.scheduleManualDate === options.conflict.scheduledDate) {
+  if (!options.conflict.scheduledOccurrenceId && group.scheduleManualDate === options.conflict.scheduledDate) {
     throw Object.assign(new Error("This class is manual for today. Start it with Teach Class."), {
       status: 409,
       code: "MANUAL_TODAY_ACTIVE",
@@ -952,22 +963,22 @@ export async function processScheduledClassAutoStart(options: {
   const currentGroup = await getGroupByIdAndSchool(group.id, group.schoolId, dbInstance);
   if (!currentGroup) return { status: "skipped", reason: "missing_schedule_window" };
   group = currentGroup;
-  if (group.scheduleManualDate === options.scheduledDate) {
-    return { status: "skipped", reason: "manual_today" };
-  }
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = options.now || new Date();
-  let occurrence = await getScheduledTeachingSessionOccurrence(
-    group.schoolId,
-    group.id,
-    options.scheduledDate,
-    dbInstance
-  );
+  const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: group.schoolId,
+    scheduledDate: options.scheduledDate, groupIds: [group.id], dbInstance });
+  const todayPlan = todayPlans.get(group.id);
+  const todayWindow = todayPlan?.map(todayOccurrenceWindow).find(window => window
+    && window.scheduledStartAt <= now && window.scheduledEndAt > now);
+  if (todayPlan && !todayWindow) return { status: "skipped", reason: "outside_schedule_window" };
+  if (!todayPlan && group.scheduleManualDate === options.scheduledDate) return { status: "skipped", reason: "manual_today" };
+  let occurrence = await getScheduledTeachingSessionOccurrence(group.schoolId, group.id,
+    options.scheduledDate, dbInstance, todayWindow?.scheduledOccurrenceId ?? null);
   let blockStartTime = group.blockStartTime || "";
   let blockEndTime = group.blockEndTime || "";
   if (!occurrence) {
-    if (group.scheduleSkippedDate === options.scheduledDate) {
+    if (!todayPlan && group.scheduleSkippedDate === options.scheduledDate) {
       return { status: "skipped", reason: "skipped" };
     }
     // Preserve the known calendar reason before the shared base resolver
@@ -982,6 +993,7 @@ export async function processScheduledClassAutoStart(options: {
         group,
         scheduledDate: options.scheduledDate,
         timeZone,
+        now,
         dbInstance,
       });
     } catch (error) {
@@ -1041,6 +1053,7 @@ export async function processScheduledClassAutoStart(options: {
       groupId: group.id,
       scheduledDate: occurrence.scheduledDate || options.scheduledDate,
       blockStartTime,
+      scheduledOccurrenceId: occurrence.scheduledOccurrenceId,
     }, dbInstance);
   if (occurrence.sessionMode === "live" && !occurrence.endTime) {
     // A live occurrence is the steady state for every scheduler tick until its
@@ -1128,6 +1141,7 @@ export async function processScheduledClassAutoStart(options: {
   }).replace(/^24:/, "00:");
   const conflictResult = await upsertScheduledClassConflictForOccurrence({
     teachingSessionId: occurrence.id,
+    scheduledOccurrenceId: occurrence.scheduledOccurrenceId,
     schoolId: group.schoolId,
     groupId: group.id,
     teacherId: occurrence.teacherId,
@@ -1303,6 +1317,11 @@ export async function skipScheduledClassBeforeStart(options: {
       options.group.schoolId,
       options.scheduledDate,
       async (lockedDb) => {
+      const todayPlans = await loadClasspilotTodayOccurrences({ schoolId: options.group.schoolId, scheduledDate: options.scheduledDate,
+        groupIds: [options.group.id], dbInstance: lockedDb });
+      if (todayPlans.has(options.group.id)) throw Object.assign(new Error("Use Teaching tools - Today's schedule to skip this period."), {
+        status: 409, code: "TODAY_SCHEDULE_CHANGE_REQUIRED",
+      });
       const existing = await getScheduledTeachingSessionOccurrence(
         options.group.schoolId,
         options.group.id,

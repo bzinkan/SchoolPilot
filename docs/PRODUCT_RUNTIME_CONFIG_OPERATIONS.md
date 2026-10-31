@@ -18,6 +18,7 @@ survive each clone unchanged.
 | Name | Exact values | Unset means | Feature | Activation precondition |
 | --- | --- | --- | --- | --- |
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` | `off`, `on` | `off` | School Library (roadmap PR 1) | none |
+| `CLASSPILOT_TODAY_SCHEDULE_MODE` | `off`, `on` | `off` | Teaching tools → Today’s schedule | both `classpilotTodaySchedule` tenant tables admitted; compatible API/worker converged; separately ledgered conflict-index contraction verified as documented in [Today’s schedule](CLASSPILOT_TODAY_SCHEDULE.md) |
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` | comma-separated lower-case school UUIDs, no spaces, no duplicates | every school (when the mode is `on`) | School Library allowlist | none |
 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | PassPilot rules (PR 7) | RLS admission of `passpilot_destination_policies`, `passpilot_pass_limits`, `passpilot_encounter_restrictions`, `passpilot_pass_denials` |
 | `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | complete preserved 128-table admission; serving source atomic writer contract v2 on both services |

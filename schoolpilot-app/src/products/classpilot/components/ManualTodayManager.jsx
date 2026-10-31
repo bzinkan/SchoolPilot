@@ -23,10 +23,11 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
   const reviewedClass = classes.find(group => group.id === reviewId);
   const resumeLabel = manualTodayDateLabel(data?.resumesOn);
   const canManage = data?.canManageManualToday === true;
-  const staleReview = reviewId && (selectionReview.schoolDate !== data?.schoolDate || query.isDayExpired);
+  const staleReview = reviewId && (selectionReview.schoolDate !== data?.schoolDate || query.isDayExpired
+    || selectionReview.todayRevision !== (reviewedClass?.todayRevision ?? 0));
 
   const mutation = useMutation({
-    mutationFn: ({ groupId, expectedSchoolDate }) => apiRequest('POST', `/classpilot/groups/${encodeURIComponent(groupId)}/manual-today`, { expectedSchoolDate }, {
+    mutationFn: ({ groupId, expectedSchoolDate, expectedTodayRevision }) => apiRequest('POST', `/classpilot/groups/${encodeURIComponent(groupId)}/manual-today`, { expectedSchoolDate, expectedTodayRevision }, {
       headers: { 'X-School-Id': schoolId },
     }),
     onMutate: () => onPendingChange?.(true),
@@ -41,7 +42,7 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
         resumesAt: result.resumesAt,
         classes: current.classes.map(group => group.id === result.class.id ? result.class : group),
       }));
-      for (const key of [MANUAL_TODAY_QUERY, '/api/sessions/active', '/api/groups', '/api/teacher/groups',
+      for (const key of [MANUAL_TODAY_QUERY, '/api/classpilot/today-schedule', '/api/classpilot/today-schedule/change', '/api/sessions/active', '/api/groups', '/api/teacher/groups',
         '/api/classpilot/dashboard-activity', '/api/classpilot/observable-activities', '/api/students-aggregated',
         '/api/coverage/summary', '/api/classpilot/teaching-sessions/recent', 'classpilot-admin-classes']) {
         void queryClient.invalidateQueries({ queryKey: [key], exact: false });
@@ -60,7 +61,7 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
   const review = groupId => {
     mutation.reset();
     setNotice('');
-    setSelectionReview({ id: groupId, schoolDate: data.schoolDate });
+    setSelectionReview({ id: groupId, schoolDate: data.schoolDate, todayRevision: classes.find(group => group.id === groupId)?.todayRevision ?? 0 });
   };
 
   const Header = dialog ? DialogHeader : 'div';
@@ -89,10 +90,13 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
             {!canManage ? <p role="status" className="rounded-md border p-3 text-sm">Your school administrator has not enabled teacher adjustments. An administrator can make a class manual for today.</p> : null}
 
             {reviewId ? <div className="space-y-3 rounded-md border p-4 text-sm" data-testid="manual-today-review">
-              {staleReview ? <p role="alert">The school date changed while this review was open. Return to the class list and review today’s adjustment again.</p> : null}
+              {staleReview ? <p role="alert">The school date or period plan changed while this review was open. Return to the class list and review the adjustment again.</p> : null}
               {!reviewedClass ? <p role="alert">This class is no longer available. Return to the class list and refresh.</p> : <>
                 <p><strong>{reviewedClass.name}</strong> will use manual starts for all assigned teachers and co-teachers for the rest of this school day.</p>
-                <p>If an automatic session for this class is running, it will end. Existing session history and summaries are kept.</p>
+                <p>{(reviewedClass.activeScheduledSessionIds?.length || (reviewedClass.activeScheduledSessionId ? 1 : 0)) > 0
+                  ? `This ends ${reviewedClass.activeScheduledSessionIds?.length || 1} running automatic class session(s). Existing session history and summaries are kept.`
+                  : 'If an automatic session for this class is running, it will end. Existing session history and summaries are kept.'}</p>
+                {reviewedClass.hasTodayPlan ? <p>Today's period changes for this class will be replaced by manual starts. Review the other affected classes separately.</p> : null}
                 <p>Use End Class when you finish. Manual sessions cannot continue past midnight in your school’s timezone.</p>
                 <p>Other classes remain automatic and may take over at their scheduled times. This class returns to automatic scheduling tomorrow; there is no same-day reset.</p>
               </>}
@@ -105,7 +109,7 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
                   {group.periodLabel || group.gradeLevel ? <p className="text-xs text-muted-foreground">{[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(' · ')}</p> : null}
                   {group.isManualToday ? <p className="mt-1 flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300"><Check className="h-3 w-3" />Manual for today · resumes {resumeLabel}</p> : null}
                 </div>
-                {canManage && !group.isManualToday ? <Button size="sm" variant="outline" onClick={() => review(group.id)} data-testid={`button-review-manual-today-${group.id}`}>
+                {canManage && (!group.isManualToday || group.hasTodayPlan) ? <Button size="sm" variant="outline" onClick={() => review(group.id)} data-testid={`button-review-manual-today-${group.id}`}>
                   <CalendarDays className="mr-1.5 h-4 w-4" />Manual for today
                 </Button> : null}
               </div>)}
@@ -117,8 +121,8 @@ export default function ManualTodayManager({ query, schoolId, onClose, onPending
       <Footer className={dialog ? undefined : "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"}>
         {reviewId ? <>
           <Button variant="outline" onClick={() => { setSelectionReview(null); mutation.reset(); }} disabled={mutation.isPending}>Back to classes</Button>
-          <Button data-testid="button-confirm-manual-today" disabled={!reviewedClass || !canManage || staleReview || query.isError || query.isFetching || reviewedClass.isManualToday || mutation.isPending}
-            onClick={() => mutation.mutate({ groupId: reviewedClass.id, expectedSchoolDate: selectionReview.schoolDate })}>
+          <Button data-testid="button-confirm-manual-today" disabled={!reviewedClass || !canManage || staleReview || query.isError || query.isFetching || reviewedClass.isManualToday && !reviewedClass.hasTodayPlan || mutation.isPending}
+            onClick={() => mutation.mutate({ groupId: reviewedClass.id, expectedSchoolDate: selectionReview.schoolDate, expectedTodayRevision: selectionReview.todayRevision })}>
             {mutation.isPending ? 'Saving…' : 'Make manual for today'}
           </Button>
         </> : onClose ? <Button variant="outline" onClick={onClose}>Done</Button> : null}

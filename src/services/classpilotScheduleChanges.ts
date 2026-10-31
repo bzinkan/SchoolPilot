@@ -17,10 +17,13 @@ import { publishWS } from "../realtime/ws-redis.js";
 import { sendEmail } from "./email.js";
 import { getClasspilotBaseScheduleWindow } from "./classpilotScheduling.js";
 import type { ClasspilotScheduleRule } from "./classpilotSchedulingRules.js";
+import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 
 export type EffectiveClasspilotScheduleWindow = {
-  source: "recurring" | "swap";
+  source: "recurring" | "swap" | "today";
   swapId: string | null;
+  scheduledOccurrenceId?: string | null;
+  preservedLegacySessionId?: string | null;
   scheduledDate: string;
   timeZone: string;
   blockStartTime: string;
@@ -44,7 +47,7 @@ export async function getApprovedScheduleChangeLegsForSchoolDate(options: {
   return loadApprovedScheduleChangeLegsForSchoolDate(options);
 }
 
-export async function getEffectiveClasspilotScheduleWindow(options: {
+type EffectiveWindowOptions = {
   schoolId: string;
   group: Pick<
     Group,
@@ -53,17 +56,25 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
   scheduledDate: string;
   timeZone: string;
   dbInstance?: typeof db;
-}): Promise<EffectiveClasspilotScheduleWindow | null> {
+  now?: Date;
+  scheduledOccurrenceId?: string | null;
+};
+
+export async function getEffectiveClasspilotScheduleWindows(options: EffectiveWindowOptions): Promise<EffectiveClasspilotScheduleWindow[]> {
+  const plans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: options.scheduledDate,
+    groupIds: [options.group.id], dbInstance: options.dbInstance });
+  const plan = plans.get(options.group.id);
+  if (plan) return plan.flatMap(row => { const window = todayOccurrenceWindow(row); return window ? [window] : []; });
   if (
     options.group.scheduleManualDate === options.scheduledDate ||
     !options.group.scheduleEnabled ||
     !options.group.blockStartTime ||
     !options.group.blockEndTime
   ) {
-    return null;
+    return [];
   }
   const baseWindow = await getClasspilotBaseScheduleWindow(options);
-  if (!baseWindow) return null;
+  if (!baseWindow) return [];
   const approved = await getApprovedScheduleChangeLegsForSchoolDate({
     schoolId: options.schoolId,
     scheduledDate: options.scheduledDate,
@@ -72,7 +83,7 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
   const leg = approved.find((candidate) => candidate.groupId === options.group.id);
   const blockStartTime = leg?.effectiveStartTime ?? baseWindow.startTime;
   const blockEndTime = leg?.effectiveEndTime ?? baseWindow.endTime;
-  return {
+  return [{
     source: leg ? "swap" : "recurring",
     swapId: leg?.swapId ?? null,
     scheduledDate: options.scheduledDate,
@@ -89,7 +100,15 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
       blockEndTime,
       options.timeZone
     ),
-  };
+  }];
+}
+
+export async function getEffectiveClasspilotScheduleWindow(options: EffectiveWindowOptions): Promise<EffectiveClasspilotScheduleWindow | null> {
+  const windows = await getEffectiveClasspilotScheduleWindows(options);
+  if (options.scheduledOccurrenceId) return windows.find(window => window.scheduledOccurrenceId === options.scheduledOccurrenceId) ?? null;
+  const now = options.now ?? new Date();
+  return windows.find(window => window.scheduledStartAt <= now && window.scheduledEndAt > now)
+    ?? windows.find(window => window.scheduledStartAt > now) ?? windows.at(-1) ?? null;
 }
 
 export {

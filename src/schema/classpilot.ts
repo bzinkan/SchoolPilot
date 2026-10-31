@@ -550,6 +550,77 @@ export type ClasspilotScheduleChangeLeg =
 export type InsertClasspilotScheduleChangeLeg =
   typeof classpilotScheduleChangeLegs.$inferInsert;
 
+// Dated revisions preserve the original scheduled session/history. Each new
+// meeting has its own identity, even when a class meets twice on the same day.
+export const classpilotTodayChanges = pgTable("classpilot_today_changes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull().references(() => schools.id),
+  scheduledDate: text("scheduled_date").notNull(),
+  timezoneSnapshot: text("timezone_snapshot").notNull(),
+  status: text("status").$type<"pending" | "applied" | "declined" | "cancelled" | "expired" | "superseded">().notNull(),
+  revision: integer("revision").notNull().default(0),
+  generation: integer("generation"),
+  requestedByUserId: text("requested_by_user_id").notNull(),
+  counterpartTeacherId: text("counterpart_teacher_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestHash: text("request_hash").notNull(),
+  reviewSnapshot: jsonb("review_snapshot").$type<Record<string, unknown>>().notNull(),
+  planSnapshot: jsonb("plan_snapshot").$type<Record<string, unknown>>().notNull(),
+  affectedGroupIds: jsonb("affected_group_ids").$type<string[]>().notNull(),
+  cutoffAt: timestamp("cutoff_at", { withTimezone: true }).notNull(),
+  acceptedByUserId: text("accepted_by_user_id"),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  appliedByUserId: text("applied_by_user_id"),
+  appliedAt: timestamp("applied_at", { withTimezone: true }),
+  terminalByUserId: text("terminal_by_user_id"),
+  terminalReason: text("terminal_reason"),
+  terminalAt: timestamp("terminal_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+}, table => [
+  unique("cp_today_changes_school_generation_key").on(table.schoolId, table.id, table.generation, table.scheduledDate),
+  uniqueIndex("cp_today_changes_idempotency_unique").on(table.schoolId, table.requestedByUserId, table.idempotencyKey),
+  index("cp_today_changes_school_date_status_idx").on(table.schoolId, table.scheduledDate, table.status),
+  index("cp_today_changes_pending_cutoff_idx").on(table.cutoffAt).where(sql`${table.status} = 'pending'`),
+  check("cp_today_changes_status_check", sql`${table.status} IN ('pending','applied','declined','cancelled','expired','superseded')`),
+  check("cp_today_changes_date_check", sql`${table.scheduledDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+  check("cp_today_changes_revision_check", sql`${table.revision} >= 0 AND (${table.generation} IS NULL OR ${table.generation} > 0)`),
+  check("cp_today_changes_applied_check", sql`(${table.status} <> 'applied' OR (${table.generation} IS NOT NULL AND ${table.appliedAt} IS NOT NULL AND ${table.appliedByUserId} IS NOT NULL)) AND (${table.status} <> 'pending' OR ${table.generation} IS NULL)`),
+  check("cp_today_changes_request_check", sql`length(${table.idempotencyKey}) BETWEEN 1 AND 128 AND ${table.requestHash} ~ '^[0-9a-f]{64}$'`),
+  check("cp_today_changes_snapshots_check", sql`jsonb_typeof(${table.reviewSnapshot}) = 'object' AND jsonb_typeof(${table.planSnapshot}) = 'object' AND jsonb_typeof(${table.affectedGroupIds}) = 'array' AND jsonb_array_length(${table.affectedGroupIds}) BETWEEN 1 AND 500`),
+]);
+export type ClasspilotTodayChange = typeof classpilotTodayChanges.$inferSelect;
+export type InsertClasspilotTodayChange = typeof classpilotTodayChanges.$inferInsert;
+
+export const classpilotTodayOccurrences = pgTable("classpilot_today_occurrences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull(),
+  changeId: varchar("change_id").notNull(),
+  scheduledDate: text("scheduled_date").notNull(),
+  groupId: text("group_id").notNull(),
+  generation: integer("generation").notNull(),
+  kind: text("kind").$type<"meeting" | "suppression">().notNull(),
+  scheduledStartAt: timestamp("scheduled_start_at", { withTimezone: true }),
+  scheduledEndAt: timestamp("scheduled_end_at", { withTimezone: true }),
+  source: jsonb("source").$type<Record<string, unknown>>().notNull(),
+  primaryTeacherIdSnapshot: text("primary_teacher_id_snapshot").notNull(),
+  classNameSnapshot: text("class_name_snapshot").notNull(),
+  timezoneSnapshot: text("timezone_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
+}, table => [
+  unique("cp_today_occurrences_session_parent_key").on(table.schoolId, table.groupId, table.id),
+  index("cp_today_occurrences_school_group_date_generation_idx").on(table.schoolId, table.groupId, table.scheduledDate, table.generation),
+  index("cp_today_occurrences_change_idx").on(table.schoolId, table.changeId),
+  check("cp_today_occurrences_kind_check", sql`${table.kind} IN ('meeting','suppression')`),
+  check("cp_today_occurrences_generation_check", sql`${table.generation} > 0`),
+  check("cp_today_occurrences_window_check", sql`(${table.kind} = 'suppression' AND ${table.scheduledStartAt} IS NULL AND ${table.scheduledEndAt} IS NULL) OR (${table.kind} = 'meeting' AND ${table.scheduledStartAt} IS NOT NULL AND ${table.scheduledEndAt} IS NOT NULL AND ${table.scheduledEndAt} > ${table.scheduledStartAt})`),
+  check("cp_today_occurrences_source_check", sql`jsonb_typeof(${table.source}) = 'object'`),
+  foreignKey({ columns: [table.schoolId, table.changeId, table.generation, table.scheduledDate], foreignColumns: [classpilotTodayChanges.schoolId, classpilotTodayChanges.id, classpilotTodayChanges.generation, classpilotTodayChanges.scheduledDate], name: "cp_today_occurrences_change_school_fk" }).onDelete("restrict"),
+  foreignKey({ columns: [table.schoolId, table.groupId], foreignColumns: [groups.schoolId, groups.id], name: "cp_today_occurrences_group_school_fk" }).onDelete("restrict"),
+]);
+export type ClasspilotTodayOccurrence = typeof classpilotTodayOccurrences.$inferSelect;
+export type InsertClasspilotTodayOccurrence = typeof classpilotTodayOccurrences.$inferInsert;
+
 // ============================================================================
 // Group Students - Many-to-many
 // ============================================================================
@@ -591,6 +662,7 @@ export const teachingSessions = pgTable(
     // Frozen occurrence metadata. These fields are populated together for an
     // automatically scheduled class and remain NULL for manual sessions.
     scheduledDate: text("scheduled_date"), // YYYY-MM-DD in scheduledTimezone
+    scheduledOccurrenceId: varchar("scheduled_occurrence_id"),
     scheduledTimezone: text("scheduled_timezone"),
     scheduledStartAt: timestamp("scheduled_start_at", { withTimezone: true }),
     scheduledEndAt: timestamp("scheduled_end_at", { withTimezone: true }),
@@ -623,7 +695,11 @@ export const teachingSessions = pgTable(
     check("teaching_sessions_manual_expiry_check", sql`${table.manualExpiresAt} IS NULL OR (${table.scheduledDate} IS NULL AND ${table.manualExpiresAt} > ${table.startTime})`),
     uniqueIndex("teaching_sessions_scheduled_occurrence_unique")
       .on(table.schoolId, table.groupId, table.scheduledDate)
-      .where(sql`${table.scheduledDate} IS NOT NULL`),
+      .where(sql`${table.scheduledDate} IS NOT NULL AND ${table.scheduledOccurrenceId} IS NULL`),
+    uniqueIndex("teaching_sessions_dated_occurrence_unique")
+      .on(table.schoolId, table.scheduledOccurrenceId)
+      .where(sql`${table.scheduledOccurrenceId} IS NOT NULL`),
+    foreignKey({ columns: [table.schoolId, table.groupId, table.scheduledOccurrenceId], foreignColumns: [classpilotTodayOccurrences.schoolId, classpilotTodayOccurrences.groupId, classpilotTodayOccurrences.id], name: "teaching_sessions_today_occurrence_school_fk" }).onDelete("restrict"),
     index("teaching_sessions_scheduled_due_idx").on(
       table.scheduledState,
       table.scheduledEndAt
@@ -952,6 +1028,7 @@ export const classpilotScheduledConflicts = pgTable(
     groupId: text("group_id").notNull(),
     teacherId: text("teacher_id").notNull(),
     scheduledDate: text("scheduled_date").notNull(),
+    scheduledOccurrenceId: varchar("scheduled_occurrence_id"),
     blockStartTime: text("block_start_time").notNull(),
     blockEndTime: text("block_end_time"),
     status: text("status").notNull().default("coverage_needed"),
@@ -965,12 +1042,15 @@ export const classpilotScheduledConflicts = pgTable(
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   },
   (table) => [
-    uniqueIndex("classpilot_scheduled_conflicts_unique").on(
+    uniqueIndex("classpilot_scheduled_conflicts_legacy_unique").on(
       table.schoolId,
       table.groupId,
       table.scheduledDate,
       table.blockStartTime
-    ),
+    ).where(sql`${table.scheduledOccurrenceId} IS NULL`),
+    uniqueIndex("cp_scheduled_conflicts_dated_occurrence_unique")
+      .on(table.schoolId, table.scheduledOccurrenceId).where(sql`${table.scheduledOccurrenceId} IS NOT NULL`),
+    foreignKey({ columns: [table.schoolId, table.groupId, table.scheduledOccurrenceId], foreignColumns: [classpilotTodayOccurrences.schoolId, classpilotTodayOccurrences.groupId, classpilotTodayOccurrences.id], name: "cp_scheduled_conflicts_today_occurrence_school_fk" }).onDelete("restrict"),
     index("classpilot_scheduled_conflicts_school_status_idx").on(table.schoolId, table.status),
     index("classpilot_scheduled_conflicts_teacher_idx").on(table.schoolId, table.teacherId),
   ]

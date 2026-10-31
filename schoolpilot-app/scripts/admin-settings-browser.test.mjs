@@ -51,15 +51,16 @@ async function fixture(t, route = '/classpilot/settings?section=browsing') {
     if (pathname.endsWith('/cleanup-students')) return route.fulfill({ json: { success: true } });
     return route.fulfill({ status: 404, json: { error: `Unexpected fixture route: ${pathname}` } });
   });
-  await page.goto(`${base}/__settings?route=${encodeURIComponent(route)}`); await page.getByTestId('school-settings-workspace').waitFor(); return { page, state };
+  await page.goto(`${base}/__settings?route=${encodeURIComponent(route)}`, { timeout: 30_000 }); await page.getByTestId('school-settings-workspace').waitFor(); return { page, state };
 }
 async function section(page, label) { await page.getByRole('link', { name: label, exact: true }).click(); }
 
-test('teacher manual-today permission uses its own versioned school setting', { timeout: 60000 }, async t => {
+test('teacher period-swap permission preserves its existing versioned setting and enabled values', { timeout: 60000 }, async t => {
   const { page, state } = await fixture(t);
   await page.getByLabel('Maximum tabs per student').fill('8');
   await section(page, 'School details');
   const permission = page.getByTestId('checkbox-allow-teacher-manual-today');
+  assert.equal(await page.getByLabel('Allow teacher period swaps', { exact: true }).count(), 1);
   assert.equal(await permission.isChecked(), false, 'Teacher adjustments default off');
   await permission.check();
   assert.equal(state.writes.length, 0, 'Changing the checkbox requires its own Save');

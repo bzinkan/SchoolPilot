@@ -13,6 +13,9 @@ import { serializeClasspilotStudentControlState, serializeClasspilotStudentContr
 import { localDateInTimeZone } from "../src/util/schoolTime.js";
 
 process.env.REDIS_URL = "";
+const priorTodayMode = process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+// Preserve admin recovery/preset compatibility independently of the new writer.
+process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = "off";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
 process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "true";
@@ -25,7 +28,7 @@ delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS;
 
-const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), coTeacher: randomUUID(), outsider: randomUUID(), observerAdmin: randomUUID(), dualRoleStaff: randomUUID() };
+const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), coTeacher: randomUUID(), outsider: randomUUID(), observerAdmin: randomUUID(), recoveryAdmin: randomUUID(), dualRoleStaff: randomUUID() };
 const capabilities = ["classroomStateV1", "scopedAuthorityChecksV1", "scheduledClassroomV1", "lateSignInRestrictionSsoV1", "preciseRestrictionResourcesV1", "focusTabV1", "screenOnlyUnlockV1"];
 const automaticStateSchema = z.object({ revision: z.number().int().nonnegative(), status: z.enum(["inactive", "active", "off", "unavailable"]) });
 const automaticStatusSchema = z.object({ automaticFlightPath: automaticStateSchema, canStop: z.boolean() });
@@ -100,7 +103,7 @@ async function start(item: Fixture, options: { actorId?: string; mode?: "live" |
   return item.session;
 }
 
-async function startManualToday(item: Fixture, actorId = ids.teacher) {
+async function startManualToday(item: Fixture, actorId = ids.recoveryAdmin) {
   await inSchool(async () => {
     const school = await storage.getSchoolById(ids.school);
     assert.ok(school);
@@ -198,10 +201,10 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     assert.equal(Number(role.rows[0]?.owned), 0);
     await admin.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Automatic path fixture',$2,'active','active'),($3,'Automatic other tenant',$4,'active','active')",
       [ids.school, `${ids.school}.example.edu`, ids.otherSchool, `${ids.otherSchool}.example.edu`]);
-    for (const actorId of [ids.teacher, ids.coTeacher, ids.outsider, ids.observerAdmin, ids.dualRoleStaff]) {
+    for (const actorId of [ids.teacher, ids.coTeacher, ids.outsider, ids.observerAdmin, ids.recoveryAdmin, ids.dualRoleStaff]) {
       await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Automatic','Staff')", [actorId, `${actorId}@example.edu`]);
       await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')",
-        [ids.school, actorId, actorId === ids.observerAdmin ? "admin" : "teacher"]);
+        [ids.school, actorId, actorId === ids.observerAdmin || actorId === ids.recoveryAdmin ? "admin" : "teacher"]);
     }
     // Insert teacher first: selecting one arbitrary membership row used to
     // hide this user's equally active administrator role.
@@ -218,6 +221,8 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
   });
 
   after(async () => {
+    if (priorTodayMode === undefined) delete process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
+    else process.env.CLASSPILOT_TODAY_SCHEDULE_MODE = priorTodayMode;
     if (!admin) return;
     realtime?.setClasspilotRealtimeStatusCommandForTests(undefined);
     // Synthetic roots are intentionally retained in this disposable database,
@@ -298,10 +303,10 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     assert.equal(focusRecord((await reload(item)).automaticFlightPathState).status, "active");
   });
 
-  test("a new manual-day co-teacher session freezes the saved class preset without scheduled metadata", async () => {
+  test("a new admin recovery session freezes the saved class preset without scheduled metadata", async () => {
     const item = await fixture();
     await configure(item);
-    const started = await startManualToday(item, ids.coTeacher);
+    const started = await startManualToday(item);
     assert.equal(started.scheduledDate, null);
     assert.equal(started.scheduledStartAt, null);
     assert.equal(started.scheduledEndAt, null);
@@ -323,7 +328,7 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
   test("manual sessions never acquire a saved preset retroactively and a later new start freezes it", async () => {
     const ordinary = await fixture();
     await configure(ordinary);
-    ordinary.session = await inSchool(() => storage.createTeachingSession({ groupId: ordinary.group.id, teacherId: ids.teacher }));
+    ordinary.session = await inSchool(() => storage.createTeachingSession({ groupId: ordinary.group.id, teacherId: ids.recoveryAdmin }));
     assert.equal(ordinary.session.manualExpiresAt, null);
     assert.equal(focusRecord(await inSchool(() => storage.initializeAutomaticFlightPathForSession(ordinary.session!))).status, "inactive");
     assert.equal((await restrictions(ordinary)).flightPath.active, false);

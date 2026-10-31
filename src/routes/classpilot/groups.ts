@@ -158,10 +158,11 @@ router.get("/manual-today", ...auth, async (req, res, next) => {
 router.post("/:id/manual-today", ...auth, async (req, res, next) => {
   try {
     if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)
-      || Object.keys(req.body).some(key => key !== "expectedSchoolDate") || typeof req.body.expectedSchoolDate !== "string") {
+      || Object.keys(req.body).some(key => !["expectedSchoolDate", "expectedTodayRevision"].includes(key)) || typeof req.body.expectedSchoolDate !== "string"
+      || req.body.expectedTodayRevision !== undefined && (!Number.isInteger(req.body.expectedTodayRevision) || req.body.expectedTodayRevision < 0)) {
       return res.status(400).json({ error: "Provide only the school date shown in the review.", code: "MANUAL_TODAY_INVALID" });
     }
-    const result = await enableClasspilotManualToday({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, groupId: param(req, "id"), expectedSchoolDate: req.body.expectedSchoolDate });
+    const result = await enableClasspilotManualToday({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, groupId: param(req, "id"), expectedSchoolDate: req.body.expectedSchoolDate, expectedTodayRevision: req.body.expectedTodayRevision });
     for (const finalized of result.finalizations) runClasspilotFinalizationSideEffects(finalized, {
       schoolId: res.locals.schoolId!, reason: finalized.session.scheduledFinalizationReason === "admin_end" ? "admin_end" : "teacher_end",
     });

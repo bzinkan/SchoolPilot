@@ -142,7 +142,7 @@ export default function ScheduleChanges() {
       <SchedulePageHeader
         eyebrow="Teaching tools"
         title="Planned time swaps"
-        description="Request a one-day time swap with a shared class. Your teachers, student rosters, and recurring schedules do not change."
+        description="Plan a time swap for a future date. Use Today’s schedule for changes today. Existing requests and history remain available here."
         actions={(
           <>
             <ThemeToggle />

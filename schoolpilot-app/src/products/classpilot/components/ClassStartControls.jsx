@@ -1,4 +1,4 @@
-export default function ClassStartControls({ groups, selectedId, onSelect, activeSession, manualToday, canManageManualToday, onStart, onManualStart, disabled, pending, admin = false }) {
+export default function ClassStartControls({ groups, selectedId, onSelect, activeSession, manualToday, onStart, disabled, pending, admin = false }) {
   const selected = groups.find(group => group.id === selectedId);
   const teaching = !!selected && activeSession?.groupId === selected.id;
   const isManualToday = manualToday?.isManualToday === true;
@@ -14,10 +14,5 @@ export default function ClassStartControls({ groups, selectedId, onSelect, activ
     {selected ? <span className="text-xs text-chrome-muted" data-testid="selected-class-schedule-status">{status}{teaching ? ' · Teaching' : ''}</span> : null}
     <button type="button" className={`${buttonClass} bg-primary text-primary-foreground hover:bg-primary/90`} disabled={disabled || pending || !selected || teaching}
       onClick={() => onStart(selected)} data-testid={admin ? 'button-admin-start-session' : 'button-start-session'}>{teaching ? 'Teaching' : pending ? 'Starting…' : action}</button>
-    {selected?.scheduleEnabled && !isManualToday && !teaching && canManageManualToday ? <button type="button"
-      className={`${buttonClass} border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover`}
-      disabled={disabled || pending} onClick={() => onManualStart(selected)} data-testid={admin ? 'button-admin-start-manually-today' : 'button-start-manually-today'}>
-      {activeSession ? 'Switch manually today' : 'Start manually today'}
-    </button> : null}
   </div>;
 }

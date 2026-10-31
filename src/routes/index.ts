@@ -56,6 +56,7 @@ import instructionalCalendarRoutes from "./classpilot/instructionalCalendar.js";
 import monitoringEventRoutes from "./classpilot/monitoringEvents.js";
 import classpilotAdminUsageRoutes from "./classpilot/adminUsage.js";
 import scheduleChangeRoutes from "./classpilot/scheduleChanges.js";
+import todayScheduleRoutes from "./classpilot/todaySchedule.js";
 import liveViewTelemetryRoutes from "./classpilot/liveViewTelemetry.js";
 import classpilotSsoPolicyRoutes from "./classpilot/ssoPolicy.js";
 import dashboardActivityRoutes from "./classpilot/dashboardActivity.js";
@@ -449,6 +450,7 @@ router.use("/classpilot/student-information", studentInformationRoutes);
 router.use("/classpilot", competitiveRoutes);
 router.use("/classpilot", monitoringEventRoutes);
 router.use("/classpilot/schedule-changes", scheduleChangeRoutes);
+router.use("/classpilot/today-schedule", todayScheduleRoutes);
 
 // Admin - Super admin panel
 router.use("/admin/monitoring", superAdminMonitoringRoutes);

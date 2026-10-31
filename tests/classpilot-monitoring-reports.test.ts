@@ -113,6 +113,7 @@ const typedTeachingSession: TeachingSession = {
   automaticFlightPathState: null,
   scheduledConflictId: null,
   scheduledDate: null,
+  scheduledOccurrenceId: null,
   scheduledTimezone: null,
   scheduledStartAt: null,
   scheduledEndAt: null,

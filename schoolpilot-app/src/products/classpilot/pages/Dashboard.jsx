@@ -48,7 +48,7 @@ import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
-import { MANUAL_TODAY_QUERY, useManualToday, manualTodayDateLabel } from '../hooks/useManualToday';
+import { MANUAL_TODAY_QUERY, useManualToday } from '../hooks/useManualToday';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
@@ -500,7 +500,6 @@ export default function Dashboard() {
   // The viewer's own dashboard theme. Presentation only, and never the class owner's.
   const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin), timeZone: school?.schoolTimezone || school?.timezone });
   const manualTodayQuery = useManualToday({ schoolId: activeSchoolId, viewerId: currentUser?.id, accessScope: isAdmin ? 'admin' : isTeacher ? 'teacher' : 'none', enabled: isAdmin || isTeacher });
-  const manualTodayClasses = (manualTodayQuery.data?.classes || []).filter(group => group.isManualToday);
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();
@@ -687,6 +686,7 @@ export default function Dashboard() {
   const [adminStartGroupId, setAdminStartGroupId] = useState(() => readClassroomSelection(adminClassroomSelectionKey));
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classStartReview, setClassStartReview] = useState(null);
+  const [classStartTimingNotice, setClassStartTimingNotice] = useState(null);
   const classStartTriggerRef = useRef(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
@@ -697,7 +697,6 @@ export default function Dashboard() {
   const [sessionReportTarget, setSessionReportTarget] = useState(null);
   const [showPastSessions, setShowPastSessions] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
-  const [skipTodayGroup, setSkipTodayGroup] = useState(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
   const [tileCommandState, setTileCommandState] = useState({});
@@ -1812,8 +1811,6 @@ export default function Dashboard() {
     ? `${nextScheduledActivity.name} · ${new Date(nextScheduledActivity.startsAt).toLocaleTimeString([], {
       hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}`
     : null;
-  const selectedTeacherStartGroup = groups.find((group) => group.id === startGroupId);
-  const selectedAdminStartGroup = adminTeachingGroups.find((group) => group.id === adminStartGroupId);
 
   useLayoutEffect(() => {
     // Replace every piece of event-routing context in one pre-paint step. A
@@ -3374,9 +3371,9 @@ export default function Dashboard() {
       setShowRerouteDialog(false);
       setClassStartOverlap(null);
       setClassStartReview(null);
+      setClassStartTimingNotice(null);
       setClassResyncOverlap(null);
       setEndClassTarget(null);
-      setSkipTodayGroup(null);
       setRecipientSnapshot(null);
       setShowStopFocusDialog(false);
     }
@@ -5371,13 +5368,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     updateGradesMutation.mutate(currentGrades.filter(g => g !== grade));
   };
 
-  const makeClassStartReview = (group, manualToday = false, source = activeSession) => ({
+  const makeClassStartReview = (group, source = activeSession) => ({
     scope: classReaderKey,
     groupId: group.id,
     groupName: group.name,
-    manualToday,
-    alreadyManualToday: manualTodayClasses.some(row => row.id === group.id),
-    schoolDate: manualTodayQuery.data?.schoolDate,
     expectedActiveSessionId: source?.id || null,
     previousSessionOwned: source?.teacherId === currentUser?.id,
     previousClassName: source?.classNameSnapshot || groups.find(row => row.id === source?.groupId)?.name || adminTeachingGroups.find(row => row.id === source?.groupId)?.name,
@@ -5412,18 +5406,16 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const request = typeof variables === 'string' ? { groupId: variables } : variables;
       const failure = error.response?.data;
       const group = [...groups, ...adminTeachingGroups].find(row => row.id === request.groupId);
-      if (failure?.code === 'MANUAL_TODAY_REQUIRED' && group && failure.canManageManualToday) {
+      if (['MANUAL_TODAY_REQUIRED', 'TODAY_SCHEDULE_CHANGE_REQUIRED'].includes(failure?.code) && group) {
         setClassStartOverlap(null);
-        setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group)),
-          ...(Object.hasOwn(request, 'expectedActiveSessionId') ? { expectedActiveSessionId: request.expectedActiveSessionId } : {}),
-          manualToday: true, schoolDate: failure.schoolDate, error: '' }));
-        void manualTodayQuery.refetch();
+        setClassStartReview(null);
+        setClassStartTimingNotice({ scope: classReaderKey, groupId: group.id, name: group.name });
         return;
       }
       const data = classStartOverlapData(error);
       if (data) {
-        if ((request.manualToday || Object.hasOwn(request, 'expectedActiveSessionId')) && group) {
-          setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group, !!request.manualToday)),
+        if (Object.hasOwn(request, 'expectedActiveSessionId') && group) {
+          setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group)),
             expectedActiveSessionId: request.expectedActiveSessionId, overlap: data, error: '' }));
           return;
         }
@@ -5440,11 +5432,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
-  const beginClassStart = (group, manualToday = false) => {
+  const beginClassStart = (group) => {
     if (!group || startSessionMutation.isPending) return;
+    setClassStartTimingNotice(null);
     classStartTriggerRef.current = document.activeElement;
-    if (manualToday || activeSession && activeSession.groupId !== group.id) {
-      setClassStartReview(makeClassStartReview(group, manualToday));
+    if (activeSession && activeSession.groupId !== group.id) {
+      setClassStartReview(makeClassStartReview(group));
       return;
     }
     startSessionMutation.mutate({ groupId: group.id, expectedActiveSessionId: activeSession?.id || null });
@@ -5540,30 +5533,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         return;
       }
       toast({ variant: "destructive", title: "Could not start scheduled class", description: error.response?.data?.error || error.message });
-    },
-  });
-
-  const skipScheduledClassMutation = useMutation({
-    mutationFn: async (groupId) => (
-      apiRequest('POST', `/classpilot/scheduled-classes/${encodeURIComponent(groupId)}/skip-today`, {})
-    ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
-      queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
-      setSkipTodayGroup(null);
-      toast({
-        title: "Scheduled Class Skipped",
-        description: "Today’s automatic class was canceled. No Session Summary will be sent.",
-      });
-    },
-    onError: (error) => {
-      if (error?.name === 'AbortError') return;
-      setSkipTodayGroup(null);
-      toast({
-        variant: "destructive",
-        title: "Could not skip scheduled class",
-        description: error.response?.data?.error || error.message,
-      });
     },
   });
 
@@ -7073,11 +7042,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
             <div className="flex flex-wrap items-center gap-2" data-testid="dashboard-class-picker-row">
               {isTeacher && !scheduledSupervisionId ? <ClassStartControls groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
-                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)} canManageManualToday={manualTodayQuery.data?.canManageManualToday === true}
-                    onStart={group => beginClassStart(group)} onManualStart={group => beginClassStart(group, true)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
+                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
+                    onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
               {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
-                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)} canManageManualToday={manualTodayQuery.data?.canManageManualToday === true}
-                    onStart={group => beginClassStart(group)} onManualStart={group => beginClassStart(group, true)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
+                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
+                    onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
             </div>
             <div data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1.5 min-[1240px]:flex-nowrap">
             {/* Center: Status badges */}
@@ -7144,19 +7113,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       >
                         <Clock className="h-3.5 w-3.5" /> Past sessions
                       </button>
-                      {selectedTeacherStartGroup?.scheduleEnabled
-                        && !manualTodayClasses.some(group => group.id === selectedTeacherStartGroup.id)
-                        && selectedTeacherStartGroup.teacherId === currentUser?.id && (
-                        <button
-                          type="button"
-                          onClick={() => setSkipTodayGroup(selectedTeacherStartGroup)}
-                          disabled={skipScheduledClassMutation.isPending}
-                          data-testid="button-skip-scheduled-class-today"
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover disabled:pointer-events-none disabled:opacity-50"
-                        >
-                          Skip Today
-                        </button>
-                      )}
                     </div>
                   )}
                 </>
@@ -7192,21 +7148,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
                     </>
-                  )}
-                  {!activeSession && !scheduledSupervisionId && !retainedObservedSession && (
-                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      {selectedAdminStartGroup?.scheduleEnabled && !manualTodayClasses.some(group => group.id === selectedAdminStartGroup.id) && (
-                        <button
-                          type="button"
-                          onClick={() => setSkipTodayGroup(selectedAdminStartGroup)}
-                          disabled={dashboardCapabilities.observedOtherClass || skipScheduledClassMutation.isPending}
-                          data-testid="button-admin-skip-scheduled-class-today"
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover disabled:pointer-events-none disabled:opacity-50"
-                        >
-                          Skip Today
-                        </button>
-                      )}
-                    </div>
                   )}
                   <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-chrome-elevated border-chrome-control-border text-chrome-fg-soft' : 'bg-transparent border-chrome-control-border text-chrome-muted'}`}>
                     <Eye className="h-4 w-4" />
@@ -7261,18 +7202,16 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         </div>
       </header>
 
-      {manualTodayClasses.length > 0 ? <div className="border-b border-amber-300 bg-amber-50 px-6 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100" data-testid="manual-today-status">
-        <strong>Manual for today:</strong> {manualTodayClasses.map(group => group.name).join(', ')}.
-        {' '}Normal scheduling resumes {manualTodayDateLabel(manualTodayQuery.data.resumesOn)} ({manualTodayQuery.data.timezone}).
-        {' '}Other classes remain automatic and may take over at their scheduled times.
+      {classStartTimingNotice?.scope === classReaderKey ? <div role="status" className="border-b bg-card px-6 py-3 text-sm" data-testid="class-start-timing-notice">
+        {classStartTimingNotice.name} is outside its available class time. Make period changes in Teaching tools.
+        {' '}<button type="button" className="font-medium text-primary underline" onClick={() => navigate(`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`)}>Open Today’s schedule</button>
       </div> : null}
-      {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview} schoolId={activeSchoolId} viewerId={currentUser?.id}
+      {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview}
         returnFocusRef={classStartTriggerRef}
-        currentSessionId={activeSession?.id || null} manualTodayQuery={manualTodayQuery} targetAvailable={[...groups, ...adminTeachingGroups].some(group => group.id === classStartReview.groupId)}
+        currentSessionId={activeSession?.id || null} targetAvailable={[...groups, ...adminTeachingGroups].some(group => group.id === classStartReview.groupId)}
         pending={startSessionMutation.isPending} onClose={() => setClassStartReview(null)}
-        onRefresh={() => { const group = [...groups, ...adminTeachingGroups].find(row => row.id === classStartReview.groupId); if (group) setClassStartReview(makeClassStartReview(group, classStartReview.manualToday)); }}
+        onRefresh={() => { const group = [...groups, ...adminTeachingGroups].find(row => row.id === classStartReview.groupId); if (group) setClassStartReview(makeClassStartReview(group)); }}
         onConfirm={() => startSessionMutation.mutate({ groupId: classStartReview.groupId, expectedActiveSessionId: classStartReview.expectedActiveSessionId,
-          ...(classStartReview.manualToday ? { manualToday: { expectedSchoolDate: classStartReview.schoolDate } } : {}),
           ...(classStartReview.overlap ? { acknowledgeOverlap: true } : {}),
         })} /> : null}
 
@@ -8464,40 +8403,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               data-testid="button-confirm-logout"
             >
               {logoutPending ? "Logging Out..." : "Log Out Anyway"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!skipTodayGroup}
-        onOpenChange={(open) => {
-          if (!open && !skipScheduledClassMutation.isPending) setSkipTodayGroup(null);
-        }}
-      >
-        <DialogContent className="max-w-md" data-testid="dialog-skip-scheduled-class-today">
-          <DialogHeader>
-            <DialogTitle>Skip {skipTodayGroup?.name || "this scheduled class"} today?</DialogTitle>
-            <DialogDescription data-testid="text-skip-scheduled-class-consequence">
-              This prevents today’s automatic class from starting. No Session Summary will be sent, and the regular weekday schedule resumes on the next school day.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setSkipTodayGroup(null)}
-              disabled={skipScheduledClassMutation.isPending}
-              data-testid="button-cancel-skip-scheduled-class-today"
-            >
-              Keep Scheduled Class
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => skipTodayGroup?.id && skipScheduledClassMutation.mutate(skipTodayGroup.id)}
-              disabled={!skipTodayGroup?.id || skipScheduledClassMutation.isPending}
-              data-testid="button-confirm-skip-scheduled-class-today"
-            >
-              {skipScheduledClassMutation.isPending ? "Skipping..." : "Skip Today"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -15,7 +15,8 @@ const CHANGE_ID = "55555555-5555-4555-8555-555555555555";
 const SCHEDULED_CONFLICT_ID = "66666666-6666-4666-8666-666666666666";
 const SCHEDULED_STUDENT_ID = "77777777-7777-4777-8777-777777777777";
 const SWAP_DATE = "2026-09-10";
-const FIXTURE_NOW = `${SWAP_DATE}T10:00:00.000Z`;
+// New legacy requests are future-date planning; same-day changes use Today’s schedule.
+const FIXTURE_NOW = '2026-09-09T10:00:00.000Z';
 
 function auth(role) {
   return {
@@ -267,6 +268,9 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
 
     await teacherPage.getByTestId("button-request-time-swap").click();
     assert.equal(await teacherPage.getByTestId("textarea-schedule-change-reason").getAttribute("required"), "", "teacher requests must fail closed until date-specific policy loads");
+    await teacherPage.getByTestId("input-schedule-change-date").fill('2026-09-09');
+    assert.equal(await teacherPage.getByTestId("input-schedule-change-date").evaluate(input => input.checkValidity()), false, "New same-day changes use Today’s schedule");
+    assert.equal(await teacherPage.getByTestId("button-submit-schedule-change").isDisabled(), true);
     await teacherPage.getByTestId("input-schedule-change-date").fill(SWAP_DATE);
     assert.equal(await teacherPage.getByTestId("input-schedule-change-date").evaluate(input => input.checkValidity()), true, "The fixture date must satisfy the real school-local date minimum");
     await teacherPage.getByTestId("select-schedule-change-pair").click();
