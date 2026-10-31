@@ -43,7 +43,7 @@ export function TeacherSettingsTabs() {
         className={`${baseClass} ${active ? 'border-amber-500 text-foreground' : 'border-transparent text-muted-foreground'}`}>{label}</Link>;
     })}
     <Link to="/classpilot/my-settings/today" aria-current={location.pathname === '/classpilot/my-settings/today' ? 'page' : undefined}
-      className={`${baseClass} ${location.pathname === '/classpilot/my-settings/today' ? 'border-amber-500 text-foreground' : 'border-transparent text-muted-foreground'}`}>Today schedule</Link>
+      className={`${baseClass} ${location.pathname === '/classpilot/my-settings/today' ? 'border-amber-500 text-foreground' : 'border-transparent text-muted-foreground'}`}>Today’s schedule</Link>
   </nav>;
 }
 

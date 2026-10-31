@@ -126,12 +126,12 @@ function TodayScheduleWorkspace({ schoolId, viewerId, scope }) {
     action: name, expectedRevision: change.revision, ...(name === 'accept' ? { reviewToken: acceptReview.reviewToken } : {}),
   } });
   return <div className="min-h-screen bg-background">
-    <SchedulePageHeader eyebrow="Teaching tools" title="Today schedule" description="Swap two periods for both teachers. Keep your classes, students and regular schedule."
+    <SchedulePageHeader eyebrow="Teaching tools" title="Today’s schedule" description="Swap two periods for both teachers. Keep your classes, students and regular schedule."
       actions={<><ThemeToggle /><Button variant="outline" className="border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 hover:text-white" onClick={() => navigate('/classpilot')} data-testid="button-back-classpilot"><ArrowLeft className="mr-2 h-4 w-4" />Back to ClassPilot</Button></>}>
       <TeacherSettingsTabs />
     </SchedulePageHeader>
     <main className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6" data-testid="today-schedule-workspace">
-      {query.isPending ? <p role="status">Loading today’s schedule…</p> : query.isError ? <div role="alert" className="space-y-3 rounded-lg border p-4"><p>Today’s schedule could not be refreshed. No changes can be made until it is available.</p><Button variant="outline" onClick={() => query.refetch()}>Retry today schedule</Button></div> : <>
+      {query.isPending ? <p role="status">Loading today’s schedule…</p> : query.isError ? <div role="alert" className="space-y-3 rounded-lg border p-4"><p>Today’s schedule could not be refreshed. No changes can be made until it is available.</p><Button variant="outline" onClick={() => query.refetch()}>Retry today’s schedule</Button></div> : <>
         <p className="text-sm text-muted-foreground">{manualTodayDateLabel(data?.schoolDate)} · {data?.timeZone}. Changes apply today only; your regular schedule returns tomorrow.</p>
         {!enabled ? <p role="status" className="rounded-lg border p-4">New period swaps are not available at your school yet. Existing applied changes remain in effect, and pending requests can still be reviewed, declined or cancelled below.</p>
           : !data?.canRequest ? <p role="status" className="rounded-lg border p-4">Your school administrator has not enabled period swaps for your account. You can still review existing requests below.</p> : null}

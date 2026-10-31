@@ -19,7 +19,7 @@ import { getApprovedScheduleChangeLegsForSchoolDate, broadcastClasspilotSchedule
   announceClasspilotScheduleChangeIds } from "./classpilotScheduleChanges.js";
 import { loadClasspilotTodayOccurrences } from "./classpilotTodayOccurrences.js";
 import { assertTodayScheduleWriteContract } from "./classpilotTodayScheduleContract.js";
-import { applyClasspilotTodayTransitions } from "./classpilotTodayTransitions.js";
+import { applyClasspilotTodayTransitions, lockClasspilotTodayTransitionStudents } from "./classpilotTodayTransitions.js";
 import { classpilotTeachingSessionDeadline, classpilotTeachingSessionIsCurrent } from "./classpilotTeachingSessionWindow.js";
 import { withClasspilotSchedulePostCommitTransaction, lockInstructionalCalendarDate,
   getHeartbeatTrackingSettingsForSchool } from "./storage.js";
@@ -501,8 +501,24 @@ async function supersedeOverlaps(database: Database, options: RequestContext, da
   return ids;
 }
 
+function assertPlanBoundary(data: Facts, plan: TodaySchedulePlan, now: Date) {
+  if (localDateInTimeZone(now, data.timeZone) !== data.schoolDate
+    || (plan.mode === "before_bell" ? new Date(plan.firstStartsAt) <= now : new Date(plan.firstEndsAt) <= now))
+    fail("The period boundary changed. Review today again.", "TODAY_SCHEDULE_REVIEW_STALE");
+}
+
 async function applyPlan(database: Database, options: RequestContext, change: ClasspilotTodayChange, data: Facts, plan: TodaySchedulePlan,
-  now: Date, accepted: boolean) {
+  clock: () => Date, accepted: boolean) {
+  const candidateAt = new Date(clock().getTime());
+  const selectedSessionIds = new Set(data.classes.flatMap(group => group.meetings)
+    .filter(meeting => plan.sourceMeetingKeys.includes(meeting.key) && meeting.sessionId).map(meeting => meeting.sessionId));
+  const outgoingSessionIds = data.sessions.filter(row => plan.groupIds.includes(row.groupId) && !row.endTime
+    && classpilotTeachingSessionDeadline(row) > candidateAt && (selectedSessionIds.has(row.id)
+      || plan.mode === "remainder" && !row.scheduledDate && classpilotTeachingSessionIsCurrent(row, candidateAt))).map(row => row.id);
+  await lockClasspilotTodayTransitionStudents({ schoolId: options.schoolId, groupIds: plan.groupIds,
+    outgoingSessionIds, dbInstance: database });
+  const now = new Date(clock().getTime());
+  assertPlanBoundary(data, plan, now);
   const generationRows = await database.select({ generation: sql<number>`COALESCE(MAX(${classpilotTodayOccurrences.generation}), 0) + 1` })
     .from(classpilotTodayOccurrences).where(and(eq(classpilotTodayOccurrences.schoolId, options.schoolId),
       eq(classpilotTodayOccurrences.scheduledDate, data.schoolDate)));
@@ -531,11 +547,6 @@ async function applyPlan(database: Database, options: RequestContext, change: Cl
       ...(item.preserved?.scheduledOccurrenceId ? { preservedOccurrenceId: item.preserved.scheduledOccurrenceId } : {}),
       ...(item.preserved?.sessionId && !item.preserved.scheduledOccurrenceId ? { preservedLegacySessionId: item.preserved.sessionId } : {}),
       supersededLegacyChangeIds: legacyIds, cutoverAt: now.toISOString() } }))).returning();
-  const selectedSessionIds = new Set(data.classes.flatMap(group => group.meetings)
-    .filter(meeting => plan.sourceMeetingKeys.includes(meeting.key) && meeting.sessionId).map(meeting => meeting.sessionId));
-  const outgoingSessionIds = data.sessions.filter(row => plan.groupIds.includes(row.groupId) && !row.endTime
-    && classpilotTeachingSessionDeadline(row) > now && (selectedSessionIds.has(row.id)
-      || plan.mode === "remainder" && !row.scheduledDate && classpilotTeachingSessionIsCurrent(row, now))).map(row => row.id);
   const transitions = await applyClasspilotTodayTransitions({ schoolId: options.schoolId, occurrenceIds: occurrences.map(row => row.id),
     outgoingSessionIds, liveTeacherIds: [plan.initiatorTeacherId, ...(accepted && plan.counterpartTeacherId ? [plan.counterpartTeacherId] : [])],
     cutoverAt: now, dbInstance: database });
@@ -544,6 +555,9 @@ async function applyPlan(database: Database, options: RequestContext, change: Cl
     set: { revision: sql`${classpilotSchoolSchedules.revision} + 1`, updatedAt: now, updatedBy: options.actorId } });
   await audit(database, options.schoolId, options.actorId, change.id, "applied", { generation: Number(generation),
     action: plan.action, mode: plan.mode, endedSessionIds: outgoingSessionIds, occurrenceIds: occurrences.map(row => row.id) });
+  // Later row/control locks can also outlive the window. Throw inside the
+  // outer transaction so no expired plan, finalization or outbox row commits.
+  assertPlanBoundary(data, plan, clock());
   return { change: applied, legacyIds, ...transitions };
 }
 
@@ -590,8 +604,9 @@ export async function createClasspilotTodayScheduleChange(options: RequestContex
     if (!change) fail("The request could not be created.", "TODAY_SCHEDULE_UNAVAILABLE", 503);
     await audit(database, options.schoolId, options.actorId, change.id, required ? "requested" : "created", {
       action: reviewed.plan.action, affectedGroupIds: reviewed.plan.groupIds, requiresAcceptance: !!required });
+    assertPlanBoundary(reviewed.data, reviewed.plan, clock());
     if (required) return { change, legacyIds: [], finalizations: [], startedSessionIds: [] };
-    return applyPlan(database, options, change, reviewed.data, reviewed.plan, commitAt, false);
+    return applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, false);
   });
   await publishCommitted(options, outcome);
   return { change: serializeChange(outcome.change, options.actorId, false) };
@@ -649,7 +664,7 @@ export async function actOnClasspilotTodayScheduleChange(options: RequestContext
     if (change.cutoffAt <= commitAt || localDateInTimeZone(commitAt, reviewed.data.timeZone) !== change.scheduledDate
       || reviewed.plan.mode === "before_bell" && new Date(reviewed.plan.firstStartsAt) <= commitAt)
       fail("This period ended. Review a new change.", "TODAY_SCHEDULE_REVIEW_STALE");
-    return { ...await applyPlan(database, options, change, reviewed.data, reviewed.plan, commitAt, true), stale: false };
+    return { ...await applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, true), stale: false };
   });
   await publishCommitted(options, outcome);
   if (outcome.stale) fail("The schedule or live class changed. This request was closed; make a new review.", "TODAY_SCHEDULE_REVIEW_STALE");

@@ -334,7 +334,7 @@ export function ScheduleChangeRequestDialog({
         <DialogHeader>
           <DialogTitle>{mode === "admin" ? "Create approved schedule change" : "Request time swap"}</DialogTitle>
           <DialogDescription>
-            Choose a future school day and exchange the two class periods. For changes today, use Teaching tools → Today schedule.
+            Choose a future school day and exchange the two class periods. For changes today, use Teaching tools → Today’s schedule.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-5">

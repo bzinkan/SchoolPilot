@@ -623,8 +623,8 @@ test('Dashboard preserves ordinary guarded Start and Switch and sends timing cha
   await page.getByTestId('class-start-timing-notice').waitFor();
   assert.equal(await page.getByTestId('dialog-class-start-review').count(), 0);
   assert.deepEqual(idle.startRequests, [{ groupId: GROUP_ID, expectedActiveSessionId: null }]);
-  await page.getByRole('button', { name: 'Open Today schedule' }).click();
-  await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Open Today’s schedule' }).click();
+  await page.getByRole('heading', { name: 'Today’s schedule', exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/classpilot/my-settings/today');
   assert.equal(new URL(page.url()).searchParams.get('selectedGroupId'), GROUP_ID);
   assert.equal(idle.manualTodayRequests.length, 0);

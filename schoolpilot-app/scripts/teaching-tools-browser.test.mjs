@@ -188,7 +188,7 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     assert.equal(await page.getByTestId('classpilot-admin-shell').count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Teaching tools', exact: true }).count(), 1);
     assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 5);
-    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Today schedule', exact: true }).waitFor();
+    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Today’s schedule', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Back to ClassPilot', exact: true }).waitFor();
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-websites-desktop.png'), fullPage: true, animations: 'disabled' });
     await page.getByRole('link', { name: 'Classroom defaults', exact: true }).click();

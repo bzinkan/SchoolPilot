@@ -87,7 +87,7 @@ async function open(options = {}) {
     state.unexpected.push(pathname); return route.fulfill({ status: 500, json: { error: 'Unexpected fixture request' } });
   });
   await page.goto(`${base}${options.route || '/classpilot/my-settings/today'}`, { timeout: 30_000 });
-  await page.getByRole('heading', { name: options.recovery ? 'Manual for today' : 'Today schedule', exact: true }).waitFor();
+  await page.getByRole('heading', { name: options.recovery ? 'Manual for today' : 'Today’s schedule', exact: true }).waitFor();
   await page.waitForLoadState('networkidle');
   return { page, state };
 }
@@ -95,11 +95,11 @@ const writes = state => state.requests.filter(request => request.method === 'POS
 async function choose(page) { await page.getByTestId('select-today-selected').selectOption(meetingKey('v8', '14')); await page.getByTestId('button-preview-today-swap').click(); await page.getByTestId('today-swap-review').waitFor(); }
 function clean(state) { assert.deepEqual(state.errors, []); assert.deepEqual(state.unexpected, []); }
 
-test('Today schedule reviews all four entries and applies once without starting through Dashboard APIs', async () => {
+test('Today’s schedule reviews all four entries and applies once without starting through Dashboard APIs', async () => {
   const { page, state } = await open({ route: '/classpilot/my-settings/manual-today' });
   try {
     assert.equal(new URL(page.url()).pathname, '/classpilot/my-settings/today');
-    assert.equal(await page.getByRole('link', { name: 'Today schedule', exact: true }).getAttribute('aria-current'), 'page');
+    assert.equal(await page.getByRole('link', { name: 'Today’s schedule', exact: true }).getAttribute('aria-current'), 'page');
     await page.getByTestId('select-today-selected').selectOption(meetingKey('v8', '14')); assert.equal(writes(state).length, 0);
     await page.getByTestId('button-preview-today-swap').click(); await page.getByTestId('today-swap-review').waitFor();
     assert.deepEqual(writes(state)[0].body, { expectedSchoolDate: date, action: 'swap', currentGroupId: 'v7', currentMeetingRef: 'v7-meeting', selectedGroupId: 'v8', selectedMeetingRef: 'v8-meeting' });

@@ -7204,7 +7204,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
       {classStartTimingNotice?.scope === classReaderKey ? <div role="status" className="border-b bg-card px-6 py-3 text-sm" data-testid="class-start-timing-notice">
         {classStartTimingNotice.name} is outside its available class time. Make period changes in Teaching tools.
-        {' '}<button type="button" className="font-medium text-primary underline" onClick={() => navigate(`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`)}>Open Today schedule</button>
+        {' '}<button type="button" className="font-medium text-primary underline" onClick={() => navigate(`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`)}>Open Today’s schedule</button>
       </div> : null}
       {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview}
         returnFocusRef={classStartTriggerRef}

@@ -131,7 +131,7 @@ test('manual-today preview allowlist admits only the exact read under the curren
   }
 });
 
-test('Today schedule preview fixture exposes only the exact disabled school-bound read', () => {
+test('Today’s schedule preview fixture exposes only the exact disabled school-bound read', () => {
   const url = `${baseUrl}/api/classpilot/today-schedule`;
   const schoolId = personas.classpilotTeacher.schoolId;
   assert.deepEqual(respond(personas.classpilotTeacher, { url, schoolId }), {

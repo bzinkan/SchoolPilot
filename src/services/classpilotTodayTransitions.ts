@@ -6,16 +6,12 @@ import { createOrReuseScheduledReportSession, getUserById, lockClasspilotStudent
 import { finalizeClasspilotSession } from "./classpilotSessionLifecycle.js";
 import { canonicalTodayOccurrenceId } from "./classpilotTodayOccurrences.js";
 
-/** Caller holds the reviewed school/date/class locks and publishes only after its outer commit. */
-export async function applyClasspilotTodayTransitions(options: {
-  schoolId: string; occurrenceIds: string[]; outgoingSessionIds: string[]; liveTeacherIds: string[];
-  cutoverAt: Date; dbInstance: typeof db;
-}): Promise<{ finalizations: FinalizeTeachingSessionResult[]; startedSessionIds: string[] }> {
+/** Acquire the complete authority scope before a reviewed cutover clock is captured. */
+export async function lockClasspilotTodayTransitionStudents(options: {
+  schoolId: string; groupIds: readonly string[]; outgoingSessionIds: readonly string[]; dbInstance: typeof db;
+}): Promise<void> {
   const database = options.dbInstance;
-  const rows = options.occurrenceIds.length ? await database.select().from(classpilotTodayOccurrences).where(and(
-    eq(classpilotTodayOccurrences.schoolId, options.schoolId), inArray(classpilotTodayOccurrences.id, options.occurrenceIds))) : [];
-  if (rows.length !== new Set(options.occurrenceIds).size) throw new Error("TODAY_SCHEDULE_OCCURRENCE_MISSING");
-  const groupIds = [...new Set(rows.map(row => row.groupId))];
+  const groupIds = [...new Set(options.groupIds)];
   const [incomingStudents, outgoingStudents] = await Promise.all([
     groupIds.length ? database.select({ studentId: groupStudents.studentId }).from(groupStudents)
       .innerJoin(groups, and(eq(groups.id, groupStudents.groupId), eq(groups.schoolId, options.schoolId)))
@@ -26,6 +22,21 @@ export async function applyClasspilotTodayTransitions(options: {
   ]);
   await lockClasspilotStudentControlAuthorities(options.schoolId,
     [...new Set([...incomingStudents, ...outgoingStudents].map(row => row.studentId))].sort(), database);
+}
+
+/** Caller holds the reviewed school/date/class locks and publishes only after its outer commit. */
+export async function applyClasspilotTodayTransitions(options: {
+  schoolId: string; occurrenceIds: string[]; outgoingSessionIds: string[]; liveTeacherIds: string[];
+  cutoverAt: Date; dbInstance: typeof db;
+}): Promise<{ finalizations: FinalizeTeachingSessionResult[]; startedSessionIds: string[] }> {
+  const database = options.dbInstance;
+  const rows = options.occurrenceIds.length ? await database.select().from(classpilotTodayOccurrences).where(and(
+    eq(classpilotTodayOccurrences.schoolId, options.schoolId), inArray(classpilotTodayOccurrences.id, options.occurrenceIds))) : [];
+  if (rows.length !== new Set(options.occurrenceIds).size) throw new Error("TODAY_SCHEDULE_OCCURRENCE_MISSING");
+  // Reentrant for reviewed callers that already acquired the union before
+  // capturing cutoverAt; protects this lower-level helper's other callers too.
+  await lockClasspilotTodayTransitionStudents({ schoolId: options.schoolId, groupIds: rows.map(row => row.groupId),
+    outgoingSessionIds: options.outgoingSessionIds, dbInstance: database });
   const finalizations: FinalizeTeachingSessionResult[] = [];
   for (const sessionId of [...new Set(options.outgoingSessionIds)].sort()) {
     const result = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId,

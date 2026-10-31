@@ -217,10 +217,10 @@ const cases = [
     expectedPath: '/classpilot/my-settings/today',
     persona: personas.classpilotTeacher,
     assertion: async page => {
-      await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('heading', { name: 'Today’s schedule', exact: true }).waitFor({ state: 'visible' });
       await page.getByText('New period swaps are not available at your school yet.', { exact: false }).waitFor({ state: 'visible' });
     },
-    surface: 'Today schedule retains a read-only surface while runtime is off',
+    surface: 'Today’s schedule retains a read-only surface while runtime is off',
   },
   {
     requestedPath: '/classpilot/my-settings/manual-today',
@@ -228,9 +228,9 @@ const cases = [
     expectRedirect: true,
     persona: personas.classpilotTeacher,
     assertion: async page => {
-      await page.getByRole('heading', { name: 'Today schedule', exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('heading', { name: 'Today’s schedule', exact: true }).waitFor({ state: 'visible' });
     },
-    surface: 'former teacher manual-day link redirects to Today schedule',
+    surface: 'former teacher manual-day link redirects to Today’s schedule',
   },
   {
     requestedPath: '/preview-smoke/unknown-route',

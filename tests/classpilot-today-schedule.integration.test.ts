@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { writeFile } from "node:fs/promises";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { and, eq, sql } from "drizzle-orm";
 import type { Group, TeachingSession } from "../src/schema/classpilot.js";
 import type { School, User } from "../src/schema/core.js";
@@ -100,6 +101,56 @@ async function rows() {
     occurrences: await database.select().from(schema.classpilotTodayOccurrences).where(eq(schema.classpilotTodayOccurrences.schoolId, school.id)),
     sessions: await database.select().from(schema.teachingSessions).where(eq(schema.teachingSessions.schoolId, school.id)),
   }));
+}
+
+async function waitAcrossStudentLock<T>(studentId: string, clock: Date, boundary: Date,
+  operation: (observedDatabase: typeof database) => Promise<T>) {
+  let release = () => {};
+  const released = new Promise<void>(resolve => { release = resolve; });
+  let acquired = (_pid: number) => {};
+  const ready = new Promise<number>(resolve => { acquired = resolve; });
+  let operationPid = 0;
+  let isBlocked = async () => false;
+  const blocker = inSchool(() => database.transaction(async tx => {
+    const result = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+    const blockerPid = Number(result.rows[0]!.pid);
+    await storage.lockClasspilotStudentControlAuthorities(school.id, [studentId], tx);
+    // Probe on the lock-holder's idle connection so the test also works with
+    // the deliberately small two-connection RLS application pool.
+    isBlocked = async () => {
+      const result = await tx.execute(sql`SELECT ${blockerPid}::int = ANY(pg_blocking_pids(${operationPid}::int)) AS blocked`);
+      return result.rows[0]?.blocked === true;
+    };
+    acquired(blockerPid);
+    await released;
+  }));
+  await ready;
+  const observedDatabase = new Proxy(database, { get(target, key, receiver) {
+    if (key !== "transaction") return Reflect.get(target, key, receiver);
+    return async (callback: Parameters<typeof database.transaction>[0]) => target.transaction(async tx => {
+      const result = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+      operationPid = Number(result.rows[0]!.pid);
+      return callback(tx);
+    });
+  } });
+  const pending = operation(observedDatabase);
+  // A failure before reaching the contested lock still gets reported below.
+  void pending.catch(() => {});
+  try {
+    let blocked = false;
+    for (let attempt = 0; attempt < 200 && !blocked; attempt++) {
+      if (operationPid) {
+        blocked = await isBlocked();
+      }
+      if (!blocked) await delay(10);
+    }
+    assert.equal(blocked, true, "the real transition must wait on the student's authority lock");
+    clock.setTime(boundary.getTime() + 1);
+  } finally {
+    release();
+    await blocker;
+  }
+  return pending;
 }
 
 describe("Reviewed reciprocal Today schedule changes", { concurrency: false }, () => {
@@ -321,6 +372,72 @@ describe("Reviewed reciprocal Today schedule changes", { concurrency: false }, (
     const deliveries = await inSchool(() => database.execute(sql`SELECT id FROM classpilot_session_summary_deliveries
       WHERE school_id=${school.id} AND teaching_session_id=${old.id}`));
     assert.equal(deliveries.rows.length, 0);
+  });
+
+  it("rolls back a before-bell creation when its student lock wait crosses the bell", async () => {
+    const clock = new Date(at(firstStart).getTime() - 1000);
+    const reviewed = await inSchool(() => service.previewClasspilotTodaySchedule({ ...context(), input: input(), now: clock }));
+    assert.equal(reviewed.canApply, true);
+    const token = reviewToken(reviewed);
+    const studentId = (await inSchool(() => storage.getGroupStudents(first.id)))[0]!.studentId;
+    await assert.rejects(waitAcrossStudentLock(studentId, clock, at(firstStart), observedDatabase => inSchool(() =>
+      service.createClasspilotTodayScheduleChange({ ...context(), now: clock, dbInstance: observedDatabase,
+        reviewToken: token, idempotencyKey: randomUUID() }))), { code: "TODAY_SCHEDULE_REVIEW_STALE" });
+    const current = await rows();
+    assert.equal(current.changes.length, 0);
+    assert.equal(current.occurrences.length, 0);
+    assert.equal(current.sessions.length, 0);
+  });
+
+  it("rolls back a remainder creation when its student lock wait crosses the period end", async () => {
+    const old = await occurrence(first);
+    const studentId = (await inSchool(() => storage.getGroupStudents(first.id)))[0]!.studentId;
+    const control = await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId));
+    assert.ok(control);
+    const clock = new Date(at(firstEnd).getTime() - 1000);
+    const reviewed = await inSchool(() => service.previewClasspilotTodaySchedule({ ...context(), input: input(), now: clock }));
+    assert.equal(reviewed.canApply, true);
+    const token = reviewToken(reviewed);
+    await assert.rejects(waitAcrossStudentLock(studentId, clock, at(firstEnd), observedDatabase => inSchool(() =>
+      service.createClasspilotTodayScheduleChange({ ...context(), now: clock, dbInstance: observedDatabase,
+        reviewToken: token, idempotencyKey: randomUUID() }))), { code: "TODAY_SCHEDULE_REVIEW_STALE" });
+    const current = await rows();
+    assert.equal(current.changes.length, 0);
+    assert.equal(current.occurrences.length, 0);
+    assert.equal(current.sessions.length, 1);
+    assert.equal((await savedSession(old)).endTime, null);
+    assert.deepEqual(await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId)), control);
+    const deliveries = await inSchool(() => database.execute(sql`SELECT id FROM classpilot_session_summary_deliveries
+      WHERE school_id=${school.id} AND teaching_session_id=${old.id}`));
+    assert.equal(deliveries.rows.length, 0);
+  });
+
+  it("keeps pending acceptance and both live classes unchanged when a student lock wait crosses the period end", async () => {
+    const old = await occurrence(first), other = await occurrence(counterpartFirst);
+    const clock = new Date(at(firstEnd).getTime() - 1000);
+    const reviewed = await inSchool(() => service.previewClasspilotTodaySchedule({ ...context(), input: input(), now: clock }));
+    const requested = await inSchool(() => service.createClasspilotTodayScheduleChange({ ...context(), now: clock,
+      reviewToken: reviewToken(reviewed), idempotencyKey: randomUUID() }));
+    assert.equal(requested.change.status, "pending");
+    const detail = await inSchool(() => service.getClasspilotTodayScheduleChange({ ...context(counterpart), now: clock,
+      changeId: requested.change.id }));
+    const token = reviewToken(detail.preview);
+    const studentId = (await inSchool(() => storage.getGroupStudents(first.id)))[0]!.studentId;
+    const control = await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId));
+    assert.ok(control);
+    await assert.rejects(waitAcrossStudentLock(studentId, clock, at(firstEnd), observedDatabase => inSchool(() =>
+      service.actOnClasspilotTodayScheduleChange({ ...context(counterpart), now: clock, dbInstance: observedDatabase,
+        changeId: requested.change.id, expectedRevision: requested.change.revision, action: "accept", reviewToken: token }))),
+      { code: "TODAY_SCHEDULE_REVIEW_STALE" });
+    const current = await rows();
+    assert.equal(current.changes.length, 1);
+    assert.equal(current.changes[0]!.status, "pending");
+    assert.equal(current.changes[0]!.revision, requested.change.revision);
+    assert.equal(current.occurrences.length, 0);
+    assert.equal(current.sessions.length, 2);
+    assert.equal((await savedSession(old)).endTime, null);
+    assert.equal((await savedSession(other)).endTime, null);
+    assert.deepEqual(await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId)), control);
   });
 
   it("rechecks the reused permission and refuses stale school dates without creating state", async () => {
