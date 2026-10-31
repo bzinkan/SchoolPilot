@@ -8429,7 +8429,6 @@ test('Windows browsers: Observe can choose a source but exposes no browser comma
   assert.deepEqual(harness.pageErrors, []);
 });
 
-if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
 
 test('a dashboard theme repaints only the chrome, pauses dark mode and leaves every tile identical', { timeout: 120_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
@@ -8538,3 +8537,183 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   assert.equal(none.document.notice, 0);
   assert.deepEqual(none.tiles.map(geometry), plain.tiles.map(geometry));
 });
+
+test('the complete dashboard header stays on one line across devices and class states', { timeout: 240_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const now = new Date('2026-09-15T13:11:30Z');
+  const switchGroupId = '12121212-1212-4212-8212-121212121212';
+  const schoolName = 'Saint Francis de Sales Cincinnati School with a deliberately long school name';
+  const className = 'Grade 5 Homeroom with a deliberately long classroom name for the header';
+  const screenshots = path.join(APP_ROOT, 'node_modules', '.cache', 'dashboard-header-screenshots');
+  mkdirSync(screenshots, { recursive: true });
+
+  const measure = page => page.evaluate(() => {
+    const rect = element => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, height: box.height, center: box.y + box.height / 2 };
+    };
+    const header = document.querySelector('[data-class-tools-navigation]');
+    const zones = Object.fromEntries(['brand', 'controls', 'primary-actions', 'utilities'].map(name => [name,
+      rect(header.querySelector('[data-testid="dashboard-header-' + name + '"]'))]));
+    const controls = [...header.querySelectorAll('button,select')].filter(element => element.getClientRects().length).map(element => {
+      const tops = new Set();
+      if (element.tagName === 'BUTTON') {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (!walker.currentNode.textContent.trim()) continue;
+          const range = document.createRange(); range.selectNodeContents(walker.currentNode);
+          for (const box of range.getClientRects()) if (box.width > 0) tops.add(Math.round(box.top));
+        }
+      }
+      return { id: element.dataset.testid, ...rect(element), controlHeight: rect(element.closest('.dashboard-header-observe') || element).height, textLines: tops.size,
+        pinned: Boolean(element.closest('[data-testid="dashboard-header-primary-actions"],[data-testid="dashboard-header-utilities"]')) };
+    });
+    const middle = header.querySelector('[data-testid="dashboard-header-controls"]');
+    return { header: rect(header), zones, controls, bodyWidth: document.documentElement.scrollWidth, viewport: innerWidth,
+      middleScroll: middle.scrollLeft, middleWidth: middle.clientWidth, middleContentWidth: middle.scrollWidth };
+  });
+  const assertRow = async (page, label) => {
+    const geometry = await measure(page);
+    assert.equal(geometry.header.height, 72, label + ': one fixed-height header');
+    assert.ok(geometry.bodyWidth <= geometry.viewport + 1, label + ': overflow stays inside the header');
+    for (const [name, zone] of Object.entries(geometry.zones)) {
+      assert.ok(Math.abs(zone.center - geometry.zones.brand.center) <= 1, label + ': ' + name + ' stays on the same row');
+    }
+    for (const control of geometry.controls) {
+      assert.ok(control.textLines <= 1, label + ': button label does not wrap: ' + control.id);
+      assert.equal(control.controlHeight, 36, label + ': consistent control height: ' + control.id);
+      assert.ok(Math.abs(control.center - geometry.zones.brand.center) <= 1, label + ': control stays on the row: ' + control.id);
+      if (control.pinned && geometry.viewport >= 1024) {
+        assert.ok(control.x >= 0 && control.right <= geometry.viewport, label + ': pinned action stays visible: ' + control.id);
+      }
+    }
+    return geometry;
+  };
+  const scenarios = ['admin', 'teacher'].flatMap(role => ['inactive', 'manual', 'automatic'].map(kind => ({ role, kind })));
+  scenarios.push({ role: 'admin', kind: 'observe' }, { role: 'teacher', kind: 'supervision' }, { role: 'admin', kind: 'loading' });
+
+  for (const { role, kind } of scenarios) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.clock.install({ time: now });
+    const automatic = kind === 'automatic';
+    const live = { ...teachingSession(), ...(automatic ? { lifecycle: { kind: 'scheduled', state: 'active' }, summaryTrigger: 'scheduled_end', scheduledEndAt: '2026-09-15T14:00:00Z' } : {}) };
+    const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+    const authentication = authResponse(role); authentication.memberships[0].schoolName = schoolName;
+    const groups = [{ ...GROUPS[0], name: className, scheduleEnabled: automatic }, { id: switchGroupId, teacherId: ADMIN_ID, name: 'Another assigned class' }];
+    const themed = kind === 'manual' || kind === 'supervision';
+    const theme = { kind: 'preset', preset: 'halloween' };
+    const preferences = { schoolId: SCHOOL_ID, revision: 1, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false,
+      dashboardTheme: themed ? theme : { kind: 'none' }, effectiveDashboardTheme: themed ? theme : null };
+    let finishLoading;
+    const loading = new Promise(resolve => { finishLoading = resolve; });
+    const harness = await configureDashboard(page, {
+      aggregate: aggregateController({ school: success([]), scoped: success([]) }), userRole: role, authentication,
+      activeSession: kind === 'loading' ? () => loading : ['manual', 'automatic'].includes(kind) ? live : null,
+      allSessions: [live, observed], acknowledgeSessionSubscriptions: true, teacherPreferences: preferences,
+      ...(kind === 'supervision' ? { dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: now.toISOString() }) } : {}),
+    });
+    context.after(() => finishLoading(null));
+    await page.route('**/api/teacher/groups**', route => route.fulfill({ json: { groups } }));
+    await page.goto(`${baseURL}/classpilot`);
+    await page.getByTestId('button-dashboard-theme').waitFor();
+    if (themed) await page.locator('[data-theme="halloween"]').waitFor();
+    if (['manual', 'automatic'].includes(kind)) await page.getByTestId(role === 'admin' ? 'badge-admin-teaching' : 'badge-active-session').waitFor();
+    if (kind === 'automatic') await page.getByTestId(role === 'admin' ? 'badge-admin-automatic-session' : 'badge-automatic-session').waitFor();
+    if (kind === 'supervision') await page.getByTestId('badge-scheduled-testing').waitFor();
+    if (kind !== 'supervision') {
+      await page.getByTestId(role === 'admin' ? 'select-admin-start-session-group' : 'select-start-session-group').selectOption(OWN_GROUP_ID);
+    }
+    if (kind === 'observe') {
+      await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+      await page.getByTestId('button-admin-start-session').waitFor({ state: 'hidden' });
+    }
+    await page.evaluate(() => document.fonts.ready);
+    for (const width of [1024, 1280, 1366, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertRow(page, `${role}/${kind}/${width}`);
+      if (role === 'admin' && kind === 'manual' && [1280, 1920].includes(width)) {
+        await page.screenshot({ path: path.join(screenshots, `header-${width}.png`) });
+        await page.locator('[data-class-tools-navigation]').screenshot({ path: path.join(screenshots, `header-${width}-strip.png`) });
+      }
+    }
+    await page.setViewportSize({ width: 800, height: 900 });
+    await assertRow(page, `${role}/${kind}/800`);
+    const outer = page.getByTestId('dashboard-header-viewport');
+    await outer.focus(); await outer.press('End');
+    assert.ok(await outer.evaluate(element => element.scrollLeft > 0), 'a narrow screen can reach the right-hand utilities');
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await outer.evaluate(element => { element.scrollLeft = 0; });
+    const middle = page.getByTestId('dashboard-header-controls');
+    const before = await measure(page);
+    if (before.middleContentWidth > before.middleWidth + 1) {
+      await middle.evaluate(element => { element.scrollLeft = 0; });
+      await page.getByTestId('button-scroll-header-right').click();
+      await waitUntil(() => middle.evaluate(element => element.scrollLeft > 0), 'the visible scroll arrow moves the middle controls');
+      await middle.focus(); await middle.press('End');
+      const after = await measure(page);
+      assert.ok(after.middleScroll > 0, 'the middle section scrolls with the keyboard');
+      assert.equal(after.zones.brand.x, before.zones.brand.x);
+      assert.equal(after.zones['primary-actions'].x, before.zones['primary-actions'].x);
+      assert.equal(after.zones.utilities.x, before.zones.utilities.x);
+      await middle.press('Home');
+      assert.equal(await middle.evaluate(element => element.scrollLeft), 0);
+      const last = middle.locator('button:not(:disabled),select:not(:disabled)').last();
+      if (await last.count()) {
+        await last.focus();
+        const visible = await last.evaluate(element => {
+          const box = element.getBoundingClientRect(), viewport = element.closest('[data-testid="dashboard-header-controls"]').getBoundingClientRect();
+          return box.left >= viewport.left - 1 && box.right <= viewport.right + 1;
+        });
+        assert.equal(visible, true, 'focusing an off-screen control reveals it');
+      }
+    }
+    await page.getByTestId('button-dashboard-theme').click();
+    const menu = page.getByRole('menu'); await menu.waitFor();
+    const menuBox = await menu.boundingBox();
+    assert.ok(menuBox.y + menuBox.height > 72, 'the theme menu opens outside the header scroll clipping');
+    await page.keyboard.press('Escape');
+
+    if (role === 'admin' && kind === 'manual') {
+      const picker = page.getByTestId('select-admin-start-session-group');
+      await picker.selectOption(switchGroupId);
+      const action = page.getByTestId('button-admin-start-session');
+      await action.click();
+      const review = page.getByTestId('dialog-class-start-review'); await review.waitFor();
+      await review.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await waitUntil(() => action.evaluate(element => document.activeElement === element), 'review returns focus to the pinned Switch Class button');
+      await action.click(); await review.waitFor();
+      harness.setActiveSession({ ...live, id: 'abababab-abab-4bab-8bab-abababababab', groupId: switchGroupId });
+      await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'] }); });
+      await waitUntil(() => action.isDisabled(), 'the changed session disables the original review trigger');
+      await review.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await waitUntil(() => picker.evaluate(element => document.activeElement === element), 'a disabled trigger returns focus to its separated class picker');
+      await page.getByTestId('button-admin-end-session').click();
+      const endDialog = page.getByTestId('dialog-end-class'); await endDialog.waitFor();
+      await endDialog.getByRole('button', { name: 'Keep Class Running', exact: true }).click();
+      await assertRow(page, 'after switching and opening End Class');
+    }
+    if (role === 'teacher' && kind === 'inactive') {
+      let startPayload;
+      await page.route('**/api/sessions/start', async route => {
+        startPayload = route.request().postDataJSON(); harness.setActiveSession(live);
+        await route.fulfill({ json: { session: live } });
+      });
+      await page.getByTestId('button-start-session').click();
+      await page.getByTestId('button-end-session').waitFor();
+      assert.deepEqual(startPayload, { groupId: OWN_GROUP_ID, expectedActiveSessionId: null });
+      await assertRow(page, 'inactive to teaching transition');
+    }
+    finishLoading(null);
+    if (kind === 'loading') {
+      await page.waitForFunction(async () => {
+        const { queryClient } = await import('/src/lib/queryClient.js');
+        return queryClient.isFetching({ queryKey: ['/api/sessions/active'] }) === 0;
+      });
+      await assertRow(page, 'loading to inactive transition');
+    }
+    assert.deepEqual(harness.pageErrors, [], `${role}/${kind}: no browser errors`);
+    await page.close();
+  }
+});
+
+if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

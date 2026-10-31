@@ -13,7 +13,11 @@ export default function ClassStartReviewDialog({ review, currentSessionId, targe
         const trigger = returnFocusRef?.current;
         if (!trigger?.isConnected) return;
         if (!trigger.disabled) trigger.focus();
-        else trigger.closest('[data-testid="class-start-controls"],[data-testid="admin-class-start-controls"]')?.querySelector('select')?.focus();
+        else {
+          const picker = trigger.closest('[data-testid="dashboard-header-row"]')?.querySelector('[data-testid="select-start-session-group"],[data-testid="select-admin-start-session-group"]')
+            || trigger.closest('[data-testid="class-start-controls"],[data-testid="admin-class-start-controls"]')?.querySelector('select');
+          picker?.focus();
+        }
       }}
       onEscapeKeyDown={event => { if (pending) event.preventDefault(); }} onPointerDownOutside={event => { if (pending) event.preventDefault(); }}>
       <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>
