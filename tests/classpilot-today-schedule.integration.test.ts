@@ -302,8 +302,9 @@ describe("Reviewed reciprocal Today schedule changes", { concurrency: false }, (
 
   it("rolls back real replacements, reports and control revisions when the outer transaction fails", async () => {
     const old = await occurrence(first);
-    const studentId = (await inSchool(() => storage.getGroupStudents(first.id)))[0]!.id;
+    const studentId = (await inSchool(() => storage.getGroupStudents(first.id)))[0]!.studentId;
     const beforeControl = await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId));
+    assert.ok(beforeControl);
     const reviewed = await review(); let operationCompleted = false;
     const failingDatabase = new Proxy(database, { get(target, key, receiver) {
       if (key !== "transaction") return Reflect.get(target, key, receiver);
@@ -361,8 +362,9 @@ describe("Reviewed reciprocal Today schedule changes", { concurrency: false }, (
     const frozenOff = { ...emptyAutomaticFlightPathState(), status: "off" as const, revision: 17, assignmentId: randomUUID() };
     await inSchool(() => database.update(schema.teachingSessions).set({ automaticFlightPathState: frozenOff })
       .where(and(eq(schema.teachingSessions.schoolId, school.id), eq(schema.teachingSessions.id, running.id))));
-    const activeStudent = (await inSchool(() => storage.getGroupStudents(selected.id)))[0]!.id;
+    const activeStudent = (await inSchool(() => storage.getGroupStudents(selected.id)))[0]!.studentId;
     const controlBefore = await inSchool(() => storage.getClasspilotStudentControlState(school.id, activeStudent));
+    assert.ok(controlBefore);
     const skipped = await apply({ expectedSchoolDate: schoolDate, currentGroupId: selected.id, currentMeetingRef: meeting.meetingRef, action: "skip" });
     assert.equal(skipped.change.status, "applied");
     assert.equal((await savedSession(running)).endTime, null);
@@ -415,5 +417,80 @@ describe("Reviewed reciprocal Today schedule changes", { concurrency: false }, (
     assert.ok(changed.preview?.blockers.some(row => row.code === "TODAY_SCHEDULE_REVIEW_STALE"));
     await inSchool(() => service.expireClasspilotTodayScheduleChanges({ schoolId: school.id, now: at("10:00") }));
     assert.equal((await rows()).occurrences.length, 0); assert.equal((await savedSession(live)).endTime, null);
+  });
+
+  it("finalizes only the exact occurrence's conflict and Coverage when another occurrence has the same clock minute", async () => {
+    const extra = await student();
+    await inSchool(() => storage.addGroupStudentsDetailed(first.id, [extra.id]));
+    await inSchool(() => storage.addGroupStudentsDetailed(counterpartSelected.id, [extra.id]));
+    const applied = await apply();
+    const generation = (await rows()).occurrences[0]!.generation;
+    const extraRows = await inSchool(() => database.insert(schema.classpilotTodayOccurrences).values([0, 20_000].map(offset => ({
+      schoolId: school.id, changeId: applied.change.id, scheduledDate: schoolDate, groupId: first.id, generation,
+      kind: "meeting" as const, scheduledStartAt: new Date(at(firstStart).getTime() + offset), scheduledEndAt: at(firstEnd),
+      source: { schemaVersion: 1, action: "fixture_distinct_same_minute" }, primaryTeacherIdSnapshot: firstTeacher.id,
+      classNameSnapshot: first.name, timezoneSnapshot: timeZone,
+    }))).returning());
+    assert.equal(extraRows.length, 2);
+    const reports: TeachingSession[] = [];
+    const conflicts: Awaited<ReturnType<typeof storage.upsertScheduledClassConflictForOccurrence>>["conflict"][] = [];
+    const roster = await inSchool(() => storage.getGroupStudents(first.id));
+    for (const row of extraRows) {
+      const report = await inSchool(() => storage.createOrReuseScheduledReportSession({ schoolId: school.id,
+        groupId: first.id, teacherId: firstTeacher.id, scheduledDate: schoolDate, scheduledOccurrenceId: row.id,
+        scheduledTimezone: timeZone, scheduledStartAt: row.scheduledStartAt!, scheduledEndAt: row.scheduledEndAt!,
+        scheduledTeacherEmail: firstTeacher.email, scheduledTeacherName: "Synthetic teacher" }));
+      reports.push(report);
+      const result = await inSchool(() => storage.upsertScheduledClassConflictForOccurrence({ teachingSessionId: report.id,
+        scheduledOccurrenceId: row.id, schoolId: school.id, groupId: first.id, teacherId: firstTeacher.id,
+        scheduledDate: schoolDate, blockStartTime: firstStart, blockEndTime: firstEnd, status: "coverage_needed",
+        scheduledTeacherConnected: false, conflictPayload: { claimableCount: roster.length,
+          claimableStudents: roster.map(record => ({ studentId: record.studentId })) } }));
+      conflicts.push(result.conflict);
+    }
+    assert.notEqual(conflicts[0]!.id, conflicts[1]!.id);
+    const claims: Awaited<ReturnType<typeof storage.claimScheduledCoverageStudents>>[] = [];
+    for (let index = 0; index < conflicts.length; index++) claims.push(await inSchool(() => storage.claimScheduledCoverageStudents({
+      schoolId: school.id, scheduledConflictId: conflicts[index]!.id, className: first.name,
+      assignedStaffId: administrator.id, actorId: administrator.id, studentIds: [roster[index]!.studentId], endsAt: at(firstEnd) })));
+    const protectedControl = await inSchool(() => storage.getClasspilotStudentControlState(school.id, roster[1]!.studentId));
+    assert.ok(protectedControl);
+    await inSchool(() => lifecycle.finalizeClasspilotSession({ schoolId: school.id, sessionId: reports[0]!.id, reason: "teacher_end" }));
+    const contextRows = await inSchool(() => database.select().from(schema.classpilotSupervisionContexts)
+      .where(eq(schema.classpilotSupervisionContexts.schoolId, school.id)));
+    assert.equal(contextRows.find(row => row.id === claims[0]!.context.id)!.status, "ended");
+    assert.equal(contextRows.find(row => row.id === claims[1]!.context.id)!.status, "active");
+    assert.equal((await inSchool(() => storage.getScheduledClassConflictByIdAndSchool(conflicts[0]!.id, school.id)))!.status, "ended");
+    assert.equal((await inSchool(() => storage.getScheduledClassConflictByIdAndSchool(conflicts[1]!.id, school.id)))!.status, "claimed");
+    assert.equal((await savedSession(reports[1]!)).endTime, null);
+    assert.deepEqual(await inSchool(() => storage.getClasspilotStudentControlState(school.id, roster[1]!.studentId)), protectedControl);
+  });
+
+  it("keeps the effective Today slot across repeated administrator recovery despite an older legacy tombstone", async () => {
+    const enabled = await inSchool(() => storage.enableClasspilotManualToday({ schoolId: school.id, actorId: administrator.id,
+      groupId: selected.id, expectedSchoolDate: schoolDate }));
+    assert.ok(enabled.class.isManualToday);
+    const legacy = await inSchool(() => storage.getScheduledTeachingSessionOccurrence(school.id, selected.id, schoolDate));
+    assert.ok(legacy); assert.equal(legacy.scheduledState, "skipped"); assert.equal(legacy.scheduledStartAt!.getTime(), at(laterStart).getTime());
+    await apply();
+    const incoming = (await rows()).sessions.find(row => row.groupId === selected.id && row.scheduledOccurrenceId && !row.endTime);
+    assert.ok(incoming);
+    const { loadClasspilotTodayOccurrences } = await import("../src/services/classpilotTodayOccurrences.js");
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const current = await inSchool(() => loadClasspilotTodayOccurrences({ schoolId: school.id, scheduledDate: schoolDate,
+        groupIds: [selected.id] }));
+      const revision = current.get(selected.id)![0]!.generation;
+      await inSchool(() => storage.enableClasspilotManualToday({ schoolId: school.id, actorId: administrator.id,
+        groupId: selected.id, expectedSchoolDate: schoolDate, expectedTodayRevision: revision }));
+    }
+    const reviewed = await review({ expectedSchoolDate: schoolDate, action: "swap", currentGroupId: selected.id, selectedGroupId: first.id });
+    const original = reviewed.before.find(row => row.groupId === selected.id);
+    assert.ok(original);
+    assert.equal(original.startsAt, incoming.scheduledStartAt!.toISOString()); assert.equal(original.endsAt, at(firstEnd).toISOString());
+    assert.deepEqual(await savedSession(legacy), legacy);
+    assert.ok((await savedSession(incoming)).endTime);
+    const audits = await inSchool(() => database.execute(sql`SELECT count(*)::int AS count FROM audit_logs
+      WHERE school_id=${school.id} AND entity_id=${selected.id} AND action='class.manual_today_enabled'`));
+    assert.equal(Number(audits.rows[0]?.count), 3);
   });
 });

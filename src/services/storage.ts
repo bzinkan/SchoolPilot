@@ -13375,10 +13375,12 @@ export async function finalizeTeachingSession(
         }).replace(/^24:/, "00:")
       : null;
     const conflictIdentities: SQL[] = [];
-    if (session.scheduledConflictId) {
+    if (session.scheduledOccurrenceId) {
+      conflictIdentities.push(eq(classpilotScheduledConflicts.scheduledOccurrenceId, session.scheduledOccurrenceId));
+    } else if (session.scheduledConflictId) {
       conflictIdentities.push(eq(classpilotScheduledConflicts.id, session.scheduledConflictId));
     }
-    if (session.scheduledDate && frozenBlockStartTime) {
+    if (!session.scheduledOccurrenceId && session.scheduledDate && frozenBlockStartTime) {
       conflictIdentities.push(and(
         eq(classpilotScheduledConflicts.groupId, session.groupId),
         eq(classpilotScheduledConflicts.scheduledDate, session.scheduledDate),
@@ -13392,6 +13394,7 @@ export async function finalizeTeachingSession(
           .where(and(
             eq(classpilotScheduledConflicts.schoolId, options.schoolId),
             inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+            session.scheduledOccurrenceId ? undefined : isNull(classpilotScheduledConflicts.scheduledOccurrenceId),
             or(...conflictIdentities)
           ))
           .for("update")
@@ -36267,6 +36270,7 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     // Preserve an immutable tombstone after tomorrow overwrites the date column,
     // so report backfill can never invent an automatic class for this manual day.
     const occurrence = await getScheduledTeachingSessionOccurrence(options.schoolId, group.id, schoolDate, transactionDb);
+    let recoveryStartsAt = occurrence?.scheduledStartAt, recoveryEndsAt = occurrence?.scheduledEndAt;
     if (occurrence && !occurrence.endTime) {
       const { finalizeClasspilotSession } = await import("./classpilotSessionLifecycle.js");
       const finalized = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId: occurrence.id,
@@ -36277,7 +36281,9 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
       const { getEffectiveClasspilotScheduleWindow } = await import("./classpilotScheduleChanges.js");
       const window = await getEffectiveClasspilotScheduleWindow({ schoolId: options.schoolId, group, scheduledDate: schoolDate, timeZone: timezone, dbInstance: transactionDb });
       const startAt = window?.scheduledStartAt ?? localDateTimeUtc(schoolDate, group.blockStartTime || "00:00", timezone);
+      recoveryStartsAt = startAt;
       const endAt = window?.scheduledEndAt ?? localDateTimeUtc(schoolDate, group.blockEndTime || "00:01", timezone);
+      recoveryEndsAt = endAt;
       await tx.insert(teachingSessions).values({ schoolId: options.schoolId, groupId: group.id, teacherId: group.teacherId,
         startTime: startAt, endTime: startAt, sessionMode: SCHEDULED_REPORT_SESSION_MODE, scheduledDate: schoolDate,
         scheduledTimezone: timezone, scheduledStartAt: startAt, scheduledEndAt: endAt, scheduledState: "skipped",
@@ -36286,13 +36292,16 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     if (access.admin && (isClasspilotTodayScheduleEnabled() || todayPlan)) await recordClasspilotTodayManualRecovery({
       schoolId: options.schoolId, groupId: group.id, teacherId: group.teacherId, className: group.name, actorId: options.actorId,
       scheduledDate: schoolDate, timezone, now, cutoffAt: localDateTimeUtc(addLocalDays(schoolDate, 1), "00:00", timezone),
-      expectedTodayRevision: options.expectedTodayRevision,
+      expectedTodayRevision: options.expectedTodayRevision, originalStartsAt: recoveryStartsAt, originalEndsAt: recoveryEndsAt,
     }, transactionDb);
     if (group.scheduleManualDate !== schoolDate) {
       await tx.update(groups).set({ scheduleManualDate: schoolDate }).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, group.id)));
+    }
+    if (group.scheduleManualDate !== schoolDate || todayPlan || isClasspilotTodayScheduleEnabled()) {
       await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
         userRole: access.actorRole, action: "class.manual_today_enabled", entityType: "class", entityId: group.id,
-        metadata: { schoolDate, timezone, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
+        metadata: { schoolDate, timezone, priorTodayRevision: todayPlan?.[0]?.generation ?? 0,
+          endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
     }
     const { deadlineUpdatedSessionIds } = await capClasspilotManualSessionsForToday(options.schoolId, group.id, transactionDb,
       { schoolDate, timezone, now });

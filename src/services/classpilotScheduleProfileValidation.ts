@@ -6,7 +6,6 @@ import { SCHEDULE_PROFILE_LIMITS } from "./classpilotScheduleProfileModel.js";
 import { resolveClasspilotMonitoringPolicy } from "./classpilotMonitoringPolicy.js";
 import { isSchedulingInstructionalDate, normalizeSchoolSchedulingConfig, resolveClassBaseWindow,
   type SchedulingCalendar, type SchedulingGroup, type SchoolSchedulingConfig } from "./classpilotSchedulingRules.js";
-import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 
 type Blocker = { code: string; message: string; date?: string };
@@ -192,6 +191,7 @@ export async function validateScheduleProfileTestingWindows(options: {
   const studentsByGroup = indexed(classStudents.map((r) => ({ parent: r.groupId, value: r.studentId })));
   const staffBySession = indexed(sessionStaff.map((r) => ({ parent: r.sessionId, value: r.staffId })));
   const studentsBySession = indexed(sessionStudents.map((r) => ({ parent: r.sessionId, value: r.studentId })));
+  const { loadClasspilotTodayOccurrences, todayOccurrenceWindow } = await import("./classpilotTodayOccurrences.js");
   const todayPlans = (await Promise.all(dates.map(async date => {
     const plans = await loadClasspilotTodayOccurrences({ schoolId: options.schoolId, scheduledDate: date, groupIds, dbInstance: database });
     return [...plans].map(([groupId, rows]) => ({ groupId, date, meetings: rows.flatMap(row => {

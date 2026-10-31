@@ -646,7 +646,8 @@ export async function actOnClasspilotTodayScheduleChange(options: RequestContext
     await database.select({ id: groups.id }).from(groups).where(and(eq(groups.schoolId, options.schoolId),
       inArray(groups.id, reviewed.plan.groupIds))).orderBy(groups.id).for("update");
     const commitAt = clock();
-    if (change.cutoffAt <= commitAt || localDateInTimeZone(commitAt, reviewed.data.timeZone) !== change.scheduledDate)
+    if (change.cutoffAt <= commitAt || localDateInTimeZone(commitAt, reviewed.data.timeZone) !== change.scheduledDate
+      || reviewed.plan.mode === "before_bell" && new Date(reviewed.plan.firstStartsAt) <= commitAt)
       fail("This period ended. Review a new change.", "TODAY_SCHEDULE_REVIEW_STALE");
     return { ...await applyPlan(database, options, change, reviewed.data, reviewed.plan, commitAt, true), stale: false };
   });

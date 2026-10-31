@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
-import { db } from "../db.js";
+import type { db } from "../db.js";
 import { classpilotTodayChanges, classpilotTodayOccurrences } from "../schema/classpilot.js";
 
 export type TodayOccurrence = typeof classpilotTodayOccurrences.$inferSelect;
@@ -16,7 +16,7 @@ export async function loadClasspilotTodayOccurrences(options: {
   schoolId: string; scheduledDate: string; groupIds?: string[]; dbInstance?: typeof db;
 }): Promise<Map<string, TodayOccurrence[]>> {
   if (options.groupIds?.length === 0) return new Map();
-  const database = options.dbInstance ?? db;
+  const database = options.dbInstance ?? (await import("../db.js")).db;
   const rows = await database.select({ occurrence: classpilotTodayOccurrences }).from(classpilotTodayOccurrences)
     .innerJoin(classpilotTodayChanges, and(eq(classpilotTodayChanges.schoolId, classpilotTodayOccurrences.schoolId),
       eq(classpilotTodayChanges.id, classpilotTodayOccurrences.changeId), eq(classpilotTodayChanges.status, "applied")))
@@ -59,7 +59,7 @@ export function todayOccurrenceWindow(row: TodayOccurrence) {
 export async function assertClasspilotTodayOccurrence(options: {
   schoolId: string; groupId: string; scheduledDate: string; scheduledOccurrenceId: string;
   scheduledStartAt?: Date; scheduledEndAt?: Date;
-}, database: typeof db = db): Promise<TodayOccurrence> {
+}, database?: typeof db): Promise<TodayOccurrence> {
   const plan = await loadClasspilotTodayOccurrences({ ...options, groupIds: [options.groupId], dbInstance: database });
   const row = plan.get(options.groupId)?.find(row => canonicalTodayOccurrenceId(row) === options.scheduledOccurrenceId && row.kind === "meeting");
   if (!row || !row.scheduledStartAt || !row.scheduledEndAt
@@ -76,6 +76,7 @@ export async function assertClasspilotTodayOccurrence(options: {
 export async function recordClasspilotTodayManualRecovery(options: {
   schoolId: string; groupId: string; teacherId: string; className: string; actorId: string;
   scheduledDate: string; timezone: string; now: Date; cutoffAt: Date; expectedTodayRevision?: number;
+  originalStartsAt?: Date | null; originalEndsAt?: Date | null;
 }, database: typeof db): Promise<void> {
   const current = (await loadClasspilotTodayOccurrences({ ...options, groupIds: [options.groupId], dbInstance: database })).get(options.groupId);
   const revision = current?.[0]?.generation ?? 0;
@@ -85,16 +86,29 @@ export async function recordClasspilotTodayManualRecovery(options: {
     .from(classpilotTodayOccurrences).where(and(eq(classpilotTodayOccurrences.schoolId, options.schoolId),
       eq(classpilotTodayOccurrences.scheduledDate, options.scheduledDate)));
   const generation = Number(maximum?.generation ?? 0) + 1;
-  const operation = { kind: "admin_manual_today", groupId: options.groupId, priorGeneration: revision, at: options.now.toISOString() };
+  const windows: Array<{ originalStartsAt: string; originalEndsAt: string }> = [];
+  const rememberWindow = (start: Date | null | undefined, end: Date | null | undefined) => {
+    if (!start || !end || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || end <= options.now) return;
+    if (!windows.some(window => window.originalStartsAt === start.toISOString() && window.originalEndsAt === end.toISOString()))
+      windows.push({ originalStartsAt: start.toISOString(), originalEndsAt: end.toISOString() });
+  };
+  for (const row of current ?? []) {
+    if (row.kind === "meeting") rememberWindow(row.scheduledStartAt, row.scheduledEndAt);
+    else rememberWindow(typeof row.source.originalStartsAt === "string" ? new Date(row.source.originalStartsAt) : null,
+      typeof row.source.originalEndsAt === "string" ? new Date(row.source.originalEndsAt) : null);
+  }
+  if (!windows.length) rememberWindow(options.originalStartsAt, options.originalEndsAt);
+  const operation = { kind: "admin_manual_today", groupId: options.groupId, priorGeneration: revision, at: options.now.toISOString(), windows };
   const [change] = await database.insert(classpilotTodayChanges).values({ schoolId: options.schoolId,
     scheduledDate: options.scheduledDate, timezoneSnapshot: options.timezone, status: "applied", revision: 1, generation,
     requestedByUserId: options.actorId, appliedByUserId: options.actorId, appliedAt: options.now,
     idempotencyKey: `admin-recovery:${randomUUID()}`, requestHash: createHash("sha256").update(JSON.stringify(operation)).digest("hex"),
     reviewSnapshot: operation, planSnapshot: operation, affectedGroupIds: [options.groupId], cutoffAt: options.cutoffAt }).returning();
   if (!change) throw new Error("TODAY_SCHEDULE_RECOVERY_NOT_SAVED");
-  await database.insert(classpilotTodayOccurrences).values({ schoolId: options.schoolId, changeId: change.id,
-    scheduledDate: options.scheduledDate, groupId: options.groupId, generation, kind: "suppression", source: operation,
-    primaryTeacherIdSnapshot: options.teacherId, classNameSnapshot: options.className, timezoneSnapshot: options.timezone });
+  await database.insert(classpilotTodayOccurrences).values((windows.length ? windows : [{}]).map(window => ({
+    schoolId: options.schoolId, changeId: change.id, scheduledDate: options.scheduledDate, groupId: options.groupId,
+    generation, kind: "suppression" as const, source: { ...operation, ...window },
+    primaryTeacherIdSnapshot: options.teacherId, classNameSnapshot: options.className, timezoneSnapshot: options.timezone })));
   await database.execute(sql`INSERT INTO classpilot_school_schedules(school_id,config,revision,boundary_generation,next_boundary_at,updated_by)
     VALUES(${options.schoolId},'{}'::jsonb,1,1,${options.now},${options.actorId}) ON CONFLICT(school_id) DO UPDATE
     SET revision=classpilot_school_schedules.revision+1, boundary_generation=classpilot_school_schedules.boundary_generation+1,
