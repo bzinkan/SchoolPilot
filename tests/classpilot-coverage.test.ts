@@ -446,6 +446,7 @@ async function ensureCoverageTables() {
       group_id TEXT NOT NULL,
       teacher_id TEXT NOT NULL,
       scheduled_date TEXT NOT NULL,
+      scheduled_occurrence_id VARCHAR,
       block_start_time TEXT NOT NULL,
       block_end_time TEXT,
       status TEXT NOT NULL DEFAULT 'coverage_needed',
@@ -459,9 +460,16 @@ async function ensureCoverageTables() {
       updated_at TIMESTAMP NOT NULL DEFAULT now()
     )
   `);
+  await db.execute(sql`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS scheduled_occurrence_id VARCHAR`);
   await db.execute(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
+    CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_legacy_unique
     ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time)
+    WHERE scheduled_occurrence_id IS NULL
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS cp_scheduled_conflicts_dated_occurrence_unique
+    ON classpilot_scheduled_conflicts (school_id, scheduled_occurrence_id)
+    WHERE scheduled_occurrence_id IS NOT NULL
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_school_status_idx ON classpilot_scheduled_conflicts (school_id, status)`);
 }

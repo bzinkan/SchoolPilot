@@ -364,7 +364,10 @@ describe("ClassPilot admin class management storage contracts", () => {
     }));
     assert.equal(overlap?.id, group.id);
 
-    await inSchool(school.id, () => createTeachingSession({ groupId: group.id, teacherId: teacherA.id } as any));
+    // Seed completed history; teachers no longer create all-day manual starts for scheduled classes.
+    const endedAt = new Date();
+    await inSchool(school.id, () => createTeachingSession({ groupId: group.id, teacherId: teacherA.id,
+      startTime: new Date(endedAt.getTime() - 60_000), endTime: endedAt } as any));
     assert.equal(await inSchool(school.id, () => groupHasTeachingHistory(group.id)), true);
 
     const empty = await inSchool(school.id, () => createGroup({
