@@ -1,0 +1,135 @@
+.classpilot-dashboard-header {
+  height: 72px;
+  isolation: isolate;
+}
+
+.dashboard-header-viewport {
+  height: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.dashboard-header-row {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  column-gap: 8px;
+  height: 100%;
+  min-width: 1024px;
+  padding-inline: 16px;
+}
+
+.dashboard-header-brand {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dashboard-header-ornament-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.classpilot-dashboard-header .header-ornament {
+  width: 28px;
+  height: 28px;
+}
+
+.dashboard-header-middle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dashboard-header-controls {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 56px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.dashboard-header-controls-row,
+.dashboard-header-primary-actions,
+.dashboard-header-utilities,
+.dashboard-header-group {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.dashboard-header-controls-row {
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+}
+
+.dashboard-header-controls-row > *,
+.dashboard-header-group > *,
+.dashboard-header-primary-actions > *,
+.dashboard-header-utilities > * {
+  flex-shrink: 0;
+}
+
+.classpilot-dashboard-header button,
+.classpilot-dashboard-header select {
+  height: 36px;
+  white-space: nowrap;
+}
+
+.dashboard-header-primary-actions button,
+.dashboard-header-utilities [data-testid="button-my-settings"],
+.dashboard-header-utilities [data-testid="button-admin"] {
+  padding-inline: 6px;
+}
+
+.classpilot-dashboard-header .dashboard-header-observe {
+  height: 36px;
+  padding-block: 0;
+}
+
+.classpilot-dashboard-header .dashboard-header-observe select {
+  height: 100%;
+}
+
+.dashboard-header-label {
+  display: block;
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-header-scroll-button {
+  display: flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--chrome-control-border);
+  border-radius: 6px;
+  color: var(--chrome-fg);
+  background: var(--chrome-control-bg);
+}
+
+.dashboard-header-scroll-button:disabled {
+  opacity: 0.35;
+}
+
+.dashboard-header-viewport:focus-visible,
+.dashboard-header-controls:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}

@@ -16,6 +16,7 @@ import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
 import ClassStartControls from '../components/ClassStartControls';
+import DashboardHeader from '../components/DashboardHeader';
 import ClassStartReviewDialog from '../components/ClassStartReviewDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
@@ -7019,189 +7020,191 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         />
       ))}
       {/* Header */}
-      <header data-class-tools-navigation className="chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
-        <div className="max-w-screen-2xl mx-auto px-6 py-3">
-          <div className="flex flex-col gap-2">
-            {/* Left: Logo & School */}
-            <div className="flex items-center gap-3">
-              <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
-                <rect width="48" height="48" rx="12" fill="var(--brand)"/>
-                <path d="M12 24L36 14L30 36L24 28L36 14" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round"/>
-              </svg>
-              <div>
-                <h1 className="brand-wordmark text-lg font-bold text-chrome-fg tracking-tight">ClassPilot</h1>
-                <p className="text-xs text-chrome-muted">
-                  {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
-                  {currentUser?.schoolName && ' \u2022 '}
-                  {isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard'}
-                </p>
-              </div>
-              <HeaderOrnament />
-            </div>
-            <div className="flex flex-wrap items-center gap-2" data-testid="dashboard-class-picker-row">
-              {isTeacher && !scheduledSupervisionId ? <ClassStartControls groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
-                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
-                    onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
-              {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
-                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
-                    onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
-            </div>
-            <div data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1.5 min-[1240px]:flex-nowrap">
-            {/* Center: Status badges */}
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 min-[1240px]:flex-nowrap">
-              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
-                <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
-                {connectionPresentation.label}
-              </div>
-              {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-brand-soft" data-testid="badge-scheduled-testing">{activityTitle(effectiveActivity)}</Badge> : null}
-              {isTeacher && !scheduledSupervisionId && activeSession && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-active-session">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                  {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
-                </div>
-              )}
-              {isTeacher && !scheduledSupervisionId && activeSessionIsScheduled && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-automatic-session">
-                  <Clock className="h-3.5 w-3.5" />
-                  Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
-                </div>
-              )}
-              {scheduledAssignment && nextActivityLabel && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-next-activity">
-                  Next: {nextActivityLabel}
-                </div>
-              )}
-              {isTeacher && !scheduledSupervisionId && (
-                <>
-
-                  {activeSession ? (
-                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      {!activeSessionIsScheduled && (
-                        <button
-                          type="button"
-                          onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                          disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
-                          data-testid="button-resync-session"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                        </button>
-                      )}
-                      <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
-                        <X className="h-3.5 w-3.5" /> End Class
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowPastSessions(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors"
-                        title="Open recent class sessions and their Session Summaries"
-                        data-testid="button-past-sessions"
-                      >
-                        <Clock className="h-3.5 w-3.5" /> Past sessions
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowPastSessions(true)}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover"
-                        title="Open recent class sessions and their Session Summaries"
-                        data-testid="button-past-sessions"
-                      >
-                        <Clock className="h-3.5 w-3.5" /> Past sessions
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-              {/* Admin Class Selection */}
-              {isAdmin && (
-                <>
-
-                  {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
-                    <>
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-admin-teaching">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                        Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
-                      </div>
-                      {activeSessionIsScheduled && (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
-                          <Clock className="h-3.5 w-3.5" />
-                          Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
-                        </div>
-                      )}
-                      {!activeSessionIsScheduled && (
-                        <button
-                          type="button"
-                          onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                          disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
-                          data-testid="button-admin-resync-session"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                        </button>
-                      )}
-                      <button onClick={() => setEndClassTarget(activeSession)} disabled={dashboardCapabilities.observedOtherClass || endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
-                        <X className="h-3.5 w-3.5" /> End Class
-                      </button>
-                    </>
-                  )}
-                  <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-chrome-elevated border-chrome-control-border text-chrome-fg-soft' : 'bg-transparent border-chrome-control-border text-chrome-muted'}`}>
-                    <Eye className="h-4 w-4" />
-                    <select
-                      value={adminObservedSessionId || ""}
-                      onChange={handleAdminObservedSessionChange}
-                      disabled={observableActivities.length === 0 && !adminObservedSessionId}
-                      aria-label="Observe active ClassPilot activity"
-                      data-testid="select-admin-observe"
-                      className="h-7 w-[150px] max-w-[150px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <option value="">{adminObservedSessionId ? "Stop observing" : observableActivities.length === 0 ? "No active activities" : "Observe activity"}</option>
-                      {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
-                      {observableActivities.map(activity => (
-                        <option key={activity.id} value={activity.id}>
-                          {activityPurpose(activity) === 'claim' ? 'Claimed students' : `${activityPurposeLabel(activity)}: ${activity.name}`}{activity.owner?.name ? ` - ${activity.owner.name}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-              {currentUser?.impersonating && (
-                <Button variant="destructive" size="sm" onClick={() => stopImpersonateMutation.mutate()} disabled={stopImpersonateMutation.isPending} data-testid="button-stop-impersonating">
-                  <UserCog className="h-4 w-4 mr-2" />Stop Impersonating
-                </Button>
-              )}
-            </div>
-            {/* Right: Actions */}
-            <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5 min-[1240px]:flex-nowrap min-[1240px]:shrink-0">
-              <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
-              <ThemeToggle />
-              {(isTeacher || isAdmin) && !scheduledSupervisionId && (
-                <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-chrome-control-border px-3 py-2 text-xs font-medium text-chrome-subtle hover:bg-chrome-control-hover" data-testid="button-my-settings" title="Teaching tools">
-                  <User className="h-4 w-4" /> Teaching tools
-                </button>
-              )}
-              {isAdmin && !scheduledSupervisionId && (
-                <>
-                  <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-chrome-control-border text-chrome-muted hover:bg-chrome-control-hover transition-colors" data-testid="button-admin">
-                    <Shield className="h-4 w-4" /> Admin Panel
-                  </button>
-
-                </>
-              )}
-              <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-chrome-elevated text-chrome-muted hover:bg-chrome-elevated-hover transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
-                <LogOut className="h-[18px] w-[18px]" />
-              </button>
-            </div>
-            </div>
+      <DashboardHeader
+        brand={<>
+          <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
+            <rect width="48" height="48" rx="12" fill="var(--brand)"/>
+            <path d="M12 24L36 14L30 36L24 28L36 14" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round"/>
+          </svg>
+          <div className="min-w-0">
+            <h1 className="brand-wordmark text-lg leading-6 font-bold text-chrome-fg tracking-tight truncate">ClassPilot</h1>
+            <p className="text-xs leading-4 text-chrome-muted truncate" title={(currentUser?.schoolName ? currentUser.schoolName + " · " : "") + (isAdmin ? "Admin Dashboard" : "Teacher Dashboard")}>
+              {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
+              {currentUser?.schoolName && ' \u2022 '}
+              {isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard'}
+            </p>
           </div>
-        </div>
-      </header>
+          <span className="dashboard-header-ornament-slot"><HeaderOrnament /></span>
+        </>}
+        controls={<>
+          {isTeacher && !scheduledSupervisionId ? <ClassStartControls part="picker" groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
+                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
+                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
+          {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls part="picker" admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
+                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
+                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
+            <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
+            {connectionPresentation.label}
+          </div>
+          {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-brand-soft" data-testid="badge-scheduled-testing"><span className="dashboard-header-label" title={activityTitle(effectiveActivity)}>{activityTitle(effectiveActivity)}</span></Badge> : null}
+          {isTeacher && !scheduledSupervisionId && activeSession && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-active-session">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              <span className="dashboard-header-label" title={groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}>{groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}</span>
+            </div>
+          )}
+          {isTeacher && !scheduledSupervisionId && activeSessionIsScheduled && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-automatic-session">
+              <Clock className="h-3.5 w-3.5" />
+              Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+            </div>
+          )}
+          {scheduledAssignment && nextActivityLabel && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-next-activity">
+              <span className="dashboard-header-label" title={"Next: " + nextActivityLabel}>Next: {nextActivityLabel}</span>
+            </div>
+          )}
+          {isTeacher && !scheduledSupervisionId && (
+            <>
 
+              {activeSession ? (
+                <div className="dashboard-header-group">
+                  {!activeSessionIsScheduled && (
+                    <button
+                      type="button"
+                      onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                      disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
+                      data-testid="button-resync-session"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPastSessions(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors"
+                    title="Open recent class sessions and their Session Summaries"
+                    data-testid="button-past-sessions"
+                  >
+                    <Clock className="h-3.5 w-3.5" /> Past sessions
+                  </button>
+                </div>
+              ) : (
+                <div className="dashboard-header-group">
+                  <button
+                    type="button"
+                    onClick={() => setShowPastSessions(true)}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover"
+                    title="Open recent class sessions and their Session Summaries"
+                    data-testid="button-past-sessions"
+                  >
+                    <Clock className="h-3.5 w-3.5" /> Past sessions
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {/* Admin Class Selection */}
+          {isAdmin && (
+            <>
+
+              {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
+                <>
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-admin-teaching">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    <span className="dashboard-header-label" title={groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}>Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}</span>
+                  </div>
+                  {activeSessionIsScheduled && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
+                      <Clock className="h-3.5 w-3.5" />
+                      Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+                    </div>
+                  )}
+                  {!activeSessionIsScheduled && (
+                    <button
+                      type="button"
+                      onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                      disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
+                      data-testid="button-admin-resync-session"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                    </button>
+                  )}
+
+                </>
+              )}
+              <div className={`dashboard-header-observe flex items-center gap-1.5 rounded-lg border px-2 transition-colors ${observedSession ? 'bg-chrome-elevated border-chrome-control-border text-chrome-fg-soft' : 'bg-transparent border-chrome-control-border text-chrome-muted'}`}>
+                <Eye className="h-4 w-4" />
+                <select
+                  value={adminObservedSessionId || ""}
+                  onChange={handleAdminObservedSessionChange}
+                  disabled={observableActivities.length === 0 && !adminObservedSessionId}
+                  aria-label="Observe active ClassPilot activity"
+                  title={observableActivities.find(activity => activity.id === adminObservedSessionId)?.name || 'Observe activity'}
+                  data-testid="select-admin-observe"
+                  className="h-full w-[130px] max-w-[130px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="">{adminObservedSessionId ? "Stop observing" : observableActivities.length === 0 ? "No active activities" : "Observe activity"}</option>
+                  {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
+                  {observableActivities.map(activity => (
+                    <option key={activity.id} value={activity.id}>
+                      {activityPurpose(activity) === 'claim' ? 'Claimed students' : `${activityPurposeLabel(activity)}: ${activity.name}`}{activity.owner?.name ? ` - ${activity.owner.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+          {currentUser?.impersonating && (
+            <Button variant="destructive" size="sm" onClick={() => stopImpersonateMutation.mutate()} disabled={stopImpersonateMutation.isPending} data-testid="button-stop-impersonating">
+              <UserCog className="h-4 w-4 mr-2" />Stop Impersonating
+            </Button>
+          )}
+        </>}
+        primaryActions={<>
+          {isTeacher && !scheduledSupervisionId ? <ClassStartControls part="action" groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
+                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
+                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
+          {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls part="action" admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
+                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
+                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
+          {isTeacher && !scheduledSupervisionId && activeSession ? (
+            <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
+              <X className="h-3.5 w-3.5" /> End Class
+            </button>
+          ) : null}
+          {isAdmin && activeSession && !scheduledSupervisionId && !retainedObservedSession ? (
+            <button onClick={() => setEndClassTarget(activeSession)} disabled={dashboardCapabilities.observedOtherClass || endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
+              <X className="h-3.5 w-3.5" /> End Class
+            </button>
+          ) : null}
+        </>}
+        utilities={<>
+          <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
+          <ThemeToggle />
+          {(isTeacher || isAdmin) && !scheduledSupervisionId && (
+            <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-chrome-control-border px-3 py-2 text-xs font-medium text-chrome-subtle hover:bg-chrome-control-hover" data-testid="button-my-settings" title="Teaching tools">
+              <User className="h-4 w-4" /> Teaching tools
+            </button>
+          )}
+          {isAdmin && !scheduledSupervisionId && (
+            <>
+              <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-chrome-control-border text-chrome-muted hover:bg-chrome-control-hover transition-colors" data-testid="button-admin">
+                <Shield className="h-4 w-4" /> Admin Panel
+              </button>
+
+            </>
+          )}
+          <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-chrome-elevated text-chrome-muted hover:bg-chrome-elevated-hover transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
+            <LogOut className="h-[18px] w-[18px]" />
+          </button>
+        </>}
+      />
       {classStartTimingNotice?.scope === classReaderKey ? <div role="status" className="border-b bg-card px-6 py-3 text-sm" data-testid="class-start-timing-notice">
         {classStartTimingNotice.name} is outside its available class time. Make period changes in Teaching tools.
         {' '}<button type="button" className="font-medium text-primary underline" onClick={() => navigate(`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`)}>Open Today’s schedule</button>
