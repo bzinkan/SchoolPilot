@@ -142,23 +142,27 @@ function eslintPeerCycleAudit() {
     severity: "moderate",
     range: "<11.0.1",
   }]);
-  for (const [name, via] of [
-    ["eslint", ["@eslint-community/eslint-utils", "@eslint/config-array", "minimatch"]],
-    ["@eslint-community/eslint-utils", ["eslint"]],
-    ["@eslint/config-array", ["minimatch"]],
-    ["@eslint/js", ["eslint"]],
-  ] as const) {
-    document.vulnerabilities[name] = {
-      ...document.vulnerabilities.minimatch,
-      name,
-      via: [...via],
-      nodes: [`node_modules/${name}`],
-      fixAvailable: { name, version: "11.0.1", isSemVerMajor: true },
-    };
-  }
+  type AuditRecord = ReturnType<typeof auditDocument>["vulnerabilities"][string];
+  type PeerRecord = Omit<AuditRecord, "via"> & { via: Array<AuditRecord["via"][number]> };
+  const source = document.vulnerabilities.minimatch;
+  assert.ok(source);
+  const minimatch: PeerRecord = source;
+  const peer = (name: string, via: string[]): PeerRecord => ({
+    ...minimatch,
+    name,
+    via,
+    nodes: [`node_modules/${name}`],
+    fixAvailable: { name, version: "11.0.1", isSemVerMajor: true },
+  });
   document.metadata.vulnerabilities.moderate = 5;
   document.metadata.vulnerabilities.total = 5;
-  return document;
+  return { ...document, vulnerabilities: {
+    minimatch,
+    eslint: peer("eslint", ["@eslint-community/eslint-utils", "@eslint/config-array", "minimatch"]),
+    "@eslint-community/eslint-utils": peer("@eslint-community/eslint-utils", ["eslint"]),
+    "@eslint/config-array": peer("@eslint/config-array", ["minimatch"]),
+    "@eslint/js": peer("@eslint/js", ["eslint"]),
+  } };
 }
 
 function parsedAudit(
@@ -452,10 +456,12 @@ describe("frontend dependency audit engine", () => {
     });
     const names = ["@eslint-community/eslint-utils", "@eslint/config-array", "@eslint/js", "eslint", "minimatch"].sort();
     assert.equal(parsed.advisories.length, 1);
-    assert.deepEqual(parsed.advisories[0].affectedPackages, names);
-    assert.deepEqual(parsed.advisories[0].advisoryPackages, ["minimatch"]);
-    assert.deepEqual(parsed.advisories[0].vulnerableRanges, ["<11.0.1"]);
-    assert.deepEqual(parsed.advisories[0].fixAvailability, names.map(name => ({
+    const [advisory] = parsed.advisories;
+    assert.ok(advisory);
+    assert.deepEqual(advisory.affectedPackages, names);
+    assert.deepEqual(advisory.advisoryPackages, ["minimatch"]);
+    assert.deepEqual(advisory.vulnerableRanges, ["<11.0.1"]);
+    assert.deepEqual(advisory.fixAvailability, names.map(name => ({
       available: true, name, version: name === "minimatch" ? "9.0.0" : "11.0.1", isSemVerMajor: true,
     })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
     assert.deepEqual(parsed.vulnerabilityRecords.map((record: { resolvedAdvisoryIds: string[] }) => record.resolvedAdvisoryIds),
@@ -467,8 +473,9 @@ describe("frontend dependency audit engine", () => {
   it("retains a high advisory inside a peer cycle and produces identical results for reordered roots and edges", () => {
     const document = eslintPeerCycleAudit();
     const high = auditDocument([{ id: OTHER_ADVISORY, name: "eslint", severity: "high" }]);
+    assert.ok(high.vulnerabilities.eslint);
     document.vulnerabilities.eslint.via.push(...high.vulnerabilities.eslint.via);
-    for (const name of ["eslint", "@eslint-community/eslint-utils", "@eslint/js"]) {
+    for (const name of ["eslint", "@eslint-community/eslint-utils", "@eslint/js"] as const) {
       document.vulnerabilities[name].severity = "high";
     }
     document.metadata.vulnerabilities.moderate = 2;
@@ -481,11 +488,14 @@ describe("frontend dependency audit engine", () => {
     };
     assert.deepEqual(parseNpmAuditV2Result({ scope: "production", exitCode: 1, stdout: JSON.stringify(reordered) }), parsed);
     const highAdvisory = parsed.advisories.find((advisory: { advisoryId: string }) => advisory.advisoryId === OTHER_ADVISORY);
+    assert.ok(highAdvisory);
     assert.equal(highAdvisory.severity, "high");
     assert.deepEqual(highAdvisory.affectedPackages, ["@eslint-community/eslint-utils", "@eslint/js", "eslint"]);
     assert.equal(parsed.counts.advisoryIds.high, 1);
     assert.equal(parsed.counts.vulnerabilityRecords.high, 3);
-    assert.deepEqual(parsed.vulnerabilityRecords.find((record: { name: string }) => record.name === "eslint").resolvedAdvisoryIds,
+    const eslintRecord = parsed.vulnerabilityRecords.find((record: { name: string }) => record.name === "eslint");
+    assert.ok(eslintRecord);
+    assert.deepEqual(eslintRecord.resolvedAdvisoryIds,
       [OTHER_ADVISORY, MINIMATCH_ADVISORY].sort());
     const context = baseContext();
     const packageLock = JSON.parse(context.packageLockText);
@@ -510,13 +520,16 @@ describe("frontend dependency audit engine", () => {
     assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(missing) }),
       /npm_audit_via_reference_missing/);
     const malformed = eslintPeerCycleAudit();
-    malformed.vulnerabilities.minimatch.via = auditDocument([{
+    const wrongPackage = auditDocument([{
       id: MINIMATCH_ADVISORY, name: "wrong-package", severity: "moderate",
-    }]).vulnerabilities["wrong-package"].via;
+    }]).vulnerabilities["wrong-package"];
+    assert.ok(wrongPackage);
+    malformed.vulnerabilities.minimatch.via = wrongPackage.via;
     assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(malformed) }),
       /npm_audit_advisory_invalid/);
     const hiddenHigh = eslintPeerCycleAudit();
     const high = auditDocument([{ id: OTHER_ADVISORY, name: "eslint", severity: "high" }]);
+    assert.ok(high.vulnerabilities.eslint);
     hiddenHigh.vulnerabilities.eslint.via.push(...high.vulnerabilities.eslint.via);
     assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(hiddenHigh) }),
       /npm_audit_via_severity_conflict/);
