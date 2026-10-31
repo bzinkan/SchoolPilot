@@ -16,9 +16,9 @@ export function teachingToolsShouldBlock({ kind, actionId, currentLocation, next
   return current.toString() !== next.toString();
 }
 
-// These families belong to Teaching tools and all end with school + viewer.
+// These families belong to Teaching tools and carry school + viewer identity.
 // Leave legacy unscoped Dashboard caches and unrelated product caches alone.
-const teachingQueryLengths = new Map([[TEACHER_PREFERENCES_KEY, 3], ['/api/flight-paths', 3], ['/api/block-lists', 3], ['/api/teacher/groups', 3],
+const teachingQueryLengths = new Map([[TEACHER_PREFERENCES_KEY, 3], ['/api/classpilot/groups/manual-today', 4], ['/api/flight-paths', 3], ['/api/block-lists', 3], ['/api/teacher/groups', 3],
   ['/api/groups', 5], ['/api/subgroups', 5], ['/api/users/teachers', 4], ['/api/classroom/courses', 4], ['/api/classroom/resources', 4]]);
 export function teachingToolsQuery(query) {
   const key = query.queryKey;

@@ -10,6 +10,7 @@ import { teacherTabLimitSeed, teachingToolsQuery } from '../src/products/classpi
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.resolve(root, '../docs/images/settings-organization');
 const previewArtifacts = path.resolve(process.env.TEMP || '/tmp', 'schoolpilot-precise-scopes');
+const manualTodayArtifacts = path.resolve(process.env.MANUAL_TODAY_QA_DIR || path.join(process.env.TEMP || '/tmp', 'schoolpilot-manual-today-tools'));
 let vite, browser, base;
 const authModule = `import{createContext,useContext}from'react';export const FixtureAuth=createContext(null);export const useAuth=()=>useContext(FixtureAuth);`;
 const entry = `
@@ -18,29 +19,32 @@ import{BrowserRouter,Routes,Route,Link,useLocation}from'react-router-dom';
 import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';
 import{FixtureAuth}from'/src/contexts/AuthContext.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';
 import TeachingToolsLayout from'/src/products/classpilot/components/TeachingToolsLayout.jsx';
+import ManualToday from'/src/products/classpilot/pages/ManualToday.jsx';
 import MySettings from'/src/products/classpilot/pages/MySettings.jsx';import{useRosterGradeSettings}from'/src/products/classpilot/hooks/useRosterGradeSettings.js';import'/src/index.css';
 const h=React.createElement,params=new URLSearchParams(location.search);
-history.replaceState({idx:0,key:'initial',usr:{marker:'preserved'}},'',params.get('route')||'/classpilot/my-settings');
+const initialRole=params.get('role')||sessionStorage.getItem('teaching-tools-fixture-role')||'teacher';sessionStorage.setItem('teaching-tools-fixture-role',initialRole);
+history.replaceState({idx:0,key:'initial',usr:{marker:'preserved'}},'',params.get('route')||(location.pathname==='/__teaching_tools'?'/classpilot/my-settings':location.pathname+location.search+location.hash));
 window.queryClient=queryClient;
 function Location(){const route=useLocation();window.fixtureLocation=route;return null;}
 function Grades({school,viewer,role}){const[draft,setDraft]=useState(''),[message,setMessage]=useState('');const[enabled,setEnabled]=useState(true);window.fixtureGradesEnabled=setEnabled;
 const{query,mutation}=useRosterGradeSettings({schoolId:school,viewerId:viewer,enabled,canWrite:['admin','school_admin'].includes(role),onSaved:()=>{setDraft('');setMessage('Grade saved');},onError:setMessage});
 return h('section',null,h('h1',null,'Grade fixture'),h('output',{'data-testid':'grade-scope'},school+':'+role+':'+enabled),h('output',{'data-testid':'grade-list'},(query.data?.gradeLevels||[]).join(',')),h('input',{'aria-label':'New grade',value:draft,onChange:event=>setDraft(event.target.value)}),h('button',{disabled:!query.data||query.isFetching||mutation.isPending,onClick:()=>mutation.mutate([...(query.data?.gradeLevels||[]),draft])},'Save grade'),h('p',{role:'status'},message));}
-function Harness(){const[school,setSchool]=useState('school-a'),[viewer,setViewer]=useState('teacher-a'),[role,setRole]=useState(params.get('role')||'teacher');
+function Harness(){const[school,setSchool]=useState('school-a'),[viewer,setViewer]=useState('teacher-a'),[role,setRole]=useState(initialRole);
 window.fixtureSchool=setSchool;window.fixtureViewer=setViewer;window.fixtureRole=setRole;
 const value={user:{id:viewer,firstName:'Taylor',lastName:'Woods'},activeSchoolId:school,activeMembership:{schoolId:school,schoolName:'Cedar Grove School',roles:[role],role,status:'active'},loading:false,logout:async()=>{window.fixtureLoggedOut=true;}};
-return h(FixtureAuth.Provider,{value},h(Location),h(Routes,null,h(Route,{path:'/grades',element:h(Grades,{school,viewer,role})}),h(Route,{element:h(TeachingToolsLayout)},h(Route,{path:'/classpilot/my-settings',element:h(MySettings)}),h(Route,{path:'/classpilot/my-settings/guide',element:h('h1',null,'Teacher guide')})),h(Route,{path:'/classpilot',element:h('section',null,h('h1',null,'Teacher Dashboard'),h(Link,{to:'/classpilot/my-settings?section=defaults'},'Teaching tools'))})));}
+return h(FixtureAuth.Provider,{value},h(Location),h(Routes,null,h(Route,{path:'/grades',element:h(Grades,{school,viewer,role})}),h(Route,{element:h(TeachingToolsLayout)},h(Route,{path:'/classpilot/my-settings',element:h(MySettings)}),h(Route,{path:'/classpilot/my-settings/manual-today',element:h(ManualToday)}),h(Route,{path:'/classpilot/my-settings/guide',element:h('h1',null,'Teacher guide')})),h(Route,{path:'/classpilot',element:h('section',null,h('h1',null,'Teacher Dashboard'),h(Link,{to:'/classpilot/my-settings?section=defaults'},'Teaching tools'))})));}
 createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(Harness)))));
 `;
 
 before(async () => {
   await mkdir(artifacts, { recursive: true });
   await mkdir(previewArtifacts, { recursive: true });
+  await mkdir(manualTodayArtifacts, { recursive: true });
   vite = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-teaching-tools-${process.pid}`, server: { host: '127.0.0.1', port: 0 },
     plugins: [{ name: 'teaching-tools-fixture', enforce: 'pre', transform(_code, id) {
       if (id.replaceAll('\\', '/').endsWith('/src/contexts/AuthContext.jsx')) return { code: authModule, map: null };
     }, configureServer(server) { server.middlewares.use(async (req, res, next) => {
-      if (!req.url?.startsWith('/__teaching_tools')) return next();
+      if (!req.url?.startsWith('/__teaching_tools') && !/^\/classpilot\/my-settings\/manual-today(?:[?#]|$)/.test(req.url || '')) return next();
       res.setHeader('content-type', 'text/html');
       res.end(await server.transformIndexHtml(req.url, `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">${entry}</script></body></html>`));
     }); } }] });
@@ -54,16 +58,40 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false, manualTodayAllowed = true, manualTodayDenied = false, manualTodayStale = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  if (route.startsWith('/classpilot/my-settings/manual-today')) await page.clock.setFixedTime(new Date('2026-10-30T18:00:00.000Z'));
   const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
+  state.manualToday = { schoolDate: '2026-10-30', timezone: 'America/New_York', resumesOn: '2026-10-31', resumesAt: '2026-10-31T04:00:00.000Z',
+    canManageManualToday: ['admin', 'school_admin'].includes(role) || manualTodayAllowed, teacherManualTodayAllowed: manualTodayAllowed,
+    classes: [{ id: 'official-a', name: 'Official Biology' }, { id: 'own-a', name: 'My Science' }].map(group => ({ ...group,
+      scheduleEnabled: true, scheduleManualDate: null, isManualToday: false, activeScheduledSessionId: null })) };
+  state.manualTodayDenied = manualTodayDenied;
+  state.manualTodayStale = manualTodayStale;
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), schoolId = req.headers()['x-school-id'];
     let body = null;
     if (req.method() !== 'GET') { try { body = req.postDataJSON(); } catch { body = null; } }
     state.requests.push({ method: req.method(), path: url.pathname, search: url.search, schoolId, body });
+    if (url.pathname === '/api/classpilot/groups/manual-today' && req.method() === 'GET') return route.fulfill({ json: state.manualToday });
+    const manualTodayMatch = url.pathname.match(/^\/api\/classpilot\/groups\/([^/]+)\/manual-today$/);
+    if (manualTodayMatch && req.method() === 'POST') {
+      if (state.holdManualSave) await new Promise(resolve => { state.releaseManualSave = resolve; });
+      if (state.manualTodayDenied) {
+        state.manualToday = { ...state.manualToday, canManageManualToday: false, teacherManualTodayAllowed: false };
+        return route.fulfill({ status: 403, json: { code: 'MANUAL_TODAY_TEACHER_DISABLED', error: 'Teacher adjustments are no longer allowed.' } });
+      }
+      if (state.manualTodayStale) {
+        state.manualToday = { ...state.manualToday, schoolDate: '2026-10-31', resumesOn: '2026-11-01', resumesAt: '2026-11-01T04:00:00.000Z' };
+        return route.fulfill({ status: 409, json: { code: 'MANUAL_TODAY_DATE_CHANGED', error: 'The school date changed. Review Manual for today again.' } });
+      }
+      const groupId = decodeURIComponent(manualTodayMatch[1]);
+      state.manualToday = { ...state.manualToday, classes: state.manualToday.classes.map(group => group.id === groupId
+        ? { ...group, isManualToday: true, scheduleManualDate: state.manualToday.schoolDate, activeScheduledSessionId: null } : group) };
+      return route.fulfill({ json: { ...state.manualToday, class: state.manualToday.classes.find(group => group.id === groupId), endedScheduledSessionIds: [] } });
+    }
     if (url.pathname.endsWith('/preview-resources')) {
       if (state.holdPreview) await new Promise(resolve => { state.releasePreview = resolve; });
       if (state.previewError) return route.fulfill({ status: 400, json: { error: 'The resource could not be limited. Paste its full link.' } });
@@ -158,7 +186,8 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     await page.getByText('Research destinations', { exact: true }).waitFor();
     assert.equal(await page.getByTestId('classpilot-admin-shell').count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Teaching tools', exact: true }).count(), 1);
-    assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 4);
+    assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 5);
+    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Manual for today', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Back to ClassPilot', exact: true }).waitFor();
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-websites-desktop.png'), fullPage: true, animations: 'disabled' });
     await page.getByRole('link', { name: 'Classroom defaults', exact: true }).click();
@@ -189,6 +218,111 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     assert(!state.requests.some(row => row.path.includes('/teacher/settings')));
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
+});
+
+test('Manual for today tab supports direct teacher and admin links, reload, and mobile without starting classes', async () => {
+  for (const role of ['teacher', 'admin']) {
+    const { page, state } = await open({ route: '/classpilot/my-settings/manual-today', role });
+    try {
+      const manager = page.getByTestId('manual-today-manager');
+      await manager.waitFor();
+      await page.getByRole('heading', { name: 'Manual for today', exact: true, level: 1 }).waitFor();
+      assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Manual for today', exact: true }).getAttribute('aria-current'), 'page');
+      assert.equal(await page.getByTestId('classpilot-admin-shell').count(), 0, 'Teaching administrators use their own Teaching tools tab');
+      assert.equal(await page.getByTestId('dialog-manual-today').count(), 0);
+      assert.equal(await manager.getByRole('button', { name: 'Done', exact: true }).count(), 0);
+      await manager.getByTestId('button-review-manual-today-official-a').click();
+      await manager.getByRole('heading', { name: 'Make Official Biology manual for today?' }).waitFor();
+      await manager.getByText('If an automatic session for this class is running, it will end.', { exact: false }).waitFor();
+      assert.equal(writes(state).length, 0);
+      await manager.getByRole('button', { name: 'Back to classes' }).click();
+      assert.equal(writes(state).length, 0, 'Cancelling review never adjusts the class');
+      await manager.getByTestId('button-review-manual-today-official-a').click();
+      await manager.getByTestId('button-confirm-manual-today').click();
+      await manager.getByTestId('manual-today-success').getByText(/Official Biology is manual for today/).waitFor();
+      assert.deepEqual(writes(state).map(row => ({ path: row.path, body: row.body, schoolId: row.schoolId })), [{
+        path: '/api/classpilot/groups/official-a/manual-today', body: { expectedSchoolDate: '2026-10-30' }, schoolId: 'school-a',
+      }]);
+      assert.equal(state.manualToday.classes.find(group => group.id === 'own-a').isManualToday, false);
+      await page.reload();
+      await manager.getByTestId('manual-today-class-official-a').getByText(/Manual for today · resumes/).waitFor();
+      await manager.getByTestId('button-review-manual-today-own-a').waitFor();
+      assert.equal(await manager.getByTestId('button-review-manual-today-official-a').count(), 0);
+      await page.screenshot({ path: path.join(manualTodayArtifacts, `manual-today-${role}-desktop.png`), fullPage: true, animations: 'disabled' });
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: path.join(manualTodayArtifacts, `manual-today-${role}-mobile.png`), fullPage: true, animations: 'disabled' });
+      await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Website tools', exact: true }).click();
+      await page.getByText('Research destinations', { exact: true }).waitFor();
+      await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Manual for today', exact: true }).click();
+      await manager.getByTestId('manual-today-class-official-a').getByText(/Manual for today · resumes/).waitFor();
+      assert.equal(writes(state).length, 1, 'Navigation and reload do not start or mutate any class');
+      assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+  }
+});
+
+test('Manual for today tab remains readable when permission is disabled or revoked during a review', async () => {
+  const disabled = await open({ route: '/classpilot/my-settings/manual-today', manualTodayAllowed: false });
+  try {
+    await disabled.page.getByTestId('manual-today-manager').waitFor();
+    await disabled.page.getByText('Your school administrator has not enabled teacher adjustments.', { exact: false }).waitFor();
+    assert.equal(await disabled.page.locator('[data-testid^="button-review-manual-today-"]').count(), 0);
+    assert.equal(writes(disabled.state).length, 0);
+    assert.deepEqual(disabled.state.errors, []);
+  } finally { await disabled.page.close(); }
+  const { page, state } = await open({ route: '/classpilot/my-settings/manual-today', manualTodayDenied: true });
+  try {
+    await page.getByTestId('button-review-manual-today-official-a').click();
+    await page.getByTestId('button-confirm-manual-today').click();
+    await page.getByRole('alert').getByText('Teacher adjustments are no longer allowed.', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('button-confirm-manual-today').isDisabled(), true);
+    await page.getByRole('button', { name: 'Back to classes' }).click();
+    await page.reload();
+    await page.getByText('Your school administrator has not enabled teacher adjustments.', { exact: false }).waitFor();
+    assert.equal(await page.locator('[data-testid^="button-review-manual-today-"]').count(), 0);
+    assert.equal(writes(state).length, 1);
+    assert.equal(state.manualToday.classes.some(group => group.isManualToday), false);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('Manual for today tab rejects a stale school-date review until a new named review is opened', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings/manual-today', manualTodayStale: true });
+  try {
+    await page.getByTestId('button-review-manual-today-official-a').click();
+    await page.getByTestId('button-confirm-manual-today').click();
+    await page.getByText('The school date changed while this review was open.', { exact: false }).waitFor();
+    assert.equal(await page.getByTestId('button-confirm-manual-today').isDisabled(), true);
+    assert.deepEqual(writes(state).map(row => row.body), [{ expectedSchoolDate: '2026-10-30' }]);
+    assert.equal(state.manualToday.classes.some(group => group.isManualToday), false);
+    await page.getByRole('button', { name: 'Back to classes' }).click();
+    state.manualTodayStale = false;
+    await page.getByTestId('button-review-manual-today-official-a').click();
+    await page.getByTestId('button-confirm-manual-today').click();
+    await page.getByTestId('manual-today-success').getByText(/Official Biology is manual for today/).waitFor();
+    assert.deepEqual(writes(state).map(row => row.body), [{ expectedSchoolDate: '2026-10-30' }, { expectedSchoolDate: '2026-10-31' }]);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('Manual for today pending saves stay in their Teaching tools scope until the operation finishes', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings/manual-today' });
+  try {
+    state.holdManualSave = true;
+    await page.getByTestId('button-review-manual-today-official-a').click();
+    await page.getByTestId('button-confirm-manual-today').click();
+    await page.getByRole('button', { name: 'Saving…', exact: true }).waitFor();
+    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Website tools', exact: true }).click();
+    await page.getByText('Wait for the current operation to finish before leaving.', { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/classpilot/my-settings/manual-today');
+    state.releaseManualSave();
+    await page.getByTestId('manual-today-success').getByText(/Official Biology is manual for today/).waitFor();
+    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Website tools', exact: true }).click();
+    await page.getByText('Research destinations', { exact: true }).waitFor();
+    assert.equal(writes(state).length, 1);
+    assert.deepEqual(state.errors, []);
+  } finally { state.releaseManualSave?.(); await page.close(); }
 });
 
 test('preference conflicts preserve and compare the draft until an explicit new baseline is accepted', async () => {

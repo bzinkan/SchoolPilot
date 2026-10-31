@@ -113,6 +113,9 @@ function readyReportV2() {
 }
 
 async function configurePage(page, kind, options = {}) {
+  if (options.manualToday && !options.preserveClock) {
+    await page.clock.setFixedTime(new Date('2026-10-30T18:00:00.000Z'));
+  }
   let currentSession = options.active === false ? null : options.session || activeSession(kind);
   let dashboardWebSocket;
   let webSocketAuthenticated = false;
@@ -151,6 +154,18 @@ async function configurePage(page, kind, options = {}) {
     }
     if (pathname === "/api/auth/csrf") {
       await route.fulfill({ json: { csrfToken: "session-lifecycle-test-csrf" } });
+      return;
+    }
+    if (pathname.endsWith('/teacher/preferences')) {
+      await route.fulfill({ json: { schoolId: SCHOOL_ID, revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6 } });
+      return;
+    }
+    if (pathname.endsWith('/flight-paths')) {
+      await route.fulfill({ json: { flightPaths: [] } });
+      return;
+    }
+    if (pathname.endsWith('/block-lists')) {
+      await route.fulfill({ json: { blockLists: [] } });
       return;
     }
     if (pathname === "/api/auth/logout" && request.method() === "POST") {
@@ -567,7 +582,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
   }
 });
 
-test('Manual for today changes only reviewed classes, survives reload, and expires with the school date', { timeout: 90_000 }, async t => {
+test('Teaching tools Manual for today changes only reviewed classes and preserves Dashboard starts and school-date expiry', { timeout: 90_000 }, async t => {
   const vite = await createServer({ root: APP_ROOT, logLevel: 'error', cacheDir: `node_modules/.vite-manual-today-${process.pid}`, server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const address = vite.httpServer.address();
@@ -587,21 +602,32 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
   const harness = await configurePage(page, 'scheduled', { groups, manualToday: original });
   await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
   await page.getByTestId('badge-automatic-session').waitFor();
-  await page.getByTestId('button-manual-today').click();
-  const dialog = page.getByTestId('dialog-manual-today');
-  await dialog.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
-  await dialog.getByRole('heading', { name: 'Make Biology manual for today?' }).waitFor();
-  await dialog.getByText('If an automatic session for this class is running, it will end.', { exact: false }).waitFor();
+  assert.equal(await page.getByTestId('button-manual-today').count(), 0, 'The Dashboard has no standalone manual manager');
+  const openManager = async target => {
+    await target.getByTestId('button-my-settings').click();
+    await target.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Manual for today', exact: true }).click();
+    await target.getByTestId('manual-today-manager').waitFor();
+    assert.equal(new URL(target.url()).pathname, '/classpilot/my-settings/manual-today');
+    return target.getByTestId('manual-today-manager');
+  };
+  const manager = await openManager(page);
+  assert.equal(await page.getByTestId('dialog-manual-today').count(), 0, 'Teaching tools renders the manager inline');
+  assert.equal(await manager.getByRole('button', { name: 'Done', exact: true }).count(), 0);
+  await manager.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
+  await manager.getByRole('heading', { name: 'Make Biology manual for today?' }).waitFor();
+  await manager.getByText('If an automatic session for this class is running, it will end.', { exact: false }).waitFor();
   assert.equal(harness.manualTodayRequests.length, 0, 'Reviewing a named class does not mutate scheduling');
-  await dialog.getByRole('button', { name: 'Back to classes' }).click();
+  await manager.getByRole('button', { name: 'Back to classes' }).click();
   assert.equal(harness.manualTodayRequests.length, 0, 'Backing out leaves automatic scheduling intact');
-  await dialog.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
-  await dialog.getByTestId('button-confirm-manual-today').click();
-  await dialog.getByTestId('manual-today-success').getByText(/Biology is manual for today/).waitFor();
+  await manager.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
+  await manager.getByTestId('button-confirm-manual-today').click();
+  await manager.getByTestId('manual-today-success').getByText(/Biology is manual for today/).waitFor();
   assert.deepEqual(harness.manualTodayRequests, [{ groupId: GROUP_ID, body: { expectedSchoolDate: '2026-10-30' }, schoolId: SCHOOL_ID }]);
   assert.equal(harness.startRequests.length, 0, 'Enabling manual mode does not start a class');
-  await dialog.getByTestId(`manual-today-class-${chemistryId}`).getByRole('button', { name: 'Manual for today', exact: true }).waitFor();
-  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await manager.getByTestId(`manual-today-class-${chemistryId}`).getByRole('button', { name: 'Manual for today', exact: true }).waitFor();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'The inline manager fits a mobile viewport');
+  await page.screenshot({ path: path.join(tmpdir(), 'classpilot-manual-today-teaching-tools-mobile.png'), fullPage: true, animations: 'disabled' });
+  await page.getByTestId('button-back-classpilot').click();
   await page.getByTestId('button-start-session').waitFor();
   assert.equal(await page.getByTestId('button-skip-scheduled-class-today').count(), 0, 'Manual mode does not offer Skip Today for the selected class');
   await page.getByTestId('manual-today-status').getByText(/Biology/).waitFor();
@@ -609,11 +635,13 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
 
   await page.reload();
   await page.getByTestId('manual-today-status').getByText(/Biology/).waitFor();
-  await page.getByTestId('button-manual-today').click();
+  await openManager(page);
   await page.getByTestId(`button-review-manual-today-${chemistryId}`).click();
   await page.getByTestId('button-confirm-manual-today').click();
   await page.getByTestId('manual-today-success').getByText(/Chemistry is manual for today/).waitFor();
-  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.reload();
+  await page.getByTestId(`manual-today-class-${chemistryId}`).getByText('Manual for today', { exact: false }).waitFor();
+  await page.getByTestId('button-back-classpilot').click();
   assert.deepEqual(harness.manualTodayRequests.map(request => request.groupId), [GROUP_ID, chemistryId]);
   await page.getByTestId('select-start-session-group').selectOption(chemistryId);
   assert.equal(harness.startRequests.length, 0, 'Selecting the class still requires Start Class');
@@ -630,7 +658,7 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
   await page.reload();
   await page.getByTestId('button-skip-scheduled-class-today').waitFor();
   assert.equal(await page.getByTestId('manual-today-status').count(), 0, 'Yesterday’s override does not appear active on the next school date');
-  await page.getByTestId('button-manual-today').click();
+  await openManager(page);
   await page.getByTestId(`button-review-manual-today-${GROUP_ID}`).waitFor();
   await page.getByTestId(`button-review-manual-today-${chemistryId}`).waitFor();
   assert.match(await page.getByTestId('manual-today-date').textContent(), /Oct 31, 2026.*America\/New_York.*Nov 1, 2026/);
@@ -638,23 +666,26 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
 
   const overnightPage = await browser.newPage();
   await overnightPage.clock.install({ time: new Date('2026-10-31T03:59:00.000Z') });
-  const overnight = await configurePage(overnightPage, 'scheduled', { active: false, manualToday: { ...original, classes: original.classes.map(group => ({ ...group, isManualToday: group.id === GROUP_ID, activeScheduledSessionId: null })) } });
+  const overnight = await configurePage(overnightPage, 'scheduled', { active: false, preserveClock: true, manualToday: { ...original, classes: original.classes.map(group => ({ ...group, isManualToday: group.id === GROUP_ID, activeScheduledSessionId: null })) } });
   await overnightPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
   await overnightPage.getByTestId('manual-today-status').waitFor();
-  await overnightPage.getByTestId('button-manual-today').click();
+  await openManager(overnightPage);
   await overnightPage.getByTestId(`button-review-manual-today-${chemistryId}`).click();
   await overnightPage.clock.pauseAt(new Date('2026-10-31T03:59:59.000Z'));
   overnight.setManualToday(nextDay);
   await overnightPage.clock.fastForward(1_000);
   await overnightPage.getByText('The school date changed while this review was open.', { exact: false }).waitFor();
   assert.equal(await overnightPage.getByTestId('button-confirm-manual-today').isDisabled(), true, 'An overnight review cannot silently enable the next day');
-  assert.equal(await overnightPage.getByTestId('manual-today-status').count(), 0, 'The school-midnight boundary clears yesterday’s override without a reload');
   assert.equal(overnight.manualTodayRequests.length, 0);
+  await overnightPage.getByRole('button', { name: 'Back to classes' }).click();
+  await overnightPage.getByTestId('button-back-classpilot').click();
+  await overnightPage.getByTestId('button-start-session').waitFor();
+  assert.equal(await overnightPage.getByTestId('manual-today-status').count(), 0, 'The school-midnight boundary clears yesterday’s Dashboard override without a reload');
 
   const deniedPage = await browser.newPage();
   const denied = await configurePage(deniedPage, 'scheduled', { active: false, manualToday: original, manualTodayDenied: true });
   await deniedPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-  await deniedPage.getByTestId('button-manual-today').click();
+  await openManager(deniedPage);
   await deniedPage.getByTestId(`button-review-manual-today-${GROUP_ID}`).click();
   await deniedPage.getByTestId('button-confirm-manual-today').click();
   await deniedPage.getByRole('alert').getByText('Teacher adjustments are no longer allowed.', { exact: true }).waitFor();
@@ -662,8 +693,10 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
   assert.equal(denied.manualTodayRequests.length, 1);
   assert.equal(denied.startRequests.length, 0);
   await deniedPage.getByRole('button', { name: 'Back to classes' }).click();
-  await deniedPage.getByRole('button', { name: 'Done', exact: true }).click();
-  assert.equal(await deniedPage.getByTestId('button-manual-today').count(), 0, 'Teachers without school permission cannot open the adjustment action');
+  await deniedPage.getByText('Your school administrator has not enabled teacher adjustments.', { exact: false }).waitFor();
+  assert.equal(await deniedPage.getByTestId(`button-review-manual-today-${GROUP_ID}`).count(), 0, 'The tab retains status access while permission denial removes adjustments');
+  await deniedPage.getByTestId('button-back-classpilot').click();
+  assert.equal(await deniedPage.getByTestId('button-manual-today').count(), 0);
 });
 
 test('persistent class picker reviews atomic manual Start and Switch for teachers and admins', { timeout: 90_000 }, async t => {
@@ -694,6 +727,7 @@ test('persistent class picker reviews atomic manual Start and Switch for teacher
     const start = page.getByTestId(role === 'admin' ? 'button-admin-start-session' : 'button-start-session');
     const manual = page.getByTestId(role === 'admin' ? 'button-admin-start-manually-today' : 'button-start-manually-today');
     await selector.waitFor();
+    assert.equal(await page.getByTestId('button-manual-today').count(), 0, 'Only the explicit Start/Switch manual action remains on the Dashboard');
     assert.equal((await start.textContent()).trim(), 'Teaching');
     assert.equal(await start.isDisabled(), true);
     await selector.focus();
@@ -706,6 +740,8 @@ test('persistent class picker reviews atomic manual Start and Switch for teacher
     await page.getByTestId('dialog-class-start-review').getByRole('heading', { name: 'Switch Chemistry?' }).waitFor();
     await page.keyboard.press('Escape');
     await page.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
+    await page.waitForFunction(testId => document.activeElement?.getAttribute('data-testid') === testId,
+      role === 'admin' ? 'button-admin-start-session' : 'button-start-session', { timeout: 2_000 });
     assert.equal(await start.evaluate(element => element === document.activeElement), true, 'Escape restores focus to the Switch action');
     await manual.click();
     const review = page.getByTestId('dialog-class-start-review');

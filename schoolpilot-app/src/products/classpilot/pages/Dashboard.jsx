@@ -15,7 +15,6 @@ import WindowsBrowserHistoryDrawer from '../components/WindowsBrowserHistoryDraw
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
-import ManualTodayDialog from '../components/ManualTodayDialog';
 import ClassStartControls from '../components/ClassStartControls';
 import ClassStartReviewDialog from '../components/ClassStartReviewDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
@@ -501,7 +500,6 @@ export default function Dashboard() {
   // The viewer's own dashboard theme. Presentation only, and never the class owner's.
   const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin), timeZone: school?.schoolTimezone || school?.timezone });
   const manualTodayQuery = useManualToday({ schoolId: activeSchoolId, viewerId: currentUser?.id, accessScope: isAdmin ? 'admin' : isTeacher ? 'teacher' : 'none', enabled: isAdmin || isTeacher });
-  const [showManualToday, setShowManualToday] = useState(false);
   const manualTodayClasses = (manualTodayQuery.data?.classes || []).filter(group => group.isManualToday);
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
@@ -7072,13 +7070,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 </p>
               </div>
               <HeaderOrnament />
-              {(isAdmin || manualTodayQuery.data?.canManageManualToday === true) && (
-                <button type="button" onClick={() => setShowManualToday(true)}
-                  className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-chrome-control-border bg-chrome-control text-xs font-medium text-chrome-fg hover:bg-chrome-control-hover sm:w-auto sm:px-3"
-                  aria-label="Manual for today" title="Manual for today" data-testid="button-manual-today">
-                  <Calendar className="h-3.5 w-3.5" /><span className="hidden sm:inline">Manual for today</span>
-                </button>
-              )}
             </div>
             <div className="flex flex-wrap items-center gap-2" data-testid="dashboard-class-picker-row">
               {isTeacher && !scheduledSupervisionId ? <ClassStartControls groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
@@ -7275,8 +7266,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {' '}Normal scheduling resumes {manualTodayDateLabel(manualTodayQuery.data.resumesOn)} ({manualTodayQuery.data.timezone}).
         {' '}Other classes remain automatic and may take over at their scheduled times.
       </div> : null}
-      {showManualToday ? <ManualTodayDialog key={roomDialogScopeKey} query={manualTodayQuery} schoolId={activeSchoolId} viewerId={currentUser?.id}
-        startLabel="Start Class" onClose={() => setShowManualToday(false)} /> : null}
       {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview} schoolId={activeSchoolId} viewerId={currentUser?.id}
         returnFocusRef={classStartTriggerRef}
         currentSessionId={activeSession?.id || null} manualTodayQuery={manualTodayQuery} targetAvailable={[...groups, ...adminTeachingGroups].some(group => group.id === classStartReview.groupId)}

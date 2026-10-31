@@ -16,7 +16,9 @@ the shared effect on co-teachers, the saved Flight Path and the school-local
 expiry. Enabling the override and starting the class commit together; a failed
 start leaves both the previous session and the schedule unchanged.
 
-To prepare classes without starting them, open **Manual for today** on the Dashboard or in Admin Classes. Choose a class,
+To prepare classes without starting them, open **Teaching tools → Manual for
+today** (`/classpilot/my-settings/manual-today`) or use the existing entry in
+Admin Classes. Choose a class,
 review its name and school-local date, and select **Make manual for today**.
 Repeat for any other classes needed. The action does not start a class. Select
 the class and use **Teach Class** (or **Start Class** for teachers) when ready;
