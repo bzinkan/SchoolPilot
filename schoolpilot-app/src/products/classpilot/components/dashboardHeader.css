@@ -121,7 +121,7 @@
   border: 1px solid var(--chrome-control-border);
   border-radius: 6px;
   color: var(--chrome-fg);
-  background: var(--chrome-control);
+  background: var(--chrome-control-bg);
 }
 
 .dashboard-header-scroll-button:disabled {
