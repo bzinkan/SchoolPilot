@@ -310,30 +310,52 @@ export function parseNpmAuditV2Result({
     }
   }
 
-  const resolutionState = new Map();
-  const resolvedByRecord = new Map();
-  function resolveRecord(recordName) {
-    const state = resolutionState.get(recordName);
-    if (state === "visiting") {
-      throw new Error("npm_audit_via_cycle");
-    }
-    if (state === "resolved") return resolvedByRecord.get(recordName);
-    resolutionState.set(recordName, "visiting");
-    const definition = recordDefinitions.get(recordName);
-    const resolved = new Map();
-    for (const advisory of definition.directAdvisories) {
-      mergeAdvisoryIntoMap(resolved, advisory);
-    }
+  const dependentsByRecord = new Map(
+    [...recordDefinitions.keys()].map((name) => [name, []])
+  );
+  for (const definition of recordDefinitions.values()) {
     for (const reference of definition.viaReferences) {
-      for (const advisory of resolveRecord(reference).values()) {
-        mergeAdvisoryIntoMap(
-          resolved,
-          addRecordPathToAdvisory(
-            advisory,
-            definition.name,
-            definition.fixAvailable
-          )
-        );
+      dependentsByRecord.get(reference).push(definition.name);
+    }
+  }
+  function reachableRecords(root, references) {
+    const reached = new Set();
+    const pending = [root];
+    for (let index = 0; index < pending.length; index += 1) {
+      const name = pending[index];
+      if (reached.has(name)) continue;
+      reached.add(name);
+      pending.push(...references(name));
+    }
+    return reached;
+  }
+  const advisoryAncestors = new Map();
+  function resolveRecord(recordName) {
+    const definition = recordDefinitions.get(recordName);
+    // npm peer dependencies can form legitimate cycles. First close the root's
+    // complete reachable graph; never cache a partial result at a back-edge.
+    const reachable = reachableRecords(recordName,
+      (name) => recordDefinitions.get(name).viaReferences);
+    const resolved = new Map();
+    for (const sourceName of [...reachable].sort()) {
+      const source = recordDefinitions.get(sourceName);
+      if (source.directAdvisories.length === 0) continue;
+      if (!advisoryAncestors.has(sourceName)) {
+        advisoryAncestors.set(sourceName, reachableRecords(sourceName,
+          (name) => dependentsByRecord.get(name)));
+      }
+      // A record lies on a root -> advisory path exactly when the root can
+      // reach it and it can reach the advisory source. This retains every
+      // cyclic path's package/fix metadata without adding unrelated branches.
+      const pathNames = [...advisoryAncestors.get(sourceName)]
+        .filter((name) => reachable.has(name)).sort();
+      for (const advisory of source.directAdvisories) {
+        let propagated = advisory;
+        for (const name of pathNames) {
+          propagated = addRecordPathToAdvisory(propagated, name,
+            recordDefinitions.get(name).fixAvailable);
+        }
+        mergeAdvisoryIntoMap(resolved, propagated);
       }
     }
     if (resolved.size === 0) {
@@ -348,8 +370,6 @@ export function parseNpmAuditV2Result({
     if (maximumResolvedSeverity !== definition.severity) {
       throw new Error("npm_audit_via_severity_conflict");
     }
-    resolvedByRecord.set(recordName, resolved);
-    resolutionState.set(recordName, "resolved");
     return resolved;
   }
 

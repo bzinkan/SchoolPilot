@@ -33,6 +33,7 @@ interface AdvisoryFixture {
 const ROUTER_ADVISORY = "GHSA-qwww-vcr4-c8h2";
 const BRACE_ADVISORY = "GHSA-mh99-v99m-4gvg";
 const OTHER_ADVISORY = "GHSA-2345-6789-cfgh";
+const MINIMATCH_ADVISORY = "GHSA-g3hv-75wg-m249";
 const COMMIT_SHA = "a".repeat(40);
 
 function sha256(value: string): string {
@@ -132,6 +133,32 @@ function auditRecordNames(advisories: AdvisoryFixture[]): string[] {
       ? [advisory.name, "react-router-dom"]
       : [advisory.name]
   );
+}
+
+function eslintPeerCycleAudit() {
+  const document = auditDocument([{
+    id: MINIMATCH_ADVISORY,
+    name: "minimatch",
+    severity: "moderate",
+    range: "<11.0.1",
+  }]);
+  for (const [name, via] of [
+    ["eslint", ["@eslint-community/eslint-utils", "@eslint/config-array", "minimatch"]],
+    ["@eslint-community/eslint-utils", ["eslint"]],
+    ["@eslint/config-array", ["minimatch"]],
+    ["@eslint/js", ["eslint"]],
+  ] as const) {
+    document.vulnerabilities[name] = {
+      ...document.vulnerabilities.minimatch,
+      name,
+      via: [...via],
+      nodes: [`node_modules/${name}`],
+      fixAvailable: { name, version: "11.0.1", isSemVerMajor: true },
+    };
+  }
+  document.metadata.vulnerabilities.moderate = 5;
+  document.metadata.vulnerabilities.total = 5;
+  return document;
 }
 
 function parsedAudit(
@@ -337,7 +364,7 @@ describe("frontend dependency audit engine", () => {
     assert.equal(report.production.advisories.length, 0);
   });
 
-  it("resolves string via edges transitively and rejects missing, cyclic, or severity-conflicting graphs", () => {
+  it("resolves string via edges transitively and rejects missing, unanchored cyclic, or severity-conflicting graphs", () => {
     const routerAudit = parsedAudit("production", [{
       id: ROUTER_ADVISORY,
       name: "react-router",
@@ -374,7 +401,7 @@ describe("frontend dependency audit engine", () => {
         exitCode: 1,
         stdout: JSON.stringify(cyclic),
       })
-    , /npm_audit_via_cycle/);
+    , /npm_audit_advisories_missing/);
 
     const conflicting = auditDocument([{
       id: OTHER_ADVISORY,
@@ -417,6 +444,86 @@ describe("frontend dependency audit engine", () => {
       "<1.1.18",
       ">=4.0.0 <5.0.9",
     ]);
+  });
+
+  it("resolves the ESLint peer cycle through its minimatch advisory without losing root packages or fix metadata", () => {
+    const parsed = parseNpmAuditV2Result({
+      scope: "full", exitCode: 1, stdout: JSON.stringify(eslintPeerCycleAudit()),
+    });
+    const names = ["@eslint-community/eslint-utils", "@eslint/config-array", "@eslint/js", "eslint", "minimatch"].sort();
+    assert.equal(parsed.advisories.length, 1);
+    assert.deepEqual(parsed.advisories[0].affectedPackages, names);
+    assert.deepEqual(parsed.advisories[0].advisoryPackages, ["minimatch"]);
+    assert.deepEqual(parsed.advisories[0].vulnerableRanges, ["<11.0.1"]);
+    assert.deepEqual(parsed.advisories[0].fixAvailability, names.map(name => ({
+      available: true, name, version: name === "minimatch" ? "9.0.0" : "11.0.1", isSemVerMajor: true,
+    })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+    assert.deepEqual(parsed.vulnerabilityRecords.map((record: { resolvedAdvisoryIds: string[] }) => record.resolvedAdvisoryIds),
+      names.map(() => [MINIMATCH_ADVISORY]));
+    assert.equal(parsed.counts.advisoryIds.moderate, 1);
+    assert.equal(parsed.counts.vulnerabilityRecords.moderate, 5);
+  });
+
+  it("retains a high advisory inside a peer cycle and produces identical results for reordered roots and edges", () => {
+    const document = eslintPeerCycleAudit();
+    const high = auditDocument([{ id: OTHER_ADVISORY, name: "eslint", severity: "high" }]);
+    document.vulnerabilities.eslint.via.push(...high.vulnerabilities.eslint.via);
+    for (const name of ["eslint", "@eslint-community/eslint-utils", "@eslint/js"]) {
+      document.vulnerabilities[name].severity = "high";
+    }
+    document.metadata.vulnerabilities.moderate = 2;
+    document.metadata.vulnerabilities.high = 3;
+    const parsed = parseNpmAuditV2Result({ scope: "production", exitCode: 1, stdout: JSON.stringify(document) });
+    const reordered = {
+      ...document,
+      vulnerabilities: Object.fromEntries(Object.entries(document.vulnerabilities).reverse().map(([name, record]) =>
+        [name, { ...record, via: [...record.via].reverse() }])),
+    };
+    assert.deepEqual(parseNpmAuditV2Result({ scope: "production", exitCode: 1, stdout: JSON.stringify(reordered) }), parsed);
+    const highAdvisory = parsed.advisories.find((advisory: { advisoryId: string }) => advisory.advisoryId === OTHER_ADVISORY);
+    assert.equal(highAdvisory.severity, "high");
+    assert.deepEqual(highAdvisory.affectedPackages, ["@eslint-community/eslint-utils", "@eslint/js", "eslint"]);
+    assert.equal(parsed.counts.advisoryIds.high, 1);
+    assert.equal(parsed.counts.vulnerabilityRecords.high, 3);
+    assert.deepEqual(parsed.vulnerabilityRecords.find((record: { name: string }) => record.name === "eslint").resolvedAdvisoryIds,
+      [OTHER_ADVISORY, MINIMATCH_ADVISORY].sort());
+    const context = baseContext();
+    const packageLock = JSON.parse(context.packageLockText);
+    for (const record of parsed.vulnerabilityRecords) {
+      packageLock.packages[`node_modules/${record.name}`] = { version: "1.0.0" };
+    }
+    context.packageLockText = JSON.stringify(packageLock);
+    context.reachabilityEvidenceSet = context.reachabilityEvidenceSet.map(evidence => ({
+      ...evidence, packageLockSha256: sha256(context.packageLockText),
+    }));
+    context.productionAudit = parsed;
+    context.fullAudit = { ...parsed, scope: "full" };
+    const report = evaluate(context);
+    assert.equal(report.status, "blocked");
+    assert.deepEqual(report.review.blockingAdvisoryIds, [OTHER_ADVISORY]);
+    assert.deepEqual(report.review.blockingVulnerabilityRecordNames, ["@eslint-community/eslint-utils", "@eslint/js", "eslint"]);
+  });
+
+  it("still rejects missing references, malformed advisory anchors and hidden high severity within peer cycles", () => {
+    const missing = eslintPeerCycleAudit();
+    missing.vulnerabilities.eslint.via.push("missing-package");
+    assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(missing) }),
+      /npm_audit_via_reference_missing/);
+    const malformed = eslintPeerCycleAudit();
+    malformed.vulnerabilities.minimatch.via = auditDocument([{
+      id: MINIMATCH_ADVISORY, name: "wrong-package", severity: "moderate",
+    }]).vulnerabilities["wrong-package"].via;
+    assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(malformed) }),
+      /npm_audit_advisory_invalid/);
+    const hiddenHigh = eslintPeerCycleAudit();
+    const high = auditDocument([{ id: OTHER_ADVISORY, name: "eslint", severity: "high" }]);
+    hiddenHigh.vulnerabilities.eslint.via.push(...high.vulnerabilities.eslint.via);
+    assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(hiddenHigh) }),
+      /npm_audit_via_severity_conflict/);
+    const badCounts = eslintPeerCycleAudit();
+    badCounts.metadata.vulnerabilities.total -= 1;
+    assert.throws(() => parseNpmAuditV2Result({ scope: "full", exitCode: 1, stdout: JSON.stringify(badCounts) }),
+      /npm_audit_metadata_counts_invalid/);
   });
 
   it("fails when successive audit snapshots hide a production-scoped full-tree finding", () => {
