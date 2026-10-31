@@ -32,6 +32,7 @@ await import("../dist/middleware/rateLimiter.js");
 process.env.REDIS_URL = process.env.TEST_REDIS_URL;
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const storage = await import("../dist/services/storage.js");
+const { datePlusDays, emptySchoolSchedulingConfig } = await import("../dist/services/classpilotSchedulingRules.js");
 const schema = await import("../dist/schema/index.js");
 const { runWithTenantContext, getOwnedTenantStore } = await import("../dist/middleware/tenantContext.js");
 const { createApp } = await import("../dist/app.js");
@@ -113,6 +114,14 @@ before(async () => {
   for(const name of ["SCOPED_AUTHORITY_CHECKS","AUTH_BOUND_TELEMETRY","EXACT_BINDING_ACK","EXACT_TAB_CLOSE","SCREENSHOT_TRACKING_WINDOW_LEASE","SCREENSHOT_ACTIVE_OBSERVATION_CADENCE","STUDENT_CHAT_IDEMPOTENCY","HELP_REQUESTS","QUESTION_PARKING","TIMER_CONTROLS","LESSON_ACTIVITIES","EXIT_TICKETS"]){process.env[`CLASSPILOT_CAP_${name}_${name.startsWith("EXACT_")?"V2":"V1"}`]="true";}
   process.env.CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON=JSON.stringify({[schoolId]:3});
   process.env.CLASSPILOT_NATIVE_VISIBILITY_SCHOOL_IDS = `${schoolId},${otherSchoolId}`;
+  // Seven tracking weekdays do not make weekends instructional. Keep this
+  // synthetic school's real-clock fixture open across a possible UTC midnight.
+  const today = new Date().toISOString().slice(0, 10);
+  const config = { ...emptySchoolSchedulingConfig(), dateOverrides: {
+    [today]: { instructional: true }, [datePlusDays(today, 1)]: { instructional: true },
+  } };
+  await inSchool(() => db.insert(schema.classpilotSchoolSchedules).values({ schoolId, config })
+    .onConflictDoUpdate({ target: schema.classpilotSchoolSchedules.schoolId, set: { config } }));
   await inSchool(() => storage.upsertSettings(schoolId, { schoolName: tag, schoolTimezone: "UTC", wsSharedKey: tag,
     enableTrackingHours: true, trackingStartTime: "00:00", trackingEndTime: "23:59",
     trackingDays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], afterHoursMode: "off" }));

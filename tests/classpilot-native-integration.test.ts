@@ -37,6 +37,8 @@ const { hashClassPilotPin } = await import("../dist/services/classpilotPins.js")
 const { subscribeWS, disposeWSRedis } = await import("../dist/realtime/ws-redis.js");
 const { classpilotNativeStore, ClasspilotNativeStore } = await import("../dist/services/classpilotNativeStore.js");
 const { ClasspilotNativeError } = await import("../dist/services/classpilotNativeProtocol.js");
+const { emptySchoolSchedulingConfig } = await import("../dist/services/classpilotSchedulingRules.js");
+const { resolveClasspilotMonitoringPolicy } = await import("../dist/services/classpilotMonitoringPolicy.js");
 const { schedulerPool, schedulerLockPool } = await import("../dist/services/schedulerDb.js");
 const { default: errorMonitor } = await import("../dist/services/errorMonitor.js");
 const { CLASSPILOT_NATIVE_VISIBILITY_SQL } = await import("../dist/db/classpilotNativeVisibilityMigration.js");
@@ -112,6 +114,17 @@ before(async () => {
   await inSchool(() => storage.upsertSettings(schoolId, { schoolName: tag, schoolTimezone: "UTC", wsSharedKey: tag,
     enableTrackingHours: true, trackingStartTime: "00:00", trackingEndTime: "23:59",
     trackingDays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], afterHoursMode: "off" }));
+  // Native capture also requires an instructional date. Seven tracking days
+  // alone do not turn weekends into school days. Keep this synthetic school's
+  // today and tomorrow instructional so the real-clock suite can cross UTC midnight.
+  const fixtureNow = Date.now();
+  const dateOverrides = Object.fromEntries([fixtureNow, fixtureNow + 86_400_000]
+    .map(at => [new Date(at).toISOString().slice(0, 10), { instructional: true }]));
+  const config = { ...emptySchoolSchedulingConfig(), dateOverrides };
+  await inSchool(() => db.insert(schema.classpilotSchoolSchedules).values({ schoolId, config })
+    .onConflictDoUpdate({ target: schema.classpilotSchoolSchedules.schoolId, set: { config } }));
+  const monitoringSettings = await inSchool(() => storage.getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true }));
+  assert.equal(resolveClasspilotMonitoringPolicy(monitoringSettings).policyMode, "full", "The native transport fixture must start inside its own instructional monitoring window");
   await storage.createProductLicense({ schoolId, product: "CLASSPILOT", status: "active" });
   await storage.createProductLicense({ schoolId: otherSchoolId, product: "CLASSPILOT", status: "active" });
   const admin = await storage.createUser({ email: `admin@${tag}.example.edu`, firstName: "Synthetic", lastName: "Admin" });
