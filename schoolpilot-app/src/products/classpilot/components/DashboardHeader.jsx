@@ -26,9 +26,10 @@ function revealFocusedControl(event) {
 // Keep one 72px row; overflow belongs to the middle, never another header row.
 export default function DashboardHeader({ brand, controls, primaryActions, utilities }) {
   const middleRef = useRef(null);
+  const outerRef = useRef(null);
   const controlsRef = useRef(null);
   const contentRef = useRef(null);
-  const [scroll, setScroll] = useState({ overflow: false, left: false, right: false });
+  const [scroll, setScroll] = useState({ overflow: false, left: false, right: false, outer: false });
   useLayoutEffect(() => {
     const viewport = controlsRef.current;
     const update = () => {
@@ -36,12 +37,14 @@ export default function DashboardHeader({ brand, controls, primaryActions, utili
         overflow: contentRef.current.scrollWidth > middleRef.current.clientWidth + 1,
         left: viewport.scrollLeft > 1,
         right: viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 1,
+        outer: outerRef.current.scrollWidth > outerRef.current.clientWidth + 1,
       };
       setScroll(previous => Object.keys(next).every(key => next[key] === previous[key]) ? previous : next);
     };
     const observer = new ResizeObserver(update);
     observer.observe(middleRef.current);
     observer.observe(contentRef.current);
+    observer.observe(outerRef.current);
     viewport.addEventListener('scroll', update, { passive: true });
     update();
     return () => { observer.disconnect(); viewport.removeEventListener('scroll', update); };
@@ -50,7 +53,7 @@ export default function DashboardHeader({ brand, controls, primaryActions, utili
   return (
     <header data-class-tools-navigation className="classpilot-dashboard-header chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border">
       <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
-      <div className="dashboard-header-viewport" data-testid="dashboard-header-viewport" role="region" aria-label="Dashboard header" tabIndex={0} onKeyDown={scrollWithKeyboard}>
+      <div ref={outerRef} className="dashboard-header-viewport" data-testid="dashboard-header-viewport" role="region" aria-label="Dashboard header" tabIndex={scroll.outer ? 0 : undefined} onKeyDown={scrollWithKeyboard}>
         <div className="dashboard-header-row" data-testid="dashboard-header-row">
           <div className="dashboard-header-brand" data-testid="dashboard-header-brand">{brand}</div>
           <div ref={middleRef} className="dashboard-header-middle">

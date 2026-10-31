@@ -8639,10 +8639,15 @@ test('the complete dashboard header stays on one line across devices and class s
     await page.setViewportSize({ width: 800, height: 900 });
     await assertRow(page, `${role}/${kind}/800`);
     const outer = page.getByTestId('dashboard-header-viewport');
+    await waitUntil(async () => await outer.getAttribute('tabindex') === '0', 'the narrow header exposes keyboard scrolling');
     await outer.focus(); await outer.press('End');
     assert.ok(await outer.evaluate(element => element.scrollLeft > 0), 'a narrow screen can reach the right-hand utilities');
     await page.setViewportSize({ width: 1024, height: 900 });
+    await waitUntil(async () => await outer.getAttribute('tabindex') === null, 'the desktop header creates no extra outer focus target');
     await outer.evaluate(element => { element.scrollLeft = 0; });
+    await page.getByTestId('button-theme-toggle').focus();
+    await page.getByRole('heading', { level: 1, name: 'ClassPilot', exact: true }).click();
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'clicking static branding leaves focus on the page');
     const middle = page.getByTestId('dashboard-header-controls');
     const before = await measure(page);
     if (before.middleContentWidth > before.middleWidth + 1) {
