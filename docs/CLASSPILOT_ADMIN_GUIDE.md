@@ -18,7 +18,7 @@ Overview is your starting point. One menu organizes school administration on des
 
 1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates.
 2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes.
-3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics, Monitored Browser Time when turned on, and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
+3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Adoption & health, Monitored Browser Time when turned on, and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
 4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
 5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
 
@@ -273,18 +273,21 @@ Define who can temporarily supervise students and preserve clear ownership throu
 
 [Open Supervision](/classpilot/coverage?entry=admin)
 
-### Use Analytics, IT Readiness, and Safety Center
+### Use Adoption & health, IT Readiness, and Safety Center
 
 **Who can use this:** Administrator or school administrator
 
 Keep operational health, instructional trends, and evidence workflows in their proper contexts.
 
-1. **Review trends.** Use Analytics for school, teacher, class, and student activity patterns within the selected time period.
-2. **Resolve readiness findings.** Use IT Readiness for Google domain mismatches, reconnect requirements, staff identity findings, and extension deployment gaps.
-3. **Work safety cases.** Use Safety Center to review alerts in context, document a decision, and create evidence only when school procedure requires it.
-4. **Keep evidence scoped.** Evidence workflows preserve the authorized school, student, class, and time context. Export and share only through approved school processes.
+1. **Review completed-session adoption.** Open Reports → Adoption & health. The shared school-time filter defaults to Last 7 days. Current lessons appear after they end and their summaries are prepared. Adoption covers active official classes and saved observations; teacher counts exclude automatic scheduled reporting. Classes without activity remain listed, and unavailable observations show a dash.
+2. **Review confirmed failures.** Needs attention lists retained session summaries whose generation has reached a terminal failure, including summaries for archived classes. Attempts show the actual recorded count. Retrying reports, failed email delivery, and missing browser updates do not create a failure here. View status opens that session’s authorized summary.
+3. **Inspect availability when needed.** Reporting availability starts collapsed. Coverage is total observed time divided by eligible time from ready summaries, not an average of percentages. Missing observations have an unknown cause; normal sleep or connectivity changes may explain them. Preparing, unavailable, and tracking-not-expected records stay distinct. View latest summary opens one completed session, while the class row describes the selected period.
+4. **Interpret optional details carefully.** Classroom tools count each recorded action once regardless of student targets; monitoring without actions is not counted. Chromebook reporting details show the latest versions observed in retained check-ins during completed class windows. Client counts do not establish Chromebook inventory, extension publication, or managed deployment adoption.
+5. **Resolve readiness findings.** Use IT Readiness for Google domain mismatches, reconnect requirements, staff identity findings, and extension deployment gaps.
+6. **Work safety cases.** Use Safety Center to review alerts in context, document a decision, and create evidence only when school procedure requires it.
+7. **Keep evidence scoped.** Evidence workflows preserve the authorized school, student, class, and time context. Export and share only through approved school processes. Request failures and data beyond retention are unavailable, never healthy zeros.
 
-[Open Analytics](/classpilot/admin/analytics)
+[Open Adoption & health](/classpilot/admin/analytics)
 
 ### Read Monitored Browser Time
 
@@ -294,7 +297,7 @@ When turned on, this report shows observed browser time within the school's trac
 
 1. **Choose a scope and dates.** Open Reports → Monitored Browser Time. Entire school adds observed time across students. Grade uses current student grades; Official class uses recorded teaching-session attribution. Choose a grade, class or student before viewing that scope.
 2. **Read coverage before totals.** Today is Live and normally updates hourly. Final means the school day was successfully computed. Partial means some requested dates are missing, expired or in the future. Unavailable is not zero; successful empty days may show zero. The first available day depends on activation, successful computation and retention.
-3. **Interpret observed time.** This measures browser observations, not total device screen time, engagement or learning. Students observed is not enrollment. An idle browser may still check in. Instructional, Off-task and Unknown add to the observed total; Analytics uses a different calculation.
+3. **Interpret observed time.** This measures browser observations, not total device screen time, engagement or learning. Students observed is not enrollment. An idle browser may still check in. Instructional, Off-task and Unknown add to the observed total. Adoption & health uses completed class-session observations rather than this school-day measure.
 4. **Export with school authorization.** Export CSV downloads the selected report and records classpilot.usage.export in Audit logs. Teacher exports do not include this school reporting measure. Store exports according to your school's records policy.
 5. **Protect retained history.** Earlier uncomputed days cannot be assumed available. Changing tracking hours affects recomputation of today and yesterday. Cleanup students permanently deletes Monitored Browser Time history. If the report is not turned on yet, no action is needed.
 
