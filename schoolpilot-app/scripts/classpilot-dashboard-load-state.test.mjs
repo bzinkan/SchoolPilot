@@ -6135,7 +6135,7 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
   const page = await browser.newPage();
   await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
   const aggregate = aggregateController({ scoped: success([student({ studentName: 'Homeroom student' })]) });
-  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+  const harness = await configureDashboard(page, { aggregate, activeSession: { ...teachingSession(), classNameSnapshot: 'Grade 5 Homeroom' }, acknowledgeSessionSubscriptions: true,
     dashboardActivity: scheduledActivityResponse(scheduledClassActivity()),
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
@@ -6155,6 +6155,7 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
   assert.ok(aggregate.requests.every(request => request.teachingSessionId || request.supervisionContextId), 'Never request a school-wide roster');
   const next = scheduledClassActivity({ id: OBSERVED_SESSION_ID, name: 'Grade 5 Specials', startsAt: '2026-09-15T13:15:00Z', endsAt: '2026-09-15T13:55:00Z', authority: { teachingSessionId: OBSERVED_SESSION_ID } });
   aggregate.setScopedResponse(success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Specials student' })]));
+  harness.setActiveSession({ ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID }), classNameSnapshot: next.name });
   harness.setDashboardActivity(scheduledActivityResponse(next, { serverTime: '2026-09-15T13:15:00Z' }));
   await page.clock.fastForward(240000);
   await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Specials', { exact: true }).waitFor({ state: 'attached' });
@@ -6198,7 +6199,7 @@ test('automatic scheduled Class resumes the same regular session without restori
   await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
   const regular = scheduledClassActivity({ endsAt: '2026-09-15T13:30:00Z' });
   const aggregate = aggregateController({ scoped: success([student()]) });
-  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+  const harness = await configureDashboard(page, { aggregate, activeSession: { ...teachingSession(), classNameSnapshot: regular.name }, acknowledgeSessionSubscriptions: true,
     dashboardActivity: scheduledActivityResponse(regular, { nextBoundaryAt: '2026-09-15T13:11:00Z' }),
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
