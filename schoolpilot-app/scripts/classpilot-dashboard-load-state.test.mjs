@@ -8841,4 +8841,134 @@ test('dashboard next class includes its school-local day when it is not today', 
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('licensed product sidebars follow the complete header and keep their first controls reachable', { timeout: 180_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const screenshotDirectory = path.join(APP_ROOT, 'node_modules', '.cache', 'sidebar-header-screenshots');
+  mkdirSync(screenshotDirectory, { recursive: true });
+  const variants = [
+    { name: 'PassPilot', passPilot: true, goPilot: false },
+    { name: 'GoPilot', passPilot: false, goPilot: true },
+    { name: 'both products', passPilot: true, goPilot: true },
+  ];
+  for (const variant of variants) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+    const authentication = authResponse();
+    authentication.licenses = { classPilot: true, passPilot: variant.passPilot, goPilot: variant.goPilot };
+    const harness = await configureDashboard(page, { authentication, aggregate: aggregateController(), activeSession: null, allSessions: [] });
+    const productWrites = [];
+    await page.route('**/api/passpilot/**', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (request.method() !== 'GET') { productWrites.push({ path: url.pathname, method: request.method() }); return route.fulfill({ status: 500, json: { error: 'No product write is expected' } }); }
+      if (url.pathname === '/api/passpilot/classes') return route.fulfill({ json: { source: 'classpilot_groups', classes: [
+        { id: 'pass-class-a', name: 'Grade 5 Homeroom' }, { id: 'pass-class-b', name: 'Grade 6 Homeroom' },
+      ] } });
+      if (url.pathname === '/api/passpilot/kiosk/sessions/mine') return route.fulfill({ json: { sessions: [] } });
+      if (url.pathname === '/api/passpilot/passes/active') return route.fulfill({ json: { classId: url.searchParams.get('classId'), passes: Array.from({ length: 5 }, (_, index) => ({
+        id: `pass-${index}`, destination: 'Restroom', issuedAt: '2026-09-15T13:10:00Z', student: { firstName: 'Pass student', lastName: String(index + 1) },
+      })) } });
+      return route.fulfill({ status: 404, json: { error: 'Unexpected product read' } });
+    });
+    await page.route('**/api/gopilot/dismissal/sessions/**', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (request.method() !== 'GET') { productWrites.push({ path: url.pathname, method: request.method() }); return route.fulfill({ status: 500, json: { error: 'No product write is expected' } }); }
+      if (url.pathname.endsWith('/active')) return route.fulfill({ json: { session: { id: 'dismissal-session', scheduledTime: '2026-09-15T13:30:00Z' } } });
+      return route.fulfill({ json: { dismissed: 2, waiting: 4, called: 1, released: 3, held: 1, avg_wait_seconds: 120 } });
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    const navigation = page.locator('[data-class-tools-navigation]');
+    const panel = page.getByTestId('classpilot-sidebar');
+    const content = page.getByTestId('classpilot-sidebar-content');
+    const toggle = page.getByTestId('button-classpilot-sidebar');
+    await panel.waitFor();
+    const productHeading = content.getByRole('button', { name: variant.passPilot ? /^PassPilot/ : /^GoPilot/ });
+    await productHeading.waitFor();
+    if (variant.passPilot) {
+      await page.getByLabel('Select PassPilot class').selectOption('pass-class-a');
+      await content.getByText('Pass student 5', { exact: true }).waitFor();
+    }
+    if (variant.goPilot) await content.getByText('Dismissed', { exact: true }).waitFor();
+    const geometry = () => page.evaluate(() => ({
+      navigation: document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().toJSON(),
+      panel: document.querySelector('[data-testid="classpilot-sidebar"]').getBoundingClientRect().toJSON(),
+      toggle: document.querySelector('[data-testid="button-classpilot-sidebar"]').getBoundingClientRect().toJSON(),
+      viewportHeight: innerHeight,
+    }));
+    const hitTest = locator => locator.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit === element || element.contains(hit);
+    });
+    const assertClearance = async label => {
+      try {
+        await waitUntil(async () => {
+          const layout = await geometry();
+          return Math.abs(layout.panel.top - layout.navigation.bottom) <= 1
+            && Math.abs(layout.toggle.top - layout.navigation.bottom - 16) <= 1;
+        }, `${variant.name}/${label}: the panel and toggle follow the entire header`, 5_000);
+      } catch (error) {
+        error.message += `: ${JSON.stringify(await geometry())}`;
+        await page.screenshot({ path: path.join(screenshotDirectory, 'sidebar-clearance-failure.png'), animations: 'disabled' });
+        throw error;
+      }
+      const layout = await geometry();
+      assert.ok(Math.abs(layout.panel.bottom - layout.viewportHeight) <= 1, `${variant.name}/${label}: the panel ends at the viewport bottom`);
+      assert.equal(await hitTest(toggle), true, `${variant.name}/${label}: the toggle is not covered`);
+      assert.equal(await hitTest(productHeading), true, `${variant.name}/${label}: the first product heading is not covered`);
+      if (variant.passPilot) assert.equal(await hitTest(page.getByLabel('Select PassPilot class')), true, `${variant.name}/${label}: the class picker is not covered`);
+    };
+    for (const width of [1024, 1280, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertClearance(`${width}px`);
+      if (variant.name === 'PassPilot' && width === 1280) {
+        await page.screenshot({ path: path.join(screenshotDirectory, 'passpilot-desktop.png'), animations: 'disabled' });
+        await panel.screenshot({ path: path.join(screenshotDirectory, 'passpilot-sidebar.png'), animations: 'disabled' });
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const originalHeight = (await navigation.boundingBox()).height;
+    // A notice changes the complete header without a viewport resize.
+    await navigation.evaluate(element => { element.style.paddingBottom = '80px'; });
+    await waitUntil(async () => (await navigation.boundingBox()).height >= originalHeight + 79, 'The header grows before checking sidebar clearance');
+    await assertClearance('notice shown without resize');
+    if (variant.name === 'PassPilot') await page.screenshot({ path: path.join(screenshotDirectory, 'passpilot-taller-header.png'), animations: 'disabled' });
+    await navigation.evaluate(element => { element.style.paddingBottom = ''; });
+    await waitUntil(async () => Math.abs((await navigation.boundingBox()).height - originalHeight) < 1, 'The header shrinks after its notice clears');
+    await assertClearance('notice cleared without resize');
+    await page.evaluate(() => { document.body.style.minHeight = '2200px'; window.scrollTo(0, 500); });
+    await waitUntil(() => navigation.evaluate(element => Math.abs(element.getBoundingClientRect().top) <= 1), 'The complete header stays sticky');
+    await assertClearance('page scrolled');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.setViewportSize({ width: 1280, height: 340 });
+    await assertClearance('short viewport');
+    assert.equal(await content.evaluate(element => element.scrollHeight > element.clientHeight), true, 'Product content scrolls inside the remaining viewport');
+    await content.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await waitUntil(() => content.evaluate(element => element.scrollTop > 0), 'The product sidebar can scroll to its lower content');
+    assert.ok((await content.boundingBox()).y + (await content.boundingBox()).height <= 341);
+    await content.evaluate(element => { element.scrollTop = 0; });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await toggle.focus(); await page.keyboard.press('Enter');
+    await content.waitFor({ state: 'detached' });
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.getByLabel('Select PassPilot class').count(), 0, 'Collapsed mini views are unmounted');
+    assert.equal(await panel.getByRole('button').count(), 0, 'A collapsed sidebar has no hidden product controls');
+    await page.keyboard.press('Space');
+    await content.waitFor();
+    await waitUntil(() => panel.evaluate(element => element.getBoundingClientRect().width >= 319), 'The expanded panel finishes its width transition');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(await toggle.getAttribute('aria-controls'), await panel.getAttribute('id'));
+    await assertClearance('keyboard reopened');
+    for (const viewport of [{ width: 1023, height: 900 }, { width: 960, height: 540 }]) {
+      // 960 CSS pixels also models a 1920px desktop at real browser 200% zoom.
+      await page.setViewportSize(viewport);
+      await panel.waitFor({ state: 'hidden' }); await toggle.waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    assert.deepEqual(productWrites, [], 'Layout and collapse controls never create product activity');
+    assert.deepEqual(harness.commandPosts, []);
+    assert.deepEqual(harness.pageErrors, []);
+    await page.close();
+  }
+});
+
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

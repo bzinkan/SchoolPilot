@@ -85,8 +85,8 @@ export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose
     // Observe it as well as the command toolbar so drawers and pinned panels
     // stay below both without waiting for a window resize or scroll.
     const observer = new ResizeObserver(measure);
-    if (toolbar) observer.observe(toolbar);
-    if (navigation && navigation !== toolbar) observer.observe(navigation);
+    if (toolbar) observer.observe(toolbar, { box: 'border-box' });
+    if (navigation && navigation !== toolbar) observer.observe(navigation, { box: 'border-box' });
     window.addEventListener('scroll', measure, true); window.addEventListener('resize', measure); measure();
     return () => { observer.disconnect(); window.removeEventListener('scroll', measure, true); window.removeEventListener('resize', measure); };
   }, [visible, pinned]);
