@@ -6881,6 +6881,13 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   await waitUntil(() => harness.tileRequests.length > readsBeforeEvent,
     'A claimed screenshot notification refreshes without waiting for the 30-second fallback');
   await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).getByText('Claimed screen 2', { exact: true }).waitFor();
+  // Both contexts must be fresh before checking rejected events: the independent
+  // 8-second preview watchdog may otherwise legitimately recover the untouched one.
+  frame = 3;
+  for (const row of rows) await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    studentId: row.studentId, capturedAt: TESTING_TIME.toISOString() });
+  await page.clock.fastForward(5100);
+  for (const row of rows) await page.getByTestId(`card-student-${row.studentId}`).getByText('Claimed screen 3', { exact: true }).waitFor();
   const authorizedReads = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SECOND_SCHOOL_ID, studentId: STUDENT_ID });
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID });
