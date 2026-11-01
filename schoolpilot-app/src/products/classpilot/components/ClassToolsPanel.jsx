@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { GraduationCap, Hand, MessageSquare, ClipboardList, Wrench, X, Pin, PinOff, GripHorizontal, RotateCcw } from 'lucide-react';
 import { useResizablePanelWidth } from '../hooks/useResizablePanelWidth';
 import { cn } from '../../../lib/utils';
@@ -71,14 +71,22 @@ export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const toolbar = document.querySelector('[data-class-tools-toolbar]');
-    if (!toolbar) return;
+    const navigation = document.querySelector('[data-class-tools-navigation]');
+    if (!toolbar && !navigation) return;
     const measure = () => {
-      setToolbarBottom(Math.max(8, toolbar.getBoundingClientRect().bottom + 8));
-      setNavigationBottom(Math.max(8, document.querySelector('[data-class-tools-navigation]')?.getBoundingClientRect().bottom + 8 || 72));
+      const navigationEdge = Math.max(8, (navigation?.getBoundingClientRect().bottom ?? 64) + 8);
+      const toolbarEdge = toolbar?.getBoundingClientRect().bottom;
+      setNavigationBottom(navigationEdge);
+      setToolbarBottom(Math.max(navigationEdge, (toolbarEdge ?? 0) + 8));
     };
-    const observer = new ResizeObserver(measure); observer.observe(toolbar);
+    // The whole sticky header can wrap or grow when activity notices change.
+    // Observe it as well as the command toolbar so drawers and pinned panels
+    // stay below both without waiting for a window resize or scroll.
+    const observer = new ResizeObserver(measure);
+    if (toolbar) observer.observe(toolbar);
+    if (navigation && navigation !== toolbar) observer.observe(navigation);
     window.addEventListener('scroll', measure, true); window.addEventListener('resize', measure); measure();
     return () => { observer.disconnect(); window.removeEventListener('scroll', measure, true); window.removeEventListener('resize', measure); };
   }, [visible, pinned]);

@@ -2705,8 +2705,11 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
     const ineligibleHarness = await configureDashboard(ineligiblePage, {
       aggregate: aggregateController({ scoped: success(rows()) }), activeSession: null, allSessions: [nonLive],
     });
+    const ineligibleRead = ineligiblePage.waitForResponse(response => new URL(response.url()).pathname === '/api/classpilot/observable-activities' && response.ok());
     await ineligiblePage.goto(`${baseURL}/classpilot`);
-    await ineligiblePage.getByTestId('select-admin-observe').waitFor();
+    assert.deepEqual((await (await ineligibleRead).json()).activities, []);
+    await ineligiblePage.getByText('Loading activities…', { exact: true }).waitFor({ state: 'hidden' });
+    assert.equal(await ineligiblePage.getByTestId('select-admin-observe').count(), 0, 'no eligible activities leaves no disabled empty selector');
     assert.equal(await ineligiblePage.locator(`[data-testid="select-admin-observe"] option[value="${OBSERVED_SESSION_ID}"]`).count(), 0);
     assert.equal(ineligibleHarness.observationLeaseRequests.filter(request => request.method === 'PUT').length, 0);
     assert.deepEqual(ineligibleHarness.pageErrors, []);
@@ -3760,7 +3763,7 @@ test(`a delayed reviewed room claim cannot switch the Dashboard after a ${identi
   } else {
     claimRole = 'admin';
     await page.evaluate(() => window.__refreshClaimUser());
-    await page.getByTestId('select-admin-observe').waitFor();
+    await page.getByTestId('button-admin').waitFor();
   }
   await page.getByTestId('supervision-session-dialog').waitFor({ state: 'hidden' });
   const expectedView = identityChange === 'school' ? 'class' : 'available';
@@ -5869,7 +5872,7 @@ test('assigned testing reacts to activation, updated rosters, closure and pollin
   harness.setAllSessions([teachingSession()]);
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await assertPickupView(page, 'class');
-  await page.getByTestId('badge-active-session').waitFor();
+  await page.getByTestId('dashboard-activity-title').getByText('Class: Algebra', { exact: true }).waitFor();
   await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
   assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0, 'Ended assignments do not leave their roster visible');
 
@@ -5915,7 +5918,7 @@ test('assigned testing takes precedence over a regular class while preserving ma
       await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
       await page.clock.fastForward(10_100);
       await assertPickupView(page, 'class');
-      await page.getByTestId('badge-active-session').waitFor();
+      await page.getByTestId('dashboard-activity-title').getByText('Class: Algebra', { exact: true }).waitFor();
       assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
     }
     assert.deepEqual(harness.coverageMutationRequests, []);
@@ -6065,7 +6068,7 @@ test('assigned testing expires at its known end even when summary refresh fails 
   await assertPickupView(page, 'class');
   await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
   await waitUntil(() => harness.sessionRequests.length > classReadsBeforeEnd, 'The active class is reconciled at the testing boundary');
-  await page.getByTestId('badge-active-session').getByText('Biology', { exact: true }).waitFor();
+  await page.getByTestId('dashboard-activity-title').getByText('Class: Biology', { exact: true }).waitFor();
   await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
   assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0, 'Expired cached testing must not strand its students on the dashboard');
   assert.deepEqual(harness.coverageMutationRequests, []);
@@ -6132,7 +6135,7 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
   const page = await browser.newPage();
   await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
   const aggregate = aggregateController({ scoped: success([student({ studentName: 'Homeroom student' })]) });
-  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+  const harness = await configureDashboard(page, { aggregate, activeSession: { ...teachingSession(), classNameSnapshot: 'Grade 5 Homeroom' }, acknowledgeSessionSubscriptions: true,
     dashboardActivity: scheduledActivityResponse(scheduledClassActivity()),
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
@@ -6152,6 +6155,7 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
   assert.ok(aggregate.requests.every(request => request.teachingSessionId || request.supervisionContextId), 'Never request a school-wide roster');
   const next = scheduledClassActivity({ id: OBSERVED_SESSION_ID, name: 'Grade 5 Specials', startsAt: '2026-09-15T13:15:00Z', endsAt: '2026-09-15T13:55:00Z', authority: { teachingSessionId: OBSERVED_SESSION_ID } });
   aggregate.setScopedResponse(success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Specials student' })]));
+  harness.setActiveSession({ ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID }), classNameSnapshot: next.name });
   harness.setDashboardActivity(scheduledActivityResponse(next, { serverTime: '2026-09-15T13:15:00Z' }));
   await page.clock.fastForward(240000);
   await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Specials', { exact: true }).waitFor({ state: 'attached' });
@@ -6195,7 +6199,7 @@ test('automatic scheduled Class resumes the same regular session without restori
   await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
   const regular = scheduledClassActivity({ endsAt: '2026-09-15T13:30:00Z' });
   const aggregate = aggregateController({ scoped: success([student()]) });
-  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+  const harness = await configureDashboard(page, { aggregate, activeSession: { ...teachingSession(), classNameSnapshot: regular.name }, acknowledgeSessionSubscriptions: true,
     dashboardActivity: scheduledActivityResponse(regular, { nextBoundaryAt: '2026-09-15T13:11:00Z' }),
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
@@ -6231,6 +6235,7 @@ test('automatic scheduled Class expires private during failed refresh and retrie
   harness.setDashboardActivity({ status: 503 });
   await page.clock.fastForward(1000);
   await page.getByRole('button', { name: 'Retry class assignment' }).waitFor();
+  await page.getByTestId('dashboard-activity-title').getByText('Class assignment unavailable', { exact: true }).waitFor();
   assert.equal(await page.getByTestId('card-student-offline-test-0').count(), 0);
   assert.ok(aggregate.requests.every(request => request.teachingSessionId || request.supervisionContextId));
   harness.setDashboardActivity(scheduledActivityResponse(null, { serverTime: '2026-09-15T13:15:00Z', next: { source: 'scheduled_class', name: 'Specials', startsAt: '2026-09-15T13:15:00Z', endsAt: '2026-09-15T13:55:00Z', status: 'waiting' } }));
@@ -6789,6 +6794,24 @@ test('Class tools integrates support, activities and manual routines without cov
     throw error;
   }
   assert.deepEqual((await geometry()).covered, [], 'Responsive drawer keeps command buttons visible');
+  // A schedule notice can grow the sticky wrapper without changing viewport or toolbar size.
+  // This layout stimulus exercises the navigation ResizeObserver directly.
+  const navigation = page.locator('[data-class-tools-navigation]');
+  const previousNavigationHeight = (await navigation.boundingBox()).height;
+  await navigation.evaluate(node => { node.style.paddingBottom = '80px'; });
+  await waitUntil(async () => {
+    const layout = await page.evaluate(() => ({
+      navigation: document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().toJSON(),
+      toolbar: document.querySelector('[data-class-tools-toolbar]').getBoundingClientRect().toJSON(),
+      panel: document.querySelector('[data-testid="class-tools-panel"]').getBoundingClientRect().toJSON(),
+    }));
+    return layout.navigation.height >= previousNavigationHeight + 79
+      && layout.panel.top >= Math.max(layout.navigation.bottom, layout.toolbar.bottom + 8) - 1;
+  }, 'The open drawer follows a growing complete navigation wrapper without a viewport resize');
+  assert.deepEqual((await geometry()).covered, [], 'The taller navigation keeps the toolbar reachable');
+  await navigation.evaluate(node => { node.style.paddingBottom = ''; });
+  await waitUntil(async () => Math.abs((await navigation.boundingBox()).height - previousNavigationHeight) < 1,
+    'The navigation height restores after the notice clears');
   await page.evaluate(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
     return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -6858,6 +6881,13 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   await waitUntil(() => harness.tileRequests.length > readsBeforeEvent,
     'A claimed screenshot notification refreshes without waiting for the 30-second fallback');
   await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).getByText('Claimed screen 2', { exact: true }).waitFor();
+  // Both contexts must be fresh before checking rejected events: the independent
+  // 8-second preview watchdog may otherwise legitimately recover the untouched one.
+  frame = 3;
+  for (const row of rows) await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    studentId: row.studentId, capturedAt: TESTING_TIME.toISOString() });
+  await page.clock.fastForward(5100);
+  for (const row of rows) await page.getByTestId(`card-student-${row.studentId}`).getByText('Claimed screen 3', { exact: true }).waitFor();
   const authorizedReads = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SECOND_SCHOOL_ID, studentId: STUDENT_ID });
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID });
@@ -8448,7 +8478,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       await page.waitForFunction(() => !document.documentElement.classList.contains('dark'), null, { timeout: 10_000 });
     } else if (teacherPreferences?.dashboardThemesEnabled) {
       // A plain choice: the preference has loaded and nothing themed appears.
-      await page.getByTestId('button-dashboard-theme').waitFor({ state: 'attached' });
+      await page.getByTestId('button-dashboard-account').waitFor({ state: 'attached' });
       await page.waitForFunction(() => document.documentElement.classList.contains('dark') && !document.querySelector('[data-theme]'), null, { timeout: 10_000 });
     }
     const tiles = await page.locator('[data-testid^="card-student-"]').evaluateAll(nodes => nodes.map(node => {
@@ -8479,10 +8509,13 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
         return result;
       })(),
     }));
-    const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
+    const headerUtilities = await page.locator('[data-class-tools-navigation]').evaluate(header => ({
+      palette: header.querySelectorAll('[data-testid="button-dashboard-theme"]').length,
+      mode: header.querySelectorAll('[data-testid="button-theme-toggle"]').length,
+    }));
     assert.deepEqual(harness.pageErrors, []);
     await page.close();
-    return { tiles, document: document_, toggleLocked };
+    return { tiles, document: document_, headerUtilities };
   };
   const plain = await measure(null);
   const theme = { kind: 'preset', preset: 'halloween' };
@@ -8490,16 +8523,16 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
     dashboardTheme: theme, effectiveDashboardTheme: theme, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
   assert.equal(plain.document.theme, null);
   assert.equal(plain.document.dark, true, 'dark mode applies when no theme is set');
-  assert.equal(plain.toggleLocked, null);
+  assert.deepEqual(plain.headerUtilities, { palette: 0, mode: 0 });
   assert.equal(plain.document.ornaments, 0);
   assert.equal(themed.document.theme, 'halloween');
   assert.equal(themed.document.dark, false, 'an active theme pauses dark mode without touching the stored preference');
-  assert.equal(themed.toggleLocked, 'true', 'the light/dark toggle is inert while a theme is active');
+  assert.deepEqual(themed.headerUtilities, { palette: 0, mode: 0 }, 'appearance controls live in Teaching tools');
   assert.equal(themed.document.leaked, 0, 'the theme attribute lives on the dashboard root, never on html or body');
   assert.ok(themed.tiles.length > 0);
   assert.equal(themed.document.ornaments, themed.tiles.length, 'one ornament per tile');
   assert.equal(plain.document.headerOrnaments, 0);
-  assert.equal(themed.document.headerOrnaments, 1, 'the theme draws its mark beside the wordmark');
+  assert.equal(themed.document.headerOrnaments, 0, 'decoration does not compete with dashboard navigation');
   assert.match(themed.document.wordmarkFont, /Creepster/, 'the preset sets the wordmark in its display face');
   assert.doesNotMatch(plain.document.wordmarkFont, /Creepster/);
   assert.equal(themed.document.headerHeight, plain.document.headerHeight, 'the display face and the mark never change the header height');
@@ -8525,20 +8558,20 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
     dashboardTheme: null, effectiveDashboardTheme: schoolTheme, schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
   assert.equal(automatic.document.theme, 'halloween');
   assert.equal(automatic.document.notice, 1, 'the first automatic theme announces itself');
-  assert.equal(automatic.toggleLocked, 'true');
+  assert.deepEqual(automatic.headerUtilities, { palette: 0, mode: 0 });
   assert.deepEqual(automatic.tiles.map(geometry), plain.tiles.map(geometry), 'the notice is fixed to the viewport and moves nothing');
   assert.equal(automatic.document.headerHeight, plain.document.headerHeight);
-  // Plain is the teacher's deliberate nothing: no theme, dark mode back, toggle live, no notice.
+  // Plain is the teacher's deliberate nothing: no theme, stored dark mode back, no notice.
   const none = await measure({ schoolId: SCHOOL_ID, revision: 5, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
     dashboardTheme: { kind: 'none' }, effectiveDashboardTheme: null, schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
   assert.equal(none.document.theme, null);
   assert.equal(none.document.dark, true);
-  assert.equal(none.toggleLocked, null);
+  assert.deepEqual(none.headerUtilities, { palette: 0, mode: 0 });
   assert.equal(none.document.notice, 0);
   assert.deepEqual(none.tiles.map(geometry), plain.tiles.map(geometry));
 });
 
-test('the complete dashboard header stays on one line across devices and class states', { timeout: 240_000 }, async context => {
+test('dashboard navigation and class actions stay grouped, sticky and reachable across roles and sizes', { timeout: 240_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const now = new Date('2026-09-15T13:11:30Z');
   const switchGroupId = '12121212-1212-4212-8212-121212121212';
@@ -8547,51 +8580,39 @@ test('the complete dashboard header stays on one line across devices and class s
   const screenshots = path.join(APP_ROOT, 'node_modules', '.cache', 'dashboard-header-screenshots');
   mkdirSync(screenshots, { recursive: true });
 
-  const measure = page => page.evaluate(() => {
-    const rect = element => {
-      const box = element.getBoundingClientRect();
-      return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, height: box.height, center: box.y + box.height / 2 };
-    };
-    const header = document.querySelector('[data-class-tools-navigation]');
-    const zones = Object.fromEntries(['brand', 'controls', 'primary-actions', 'utilities'].map(name => [name,
-      rect(header.querySelector('[data-testid="dashboard-header-' + name + '"]'))]));
-    const controls = [...header.querySelectorAll('button,select')].filter(element => element.getClientRects().length).map(element => {
-      const tops = new Set();
-      if (element.tagName === 'BUTTON') {
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        while (walker.nextNode()) {
-          if (!walker.currentNode.textContent.trim()) continue;
-          const range = document.createRange(); range.selectNodeContents(walker.currentNode);
-          for (const box of range.getClientRects()) if (box.width > 0) tops.add(Math.round(box.top));
-        }
-      }
-      return { id: element.dataset.testid, ...rect(element), controlHeight: rect(element.closest('.dashboard-header-observe') || element).height, textLines: tops.size,
-        pinned: Boolean(element.closest('[data-testid="dashboard-header-primary-actions"],[data-testid="dashboard-header-utilities"]')) };
-    });
-    const middle = header.querySelector('[data-testid="dashboard-header-controls"]');
-    return { header: rect(header), zones, controls, bodyWidth: document.documentElement.scrollWidth, viewport: innerWidth,
-      middleScroll: middle.scrollLeft, middleWidth: middle.clientWidth, middleContentWidth: middle.scrollWidth };
-  });
-  const assertRow = async (page, label) => {
-    const geometry = await measure(page);
-    assert.equal(geometry.header.height, 72, label + ': one fixed-height header');
-    assert.ok(geometry.bodyWidth <= geometry.viewport + 1, label + ': overflow stays inside the header');
-    for (const [name, zone] of Object.entries(geometry.zones)) {
-      assert.ok(Math.abs(zone.center - geometry.zones.brand.center) <= 1, label + ': ' + name + ' stays on the same row');
-    }
+  const assertReachable = async (page, label, pickerId, startId) => {
+    const geometry = await page.evaluate(({ pickerId, startId }) => {
+      const box = element => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+      };
+      const header = document.querySelector('[data-class-tools-navigation]');
+      const bar = header.querySelector('[data-testid="scheduled-class-banner"]');
+      const controls = [...header.querySelectorAll('button,select,a')].filter(element => element.getClientRects().length)
+        .map(element => ({ id: element.dataset.testid || element.textContent, ...box(element) }));
+      const picker = pickerId && header.querySelector(`[data-testid="${pickerId}"]`);
+      const start = startId && header.querySelector(`[data-testid="${startId}"]`);
+      return { header: box(header), bar: box(bar), position: getComputedStyle(header).position,
+        width: innerWidth, bodyWidth: document.documentElement.scrollWidth, controls,
+        pair: picker && start ? { picker: box(picker), start: box(start), together: picker.closest('[data-testid="class-start-controls"],[data-testid="admin-class-start-controls"]')?.contains(start) } : null };
+    }, { pickerId, startId });
+    assert.equal(geometry.position, 'sticky', `${label}: the entire header remains sticky, including under a theme`);
+    assert.ok(geometry.bodyWidth <= geometry.width + 1, `${label}: the document has no horizontal overflow`);
+    assert.ok(geometry.bar.y >= geometry.header.y, `${label}: class context belongs to the sticky header`);
+    assert.ok(geometry.bar.bottom <= geometry.header.bottom + 1, `${label}: no detached duplicate banner`);
     for (const control of geometry.controls) {
-      assert.ok(control.textLines <= 1, label + ': button label does not wrap: ' + control.id);
-      assert.equal(control.controlHeight, 36, label + ': consistent control height: ' + control.id);
-      assert.ok(Math.abs(control.center - geometry.zones.brand.center) <= 1, label + ': control stays on the row: ' + control.id);
-      if (control.pinned && geometry.viewport >= 1024) {
-        assert.ok(control.x >= 0 && control.right <= geometry.viewport, label + ': pinned action stays visible: ' + control.id);
-      }
+      assert.ok(control.x >= -1 && control.right <= geometry.width + 1, `${label}: reachable control ${control.id}`);
+      assert.ok(control.y >= geometry.header.y - 1 && control.bottom <= geometry.header.bottom + 1, `${label}: unclipped control ${control.id}`);
     }
-    return geometry;
+    if (geometry.pair) {
+      assert.equal(geometry.pair.together, true, `${label}: picker and its action share one group`);
+      assert.ok(Math.abs(geometry.pair.picker.y - geometry.pair.start.y) <= 2, `${label}: picker and action remain on the same line`);
+      assert.ok(geometry.pair.start.x >= geometry.pair.picker.right - 1
+        && geometry.pair.start.x - geometry.pair.picker.right <= 24, `${label}: action is adjacent to its selected class`);
+    }
   };
   const scenarios = ['admin', 'teacher'].flatMap(role => ['inactive', 'manual', 'automatic'].map(kind => ({ role, kind })));
   scenarios.push({ role: 'admin', kind: 'observe' }, { role: 'teacher', kind: 'supervision' }, { role: 'admin', kind: 'loading' });
-
   for (const { role, kind } of scenarios) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.clock.install({ time: now });
@@ -8609,116 +8630,215 @@ test('the complete dashboard header stays on one line across devices and class s
     const harness = await configureDashboard(page, {
       aggregate: aggregateController({ school: success([]), scoped: success([]) }), userRole: role, authentication,
       activeSession: kind === 'loading' ? () => loading : ['manual', 'automatic'].includes(kind) ? live : null,
-      allSessions: [live, observed], acknowledgeSessionSubscriptions: true, teacherPreferences: preferences,
+      allSessions: kind === 'inactive' ? [] : [live, observed], acknowledgeSessionSubscriptions: true, teacherPreferences: preferences,
       ...(kind === 'supervision' ? { dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: now.toISOString() }) } : {}),
     });
     context.after(() => finishLoading(null));
     await page.route('**/api/teacher/groups**', route => route.fulfill({ json: { groups } }));
     await page.goto(`${baseURL}/classpilot`);
-    await page.getByTestId('button-dashboard-theme').waitFor();
+    const header = page.locator('[data-class-tools-navigation]');
+    const bar = page.getByTestId('scheduled-class-banner');
+    await page.getByTestId('button-dashboard-account').waitFor();
+    await bar.waitFor();
     if (themed) await page.locator('[data-theme="halloween"]').waitFor();
-    if (['manual', 'automatic'].includes(kind)) await page.getByTestId(role === 'admin' ? 'badge-admin-teaching' : 'badge-active-session').waitFor();
-    if (kind === 'automatic') await page.getByTestId(role === 'admin' ? 'badge-admin-automatic-session' : 'badge-automatic-session').waitFor();
-    if (kind === 'supervision') await page.getByTestId('badge-scheduled-testing').waitFor();
-    if (kind !== 'supervision') {
-      await page.getByTestId(role === 'admin' ? 'select-admin-start-session-group' : 'select-start-session-group').selectOption(OWN_GROUP_ID);
+    assert.equal(await header.getByTestId('button-my-settings').count(), 1, 'Teaching tools remains one direct navigation action');
+    assert.equal(await header.getByTestId('button-admin').count(), role === 'admin' ? 1 : 0);
+    for (const oldUtility of ['button-dashboard-theme', 'button-theme-toggle', 'header-ornament', 'button-scroll-header-left', 'button-scroll-header-right']) {
+      assert.equal(await header.getByTestId(oldUtility).count(), 0, `${oldUtility} no longer competes with classroom controls`);
     }
+    assert.equal(await header.getByTestId('button-logout').count(), 0, 'Sign out is inside the closed account menu');
+    if (kind === 'inactive') {
+      await bar.getByText('No class active', { exact: true }).waitFor();
+      assert.equal(await header.getByTestId('badge-connection-status').count(), 0, 'idle does not claim to refresh forever');
+      if (role === 'admin') assert.equal(await header.getByTestId('select-admin-observe').count(), 0, 'a confirmed empty Observe list takes no space');
+    }
+    if (['manual', 'automatic'].includes(kind)) await bar.getByTestId('dashboard-activity-title').getByText(new RegExp(className)).waitFor();
+    if (kind === 'automatic') await page.getByTestId(role === 'admin' ? 'badge-admin-automatic-session' : 'badge-automatic-session').waitFor();
+    if (kind === 'supervision') {
+      await bar.getByText('Testing: Grade 5 Reading MAP', { exact: true }).waitFor();
+      assert.equal(await bar.getByTestId('button-end-session').count(), 0, 'testing never ends an unrelated class');
+    }
+    const pickerId = role === 'admin' ? 'select-admin-start-session-group' : 'select-start-session-group';
+    const startId = role === 'admin' ? 'button-admin-start-session' : 'button-start-session';
+    if (kind !== 'supervision') await page.getByTestId(pickerId).selectOption(OWN_GROUP_ID);
     if (kind === 'observe') {
       await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-      await page.getByTestId('button-admin-start-session').waitFor({ state: 'hidden' });
+      await page.getByTestId('observe-read-only-banner').waitFor();
+      await bar.getByTestId('dashboard-activity-title').getByText(/Biology/).waitFor();
+      assert.match(await bar.innerText(), /Read.only/i);
+      assert.equal(await bar.getByTestId('button-admin-start-session').count(), 0);
+      assert.equal(await bar.getByTestId('button-admin-end-session').count(), 0);
     }
     await page.evaluate(() => document.fonts.ready);
-    for (const width of [1024, 1280, 1366, 1440, 1920]) {
+    for (const width of [1920, 1280, 1024, 800, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      await assertRow(page, `${role}/${kind}/${width}`);
-      if (role === 'admin' && kind === 'manual' && [1280, 1920].includes(width)) {
-        await page.screenshot({ path: path.join(screenshots, `header-${width}.png`) });
-        await page.locator('[data-class-tools-navigation]').screenshot({ path: path.join(screenshots, `header-${width}-strip.png`) });
-      }
+      await assertReachable(page, `${role}/${kind}/${width}`, ['observe','supervision'].includes(kind) ? null : pickerId, startId);
     }
-    await page.setViewportSize({ width: 800, height: 900 });
-    await assertRow(page, `${role}/${kind}/800`);
-    const outer = page.getByTestId('dashboard-header-viewport');
-    await waitUntil(async () => await outer.getAttribute('tabindex') === '0', 'the narrow header exposes keyboard scrolling');
-    await outer.focus(); await outer.press('End');
-    assert.ok(await outer.evaluate(element => element.scrollLeft > 0), 'a narrow screen can reach the right-hand utilities');
-    await page.setViewportSize({ width: 1024, height: 900 });
-    await waitUntil(async () => await outer.getAttribute('tabindex') === null, 'the desktop header creates no extra outer focus target');
-    await outer.evaluate(element => { element.scrollLeft = 0; });
-    await page.getByTestId('button-theme-toggle').focus();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.zoom = '2'; });
+    await assertReachable(page, `${role}/${kind}/200%`, ['observe','supervision'].includes(kind) ? null : pickerId, startId);
+    await page.evaluate(() => { document.documentElement.style.zoom = ''; document.body.style.minHeight = '2200px'; window.scrollTo(0, 500); });
+    await waitUntil(async () => Math.abs((await header.boundingBox()).y) <= 1, 'navigation and class controls stay visible when scrolling');
+    await assertReachable(page, `${role}/${kind}/scrolled`, ['observe','supervision'].includes(kind) ? null : pickerId, startId);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.getByTestId('button-dashboard-account').focus();
     await page.getByRole('heading', { level: 1, name: 'ClassPilot', exact: true }).click();
     assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'clicking static branding leaves focus on the page');
-    const middle = page.getByTestId('dashboard-header-controls');
-    const before = await measure(page);
-    if (before.middleContentWidth > before.middleWidth + 1) {
-      await middle.evaluate(element => { element.scrollLeft = 0; });
-      await page.getByTestId('button-scroll-header-right').click();
-      await waitUntil(() => middle.evaluate(element => element.scrollLeft > 0), 'the visible scroll arrow moves the middle controls');
-      await middle.focus(); await middle.press('End');
-      const after = await measure(page);
-      assert.ok(after.middleScroll > 0, 'the middle section scrolls with the keyboard');
-      assert.equal(after.zones.brand.x, before.zones.brand.x);
-      assert.equal(after.zones['primary-actions'].x, before.zones['primary-actions'].x);
-      assert.equal(after.zones.utilities.x, before.zones.utilities.x);
-      await middle.press('Home');
-      assert.equal(await middle.evaluate(element => element.scrollLeft), 0);
-      const last = middle.locator('button:not(:disabled),select:not(:disabled)').last();
-      if (await last.count()) {
-        await last.focus();
-        const visible = await last.evaluate(element => {
-          const box = element.getBoundingClientRect(), viewport = element.closest('[data-testid="dashboard-header-controls"]').getBoundingClientRect();
-          return box.left >= viewport.left - 1 && box.right <= viewport.right + 1;
-        });
-        assert.equal(visible, true, 'focusing an off-screen control reveals it');
-      }
-    }
-    await page.getByTestId('button-dashboard-theme').click();
-    const menu = page.getByRole('menu'); await menu.waitFor();
-    const menuBox = await menu.boundingBox();
-    assert.ok(menuBox.y + menuBox.height > 72, 'the theme menu opens outside the header scroll clipping');
-    await page.keyboard.press('Escape');
-
     if (role === 'admin' && kind === 'manual') {
-      const picker = page.getByTestId('select-admin-start-session-group');
-      await picker.selectOption(switchGroupId);
-      const action = page.getByTestId('button-admin-start-session');
-      await action.click();
-      const review = page.getByTestId('dialog-class-start-review'); await review.waitFor();
-      await review.getByRole('button', { name: 'Cancel', exact: true }).click();
-      await waitUntil(() => action.evaluate(element => document.activeElement === element), 'review returns focus to the pinned Switch Class button');
-      await action.click(); await review.waitFor();
-      harness.setActiveSession({ ...live, id: 'abababab-abab-4bab-8bab-abababababab', groupId: switchGroupId });
-      await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'] }); });
-      await waitUntil(() => action.isDisabled(), 'the changed session disables the original review trigger');
-      await review.getByRole('button', { name: 'Cancel', exact: true }).click();
-      await waitUntil(() => picker.evaluate(element => document.activeElement === element), 'a disabled trigger returns focus to its separated class picker');
-      await page.getByTestId('button-admin-end-session').click();
-      const endDialog = page.getByTestId('dialog-end-class'); await endDialog.waitFor();
-      await endDialog.getByRole('button', { name: 'Keep Class Running', exact: true }).click();
-      await assertRow(page, 'after switching and opening End Class');
-    }
-    if (role === 'teacher' && kind === 'inactive') {
-      let startPayload;
-      await page.route('**/api/sessions/start', async route => {
-        startPayload = route.request().postDataJSON(); harness.setActiveSession(live);
-        await route.fulfill({ json: { session: live } });
-      });
-      await page.getByTestId('button-start-session').click();
-      await page.getByTestId('button-end-session').waitFor();
-      assert.deepEqual(startPayload, { groupId: OWN_GROUP_ID, expectedActiveSessionId: null });
-      await assertRow(page, 'inactive to teaching transition');
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await header.screenshot({ path: path.join(screenshots, 'header-desktop.png') });
+      await page.setViewportSize({ width: 320, height: 844 });
+      await header.screenshot({ path: path.join(screenshots, 'header-mobile.png') });
     }
     finishLoading(null);
-    if (kind === 'loading') {
-      await page.waitForFunction(async () => {
-        const { queryClient } = await import('/src/lib/queryClient.js');
-        return queryClient.isFetching({ queryKey: ['/api/sessions/active'] }) === 0;
-      });
-      await assertRow(page, 'loading to inactive transition');
-    }
+    if (kind === 'loading') await bar.getByText('No class active', { exact: true }).waitFor();
     assert.deepEqual(harness.pageErrors, [], `${role}/${kind}: no browser errors`);
+    assert.deepEqual(harness.commandPosts, [], 'header selection/layout never sends a student command');
     await page.close();
   }
+});
+
+test('dashboard account menu supports keyboard, Appearance navigation and no preference writes', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const writes = [];
+  page.on('request', request => { if (request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/classpilot/teacher/preferences') writes.push(request.postDataJSON()); });
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), activeSession: null, allSessions: [] });
+  await page.goto(`${baseURL}/classpilot`);
+  const account = page.getByTestId('button-dashboard-account');
+  await account.waitFor(); await account.focus(); await account.press('Enter');
+  await page.getByRole('menu').waitFor();
+  await page.getByTestId('account-appearance').waitFor();
+  await page.getByTestId('button-logout').waitFor();
+  assert.deepEqual(writes, [], 'opening account controls does not save a preference');
+  await page.keyboard.press('Escape');
+  await waitUntil(() => account.evaluate(element => document.activeElement === element), 'Escape returns focus to the account trigger');
+  await account.click(); await page.getByTestId('account-appearance').click();
+  await page.waitForURL(url => url.pathname === '/classpilot/my-settings' && url.searchParams.get('section') === 'appearance');
+  await page.getByTestId('appearance-color-mode').waitFor();
+  assert.deepEqual(writes, [], 'Appearance navigation does not save a preference');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('dashboard Start begins the selected class once and displays its actual teaching session', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), activeSession: null, allSessions: [] });
+  const starts = [];
+  const started = { ...teachingSession(), classNameSnapshot: 'Algebra' };
+  await page.route('**/api/sessions/start', async route => {
+    starts.push(route.request().postDataJSON());
+    harness.setActiveSession(started); harness.setAllSessions([started]);
+    await route.fulfill({ json: { session: started } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('select-start-session-group').selectOption(OWN_GROUP_ID);
+  assert.deepEqual(starts, [], 'choosing a class is not a start request');
+  await page.getByTestId('button-start-session').click();
+  await page.getByTestId('dashboard-activity-title').getByText('Class: Algebra', { exact: true }).waitFor();
+  await page.getByTestId('button-end-session').waitFor();
+  assert.deepEqual(starts, [{ groupId: OWN_GROUP_ID, expectedActiveSessionId: null }]);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('dashboard class selection keeps the current class and exact End target through failed and stale switches', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const candidateId = '12121212-1212-4212-8212-121212121212';
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const live = { ...teachingSession(), classNameSnapshot: 'Current Algebra', manualExpiresAt: '2026-09-15T15:00:00Z' };
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledClassActivity({ name: 'Scheduled Biology', endsAt: '2026-09-15T14:00:00Z', authority: { teachingSessionId: OBSERVED_SESSION_ID } }), { serverTime: '2026-09-15T13:11:30Z' }) });
+  await page.route('**/api/teacher/groups**', route => route.fulfill({ json: { groups: [GROUPS[0], { id: candidateId, teacherId: ADMIN_ID, name: 'Candidate Science' }] } }));
+  const starts = [], ends = [], resyncs = [];
+  await page.route('**/api/sessions/start', async route => { starts.push(route.request().postDataJSON()); await route.fulfill({ status: 409, json: { code: 'CLASS_START_REVIEW_STALE', error: 'The current class changed. Review again.' } }); });
+  await page.route('**/api/sessions/*/resync', async route => { resyncs.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() }); await route.fulfill({ json: { added: 0, removed: 0, unchanged: 0 } }); });
+  await page.route('**/api/classpilot/teaching-sessions/*/end', async route => { ends.push(new URL(route.request().url()).pathname); harness.setActiveSession(null); await route.fulfill({ json: { success: true, summaryDisposition: 'queued' } }); });
+  await page.goto(`${baseURL}/classpilot`);
+  const bar = page.getByTestId('scheduled-class-banner');
+  await bar.getByText(/Current Algebra/).waitFor();
+  await bar.getByText('Scheduled: Scheduled Biology', { exact: true }).waitFor();
+  assert.match(await bar.innerText(), /Ends 11:00\s*AM/i, 'the owned manual session supplies its real deadline');
+  assert.doesNotMatch(await bar.innerText(), /Ends 10:00\s*AM/i, 'a different canonical meeting cannot supply the owned class deadline');
+  const picker = page.getByTestId('select-start-session-group');
+  await picker.selectOption(candidateId);
+  assert.deepEqual(starts, [], 'selection alone never starts the candidate');
+  assert.match(await bar.innerText(), /Current Algebra/);
+  const start = page.getByTestId('button-start-session'); await start.click();
+  const review = page.getByTestId('dialog-class-start-review'); await review.waitFor();
+  await page.getByTestId('button-confirm-class-start-review').click();
+  await review.getByRole('alert').getByText('The current class changed. Review again.').waitFor();
+  assert.deepEqual(starts, [{ groupId: candidateId, expectedActiveSessionId: live.id }]);
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await waitUntil(() => start.evaluate(element => document.activeElement === element), 'failed switch returns focus to its original trigger');
+  assert.match(await bar.innerText(), /Current Algebra/);
+  await page.getByTestId('button-class-actions').click();
+  await page.getByTestId('button-resync-session').click();
+  await waitUntil(() => resyncs.length === 1, 'Resync still uses the current session');
+  assert.deepEqual(resyncs, [{ path: `/api/sessions/${live.id}/resync`, body: { acknowledgeOverlap: false } }]);
+  assert.deepEqual(starts, [{ groupId: candidateId, expectedActiveSessionId: live.id }]);
+  await start.click(); await review.waitFor();
+  harness.setActiveSession({ ...live, id: 'abababab-abab-4bab-8bab-abababababab', groupId: candidateId, classNameSnapshot: 'Candidate Science' });
+  await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'] }); });
+  await review.getByRole('button', { name: 'Review again', exact: true }).waitFor();
+  assert.equal(await page.getByTestId('button-confirm-class-start-review').isDisabled(), true, 'a changed live session requires another review');
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await waitUntil(() => picker.evaluate(element => document.activeElement === element), 'a disabled action returns focus to its adjacent picker');
+  await picker.selectOption(OWN_GROUP_ID);
+  assert.equal(starts.length, 1, 'changing the candidate still sends no start request');
+  await page.getByTestId('button-end-session').click();
+  await page.getByTestId('button-confirm-end-class').click();
+  await waitUntil(() => ends.length === 1, 'End uses the current owned session after the candidate changes');
+  assert.deepEqual(ends, ['/api/classpilot/teaching-sessions/abababab-abab-4bab-8bab-abababababab/end']);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('administrator Observe distinguishes loading and retryable errors from a confirmed empty list', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const harness = await configureDashboard(page, { userRole: 'admin', aggregate: aggregateController(), activeSession: null, allSessions: [] });
+  let releaseRead;
+  const firstRead = new Promise(resolve => { releaseRead = resolve; });
+  let failed = true;
+  context.after(() => releaseRead());
+  await page.route('**/api/classpilot/observable-activities', async route => {
+    await firstRead;
+    await route.fulfill(failed ? { status: 503, json: { error: 'Activities are unavailable' } } : { json: { activities: [] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  const header = page.locator('[data-class-tools-navigation]');
+  await header.getByText('Loading activities…', { exact: true }).waitFor();
+  assert.equal(await header.getByTestId('select-admin-observe').count(), 0);
+  releaseRead();
+  await header.getByRole('alert').getByText('Activities could not refresh.', { exact: true }).waitFor();
+  await header.getByText('Loading activities…', { exact: true }).waitFor({ state: 'hidden' });
+  failed = false;
+  await header.getByRole('button', { name: 'Retry activities', exact: true }).click();
+  await header.getByText('Activities could not refresh.', { exact: true }).waitFor({ state: 'hidden' });
+  assert.equal(await header.getByTestId('select-admin-observe').count(), 0, 'a confirmed empty list has no disabled selector');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('dashboard next class includes its school-local day when it is not today', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), activeSession: null,
+    dashboardActivity: scheduledActivityResponse(null, { serverTime: '2026-09-15T13:11:30Z', next: {
+      source: 'scheduled_class', name: 'Next Biology', startsAt: '2026-09-17T12:30:00Z', endsAt: '2026-09-17T13:00:00Z', status: 'upcoming',
+    } }) });
+  await page.goto(`${baseURL}/classpilot`);
+  const bar = page.getByTestId('scheduled-class-banner');
+  await bar.getByText(/Next Biology/).waitFor();
+  const text = await bar.innerText();
+  assert.match(text, /(Thu|Thursday|Sep(?:tember)? 17|9\/17)/, 'the next day is identified in school time');
+  assert.match(text, /8:30\s*AM/i, 'the time uses America/New_York rather than UTC');
+  assert.doesNotMatch(text, /12:30\s*PM/i);
+  assert.deepEqual(harness.pageErrors, []);
 });
 
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

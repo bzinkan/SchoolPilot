@@ -38,10 +38,10 @@ Your dashboard follows the school calendar by default; pick a theme of your own,
 2. **Pick a preloaded theme.** In Teaching tools, Appearance lists the holiday and season themes. Choose one and Save. Only your dashboard changes; co-teachers, substitutes and administrators keep their own look, and students never see it on their devices.
 3. **Run your own calendar.** Turn on Follow the calendar under a theme to switch by holiday and season with every holiday available to you, whatever your school lists; Catholic schools can include Advent.
 4. **Upload your own background.** When your school allows it, Your own backgrounds keeps up to five PNG, JPG or WebP images: your team, your college, your mascot, anything you have the right to use. Pick one as your theme, then choose how it is drawn: Fill the page crops the edges, Fit the whole picture keeps everything visible over a blurred copy, and Tile repeats a small image. Only you see your backgrounds; remove one from its tile to make room for another.
-5. **Know what never changes.** Student status colors, badges, tile layout, alerts and every control behave exactly as they do on the Default look. A theme replaces light or dark mode while it is on; the toggle returns when you switch back to Default.
+5. **Know what never changes.** Student status colors, badges, tile layout, alerts and every control behave exactly as they do on the plain look. A theme keeps its own look while it is on. Light and dark mode are in Teaching tools → Appearance; your preferred mode returns when the dashboard uses Plain, no theme.
 6. **Decide about the kiosk.** If your school uses the PassPilot kiosk, it shows your theme while it is bound to your class, with each student’s first name on a themed plate at sign-out. Turn off Show my theme on the PassPilot kiosk to keep the kiosk plain.
 
-> **Flight note:** The palette button in the dashboard header switches themes without leaving class; Customize opens Appearance for names, calendar mode and uploads.
+> **Flight note:** Open Appearance from the Dashboard account menu, or choose Teaching tools → Appearance, for themes, light and dark mode, calendar mode and uploads.
 
 [Open Appearance](/classpilot/my-settings?section=appearance)
 
@@ -73,7 +73,7 @@ Use the class controls deliberately so monitoring and student controls follow th
 3. **Choose your class.** The class picker stays available while you teach. Selecting a class does not start it or change who you supervise. Use Start Class when idle or Switch Class to review a move from your current class.
 4. **Change today's period order.** Open Teaching tools → Today’s schedule and choose two of your own scheduled classes. ClassPilot finds the other teacher who already teaches both cohorts and reviews all four entries together. Before the bell, use Apply today. After the bell, the change swaps only the remaining time and the later period. An affected Live class requires the other teacher's acceptance; otherwise no login or acceptance is needed. Until acceptance, your existing classes continue. Automatic starts and ends follow the new order today, and regular times return tomorrow. Skip this period is in each class's menu. Planned time swaps for future dates and earlier requests remain under Advanced. All-day manual recovery is administrator-only.
 5. **Check the resulting session.** Wait for the roster and connection states to settle before sending controls. Existing sessions retain their settings and Flight Path decisions. New sessions use their class's saved automatic Flight Path when enabled and available. Stop it for the current session if needed; it resumes at the next class session.
-6. **Resync when needed.** Use Resync if the roster or current session appears out of date. Resync refreshes authority; it does not broaden your class access.
+6. **Resync when needed.** Open Class actions → Resync Class when that action is available and the roster or current session appears out of date. Resync refreshes authority; it does not broaden your class access.
 7. **Skip or end intentionally.** Open Teaching tools → Today’s schedule and use a class's menu → Skip this period to review cancelling that period only. End Class on the Dashboard closes the current session and begins wrap-up processing.
 
 > **Flight note:** Teaching marks your current class. Choose another class and use Switch Class to move deliberately; the picker alone never grants control.
@@ -234,8 +234,8 @@ Claim students within your authorized scope, use the Dashboard tools, and releas
 End the session, review outcomes, and know when an administrator must help.
 
 1. **Check temporary controls.** Ending class clears Focus, Flight Paths, and other session controls automatically. Lift anything sooner only if students need it before the bell, then end class and wait for the session to close.
-2. **Review the summary.** Check the session summary and any pending or unavailable outcomes that need later follow-up.
-3. **Retry connection issues once.** Resync the class after a student reconnects. Do not repeatedly broadcast a command while the student remains unavailable.
+2. **Review the summary.** Open Class actions → Past sessions to review session summaries and any pending or unavailable outcomes that need later follow-up.
+3. **Retry connection issues once.** Use Class actions → Resync Class when available after a student reconnects. Do not repeatedly broadcast a command while the student remains unavailable.
 4. **Escalate policy issues.** Ask an administrator for help with extension versions, school blocks, managed configuration, provider policy, setup keys, or official roster and schedule changes.
 
 > **Flight note:** Include the student’s displayed status, the action, and the approximate time when reporting a problem. Do not send passwords or sign-in URLs.

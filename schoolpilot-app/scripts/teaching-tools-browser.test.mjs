@@ -58,8 +58,9 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false, manualTodayAllowed = true, manualTodayDenied = false, manualTodayStale = false } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', storedMode = null, precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false, manualTodayAllowed = true, manualTodayDenied = false, manualTodayStale = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  if (storedMode) await page.addInitScript(mode => localStorage.setItem('sp_theme', mode), storedMode);
   if (route.startsWith('/classpilot/my-settings/manual-today')) await page.clock.setFixedTime(new Date('2026-10-30T18:00:00.000Z'));
   const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
@@ -680,6 +681,33 @@ test('automatic class preset can be disabled after its schedule is removed witho
     await card.getByText('On · Research destinations').waitFor();
     assert.equal(await card.getByRole('button', { name: 'Save class preset' }).count(), 0);
     assert.equal(await card.getByRole('radio').count(), 0);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('light and dark mode stays in Appearance and preserves the saved preference without server writes', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=websites', storedMode: 'dark' });
+  try {
+    const mode = page.getByTestId('appearance-color-mode');
+    const toggle = mode.getByTestId('button-theme-toggle');
+    await page.getByRole('heading', { name: 'Teaching tools', exact: true }).waitFor();
+    assert.equal(await mode.isVisible(), false, 'website tools do not show appearance controls');
+    assert.equal(await page.locator('header').getByTestId('button-theme-toggle').count(), 0);
+    await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Appearance', exact: true }).click();
+    await mode.waitFor();
+    assert.equal(await toggle.getAttribute('aria-label'), 'Switch to light mode');
+    assert.equal(await page.evaluate(() => localStorage.getItem('sp_theme')), 'dark', 'opening Appearance preserves the preference');
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.documentElement.classList.contains('light'));
+    assert.equal(await page.evaluate(() => localStorage.getItem('sp_theme')), 'light');
+    await page.getByRole('link', { name: 'Website tools', exact: true }).click();
+    await mode.waitFor({ state: 'hidden' });
+    assert.equal(await mode.isVisible(), false);
+    await page.getByRole('link', { name: 'Appearance', exact: true }).click();
+    await mode.waitFor();
+    assert.equal(await toggle.getAttribute('aria-label'), 'Switch to dark mode');
+    assert.deepEqual(writes(state), [], 'mode changes use the existing local preference rather than the server writer');
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
 });
