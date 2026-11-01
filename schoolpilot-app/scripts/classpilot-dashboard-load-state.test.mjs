@@ -8821,11 +8821,11 @@ test('dashboard next class includes its school-local day when it is not today', 
   await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
   const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), activeSession: null,
     dashboardActivity: scheduledActivityResponse(null, { serverTime: '2026-09-15T13:11:30Z', next: {
-      source: 'scheduled_class', name: 'Thursday Biology', startsAt: '2026-09-17T12:30:00Z', endsAt: '2026-09-17T13:00:00Z', status: 'upcoming',
+      source: 'scheduled_class', name: 'Next Biology', startsAt: '2026-09-17T12:30:00Z', endsAt: '2026-09-17T13:00:00Z', status: 'upcoming',
     } }) });
   await page.goto(`${baseURL}/classpilot`);
   const bar = page.getByTestId('scheduled-class-banner');
-  await bar.getByText(/Thursday Biology/).waitFor();
+  await bar.getByText(/Next Biology/).waitFor();
   const text = await bar.innerText();
   assert.match(text, /(Thu|Thursday|Sep(?:tember)? 17|9\/17)/, 'the next day is identified in school time');
   assert.match(text, /8:30\s*AM/i, 'the time uses America/New_York rather than UTC');
