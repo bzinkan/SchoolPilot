@@ -7,6 +7,8 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Ordinary workflows use an unambiguous school-day clock; fold/gap cases set explicit wall times.
+const APPOINTMENT_NOW_MS = Date.parse('2026-10-15T16:00:00.000Z');
 let vite, browser, base;
 const pages = new Map();
 const authModule = `import{useSyncExternalStore}from'react';export function usePassPilotAuth(){const scope=useSyncExternalStore(fn=>{window.addEventListener('scope-change',fn);return()=>window.removeEventListener('scope-change',fn)},()=>window.__scope);return{...scope,isAdmin:scope.role==='school_admin',isSchoolwideManager:['school_admin','office_staff'].includes(scope.role),isTeacher:scope.role==='teacher',isLoading:false,logout:async()=>{},refetchUser:()=>{}};}`;
@@ -37,10 +39,11 @@ async function inspectLayout(page, name) {
 after(async () => { try { for (const page of pages.keys()) await closePage(page); } finally { await browser?.close(); await vite?.close(); } });
 
 const appointment = patch => ({ id: 'appointment-a', studentId: 'student-a', studentName: 'Synthetic Student', revision: 2, status: 'scheduled',
-  startsAt: new Date(Date.now() - 3600000).toISOString(), endsAt: new Date(Date.now() + 3600000).toISOString(), duration: 5,
+  startsAt: new Date(APPOINTMENT_NOW_MS - 3600000).toISOString(), endsAt: new Date(APPOINTMENT_NOW_MS + 3600000).toISOString(), duration: 5,
   schoolTimezone: 'America/New_York', destination: 'office', staffNotes: 'Private synthetic manager note', ...patch });
 async function setup(mode = 'manager', options = {}) {
   const page = await browser.newPage({ viewport: { width: 430, height: 932 } });
+  await page.clock.setFixedTime(new Date(APPOINTMENT_NOW_MS));
   const state = { role: mode === 'teacher' ? 'teacher' : 'school_admin', rows: [appointment()], ...options }, requests = [], errors = [];
   pages.set(page, state); page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(role => {
@@ -125,13 +128,13 @@ test('manager edits and cancellation preserve the displayed revision', async () 
 });
 
 test('teacher reminders drain pages, include overnight windows, omit manager notes and activate only the current class', async () => {
-  const { page, requests, errors } = await setup('teacher', { paged: true, rows: [appointment({ startsAt: new Date(Date.now() - 23 * 3600000).toISOString(), endsAt: new Date(Date.now() + 1800000).toISOString() })] });
+  const { page, requests, errors } = await setup('teacher', { paged: true, rows: [appointment({ startsAt: new Date(APPOINTMENT_NOW_MS - 23 * 3600000).toISOString(), endsAt: new Date(APPOINTMENT_NOW_MS + 1800000).toISOString() })] });
   try {
     await page.getByRole('button', { name: 'Open appointment pass' }).waitFor();
     assert.equal(await page.getByText('Private synthetic manager note', { exact: true }).count(), 0);
     assert.equal(await page.getByText('Other Class Student', { exact: false }).count(), 0);
     const list = requests.find(value => value.path.endsWith('/appointments') && value.method === 'GET');
-    assert.ok(Date.now() - Date.parse(list.params.from) >= 23.9 * 3600000); assert.equal(list.params.status, 'scheduled');
+    assert.ok(APPOINTMENT_NOW_MS - Date.parse(list.params.from) >= 23.9 * 3600000); assert.equal(list.params.status, 'scheduled');
     assert.ok(requests.some(value => value.params.cursor === 'second-page'));
     await inspectLayout(page, 'teacher-reminder');
     await page.getByRole('button', { name: 'Open appointment pass' }).click(); await page.getByText('Appointment pass opened.', { exact: true }).waitFor();
