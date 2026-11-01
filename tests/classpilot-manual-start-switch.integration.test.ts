@@ -416,7 +416,15 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
     assert.equal(joined.body.reused, true);
     assert.equal(joined.body.session.id, started.body.session.id);
     assert.equal(joined.body.session.teacherId, administrator.id);
-    assert.equal(joined.body.session.manualExpiresAt, started.body.session.manualExpiresAt);
+    assert.equal(joined.body.session.startTime, started.body.session.startTime);
+    // Reuse persists the existing effective deadline: school midnight or the
+    // original twelve-hour cap, whichever arrives first. It must not restart it.
+    const expectedDeadline = new Date(Math.min(Date.parse(started.body.session.manualExpiresAt),
+      Date.parse(started.body.session.startTime) + 12 * 60 * 60_000));
+    assert.equal(joined.body.session.manualExpiresAt, expectedDeadline.toISOString());
+    const persisted = await currentSession(joined.body.session);
+    assert.equal(classpilotTeachingSessionIsCurrent(persisted, new Date(expectedDeadline.getTime() - 1)), true);
+    assert.equal(classpilotTeachingSessionIsCurrent(persisted, expectedDeadline), false);
     assert.deepEqual(await currentGroup(selected), before);
     assert.equal(await enabledAuditCount(selected), 1);
   });
