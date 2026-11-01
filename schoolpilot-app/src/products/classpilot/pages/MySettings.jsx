@@ -660,7 +660,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2"><ThemeToggle /><Button variant="ghost" onClick={() => { void requestAction(logout, { id: "logout" }); }}>Sign out</Button></div>
+            <Button variant="ghost" onClick={() => { void requestAction(logout, { id: "logout" }); }}>Sign out</Button>
           </div>
         </div>
       </div>
@@ -1245,7 +1245,17 @@ function TeachingToolsContent({ currentUser, logout, school }) {
           <section hidden={section !== "defaults"} aria-label="Personal defaults">
             <TeachingDefaults schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'defaults'} />
           </section>
-          <section hidden={section !== "appearance"} aria-label="Appearance">
+          <section hidden={section !== "appearance"} aria-label="Appearance" className="space-y-6">
+            <Card data-testid="appearance-color-mode">
+              <CardHeader>
+                <CardTitle>Light and dark mode</CardTitle>
+                <CardDescription>Choose your preferred mode. A dashboard theme keeps its own look while it is on; your preference returns when the dashboard uses Plain, no theme.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap items-center gap-3">
+                <ThemeToggle />
+                <span className="text-sm text-muted-foreground">Use the sun or moon button to change your preferred mode.</span>
+              </CardContent>
+            </Card>
             <DashboardThemeCard schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'appearance'} timeZone={school?.timezone} />
           </section>
         </div>

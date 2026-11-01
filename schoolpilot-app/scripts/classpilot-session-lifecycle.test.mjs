@@ -338,6 +338,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     const scheduledLogout = await configurePage(scheduledLogoutPage, "scheduled");
     await scheduledLogoutPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
     await scheduledLogoutPage.getByTestId("badge-automatic-session").waitFor();
+    await scheduledLogoutPage.getByTestId("button-dashboard-account").click();
     await scheduledLogoutPage.getByTestId("button-logout").click();
     await assert.doesNotReject(async () => {
       await scheduledLogoutPage.getByTestId("dialog-logout-active-session").waitFor();
@@ -424,7 +425,8 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     manualLogoutPage = await browser.newPage();
     const manualLogout = await configurePage(manualLogoutPage, "manual");
     await manualLogoutPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-    await manualLogoutPage.getByTestId("badge-active-session").waitFor();
+    await manualLogoutPage.getByTestId("dashboard-activity-title").getByText("Class: Biology", { exact: true }).waitFor();
+    await manualLogoutPage.getByTestId("button-dashboard-account").click();
     await manualLogoutPage.getByTestId("button-logout").click();
     await assert.doesNotReject(async () => {
       await manualLogoutPage.getByTestId("text-logout-consequence").getByText(
@@ -439,7 +441,7 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
     manualPage = await browser.newPage();
     const manualEnd = await configurePage(manualPage, "manual", { reportResponse: readyReportV2() });
     await manualPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-    await manualPage.getByTestId("badge-active-session").waitFor();
+    await manualPage.getByTestId("dashboard-activity-title").getByText("Class: Biology", { exact: true }).waitFor();
     assert.equal(await manualPage.getByTestId("badge-automatic-session").count(), 0);
 
     await manualPage.getByTestId("button-end-session").click();
@@ -519,12 +521,13 @@ test("ClassPilot dashboard explains scheduled and manual summary lifecycle", { t
       ],
     });
     await pastSessionsPage.goto(`http://127.0.0.1:${address.port}/classpilot`);
-    await pastSessionsPage.getByTestId("badge-active-session").waitFor();
+    await pastSessionsPage.getByTestId("dashboard-activity-title").getByText("Class: Biology", { exact: true }).waitFor();
     assert.equal(
       pastSessions.recentRequests.length,
       0,
       "the recent-sessions endpoint must not be requested before the teacher opens Past sessions",
     );
+    await pastSessionsPage.getByTestId("button-class-actions").click();
     await pastSessionsPage.getByTestId("button-past-sessions").click();
     await pastSessionsPage.getByTestId("dialog-past-sessions").waitFor();
     const readyRow = pastSessionsPage.getByTestId("past-session-ready-session");

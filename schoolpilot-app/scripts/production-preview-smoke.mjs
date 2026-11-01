@@ -140,9 +140,12 @@ async function assertClassPilotDashboard(page) {
     .waitFor({ state: 'visible' });
   await page
     .locator('header')
-    .getByText('Teacher Dashboard', { exact: false })
+    .getByText('Preview ClassPilot School', { exact: true })
     .waitFor({ state: 'visible' });
-  await page.getByTestId('badge-connection-status').waitFor({ state: 'visible' });
+  await page.getByTestId('scheduled-class-banner').getByText('No class active', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('badge-connection-status').count(), 0, 'idle has no perpetual refresh badge');
+  await page.getByTestId('button-dashboard-account').waitFor({ state: 'visible' });
+  await page.getByTestId('button-my-settings').waitFor({ state: 'visible' });
 }
 
 const cases = [

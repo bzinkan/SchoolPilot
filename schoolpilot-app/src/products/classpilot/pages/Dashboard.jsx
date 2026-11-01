@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw, ChevronDown } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
@@ -17,6 +17,9 @@ import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
 import ClassStartControls from '../components/ClassStartControls';
 import DashboardHeader from '../components/DashboardHeader';
+import DashboardActivityBar from '../components/DashboardActivityBar';
+import DashboardAccountMenu from '../components/DashboardAccountMenu';
+import DashboardClassActions from '../components/DashboardClassActions';
 import ClassStartReviewDialog from '../components/ClassStartReviewDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
@@ -56,9 +59,6 @@ import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
 import { buildAvailableRoster, filterAvailableRoster, NO_AVAILABLE_CLASS, NO_AVAILABLE_GRADE } from '../lib/availableStudents';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
-import { ThemeToggle } from '../../../components/ThemeToggle';
-import DashboardThemeMenu from '../components/DashboardThemeMenu';
-import HeaderOrnament from '../components/HeaderOrnament';
 import DashboardThemeNotice from '../components/DashboardThemeNotice';
 import { DashboardThemeContext } from '../contexts/DashboardThemeContext';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
@@ -491,6 +491,18 @@ function AvailableStudentActivity({ student, nowMs }) {
       {domain && <p className="mt-1 truncate text-[11px] text-muted-foreground">Last observed site: {domain}</p>}
     </div>
   );
+}
+
+function formatHeaderMeetingTime(value, timeZone, now) {
+  const meeting = new Date(value);
+  if (!Number.isFinite(meeting.getTime())) return '';
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const time = new Intl.DateTimeFormat(undefined, { timeZone, hour: 'numeric', minute: '2-digit' }).format(meeting);
+  if (day.format(meeting) === day.format(new Date(now))) return time;
+  const schoolYear = dateValue => day.formatToParts(dateValue).find(part => part.type === 'year')?.value;
+  const date = new Intl.DateTimeFormat(undefined, { timeZone, weekday: 'short', month: 'short', day: 'numeric',
+    ...(schoolYear(meeting) !== schoolYear(new Date(now)) ? { year: 'numeric' } : {}) }).format(meeting);
+  return `${date} · ${time}`;
 }
 
 export default function Dashboard() {
@@ -1004,7 +1016,8 @@ export default function Dashboard() {
     refetchInterval: wsAuthenticated && !adminObservedSessionId ? false : 10000,
   });
   const observableActivitiesQueryKey = useMemo(() => ['/api/classpilot/observable-activities', activeSchoolId, currentUser?.id], [activeSchoolId, currentUser?.id]);
-  const { data: observableActivities = EMPTY_LIST, isSuccess: observableActivitiesLoaded, refetch: refreshObservableActivities } = useQuery({
+  const { data: observableActivities = EMPTY_LIST, isSuccess: observableActivitiesLoaded, isPending: observableActivitiesPending,
+    isError: observableActivitiesError, isFetching: observableActivitiesRefreshing, refetch: refreshObservableActivities } = useQuery({
     queryKey: observableActivitiesQueryKey,
     queryFn: ({ signal }) => apiRequest('GET', '/classpilot/observable-activities', undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
@@ -1803,14 +1816,10 @@ export default function Dashboard() {
     activeSession,
     school?.schoolTimezone || school?.timezone,
   );
-  // While a class is running the header carries what comes next, so the activity
-  // banner has nothing left to say for a routine period and does not draw at all.
-  // With no class running the banner keeps it, where it is the only thing on
-  // screen describing the rest of the day.
   const nextScheduledActivity = scheduledClassEnabled ? scheduledActivity?.next : null;
+  const headerTimeZone = school?.schoolTimezone || school?.timezone || 'America/New_York';
   const nextActivityLabel = nextScheduledActivity?.name && nextScheduledActivity?.startsAt
-    ? `${nextScheduledActivity.name} · ${new Date(nextScheduledActivity.startsAt).toLocaleTimeString([], {
-      hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}`
+    ? `${nextScheduledActivity.name} · ${formatHeaderMeetingTime(nextScheduledActivity.startsAt, headerTimeZone, freshnessNowMs)}`
     : null;
 
   useLayoutEffect(() => {
@@ -6986,17 +6995,58 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           ? { label: 'Syncing', tone: 'syncing' }
           : { label: 'Using server refresh', tone: 'syncing' };
   const connectionToneClasses = connectionPresentation.tone === 'live'
-    ? 'bg-green-500/15 border border-green-500/30 text-green-400'
+    ? 'bg-green-500/15 border border-green-500/30 text-chrome-fg'
     : connectionPresentation.tone === 'unavailable'
-      ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+      ? 'bg-amber-500/15 border border-amber-500/30 text-chrome-fg'
       : connectionPresentation.tone === 'syncing'
-        ? 'bg-amber-400/15 border border-amber-400/30 text-amber-300'
-        : 'bg-slate-600/30 border border-slate-500/30 text-slate-300';
+        ? 'bg-amber-400/15 border border-amber-400/30 text-chrome-fg'
+        : 'bg-slate-600/30 border border-slate-500/30 text-chrome-fg';
   const connectionDotClasses = connectionPresentation.tone === 'live'
     ? 'bg-green-400 animate-pulse'
     : connectionPresentation.tone === 'unavailable' || connectionPresentation.tone === 'syncing'
       ? 'bg-amber-400'
       : 'bg-slate-400';
+
+  const hasObservedSelection = isAdmin && Boolean(adminObservedSessionId);
+  const headerOwnClassName = activeSession?.classNameSnapshot
+    || groups.find(group => group.id === activeSession?.groupId)?.name
+    || adminTeachingGroups.find(group => group.id === activeSession?.groupId)?.name
+    || activeSession?.groupName || 'Active Class';
+  const headerAssignment = retainedObservedSession || scheduledAssignment;
+  const headerPending = scheduledClassEnabled && !roomWorkspace && scheduledActivity?.pending;
+  const headerLoading = scheduledClassEnabled && dashboardActivityLoading && !headerAssignment && !activeSession;
+  const headerTeaching = Boolean(activeSession && !scheduledSupervisionId && !hasObservedSelection);
+  const headerAssignmentMatchesOwn = scheduledAssignment?.authority?.teachingSessionId === activeSession?.id;
+  const headerOtherAssignment = headerTeaching && scheduledAssignment && !headerAssignmentMatchesOwn ? scheduledAssignment : null;
+  const headerTitle = hasObservedSelection
+    ? retainedObservedSession ? activityTitle(retainedObservedSession) : 'Observed activity unavailable'
+    : headerTeaching ? activityTitle({ ...activeSession, name: headerOwnClassName })
+      : !headerAssignment && dashboardActivityError ? 'Class assignment unavailable'
+        : headerPending ? 'Updating class'
+        : headerLoading ? 'Loading class…'
+          : scheduledAssignment ? activityTitle(scheduledAssignment)
+            : nextScheduledActivity?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active';
+  const headerState = hasObservedSelection ? 'Read only'
+    : headerTeaching ? 'Teaching'
+      : awaitingLiveSupervision ? 'Awaiting live supervision' : null;
+  const headerDeadline = headerTeaching
+    ? activeSession.manualExpiresAt || (headerAssignmentMatchesOwn ? scheduledAssignment?.endsAt : null)
+    : headerAssignment?.endsAt;
+  const headerAutomatic = !hasObservedSelection && (headerTeaching ? activeSessionIsScheduled
+    : headerAssignment?.source === 'scheduled_class');
+  const headerNextAutomatic = nextScheduledActivity?.source === 'scheduled_class';
+  const headerManualToday = headerTeaching && manualTodayQuery.data?.classes?.some(row => row.id === activeSession.groupId && row.isManualToday);
+  const headerEndLabel = headerTeaching && activeSessionIsScheduled ? activeSessionScheduledEnd
+    : headerDeadline ? formatHeaderMeetingTime(headerDeadline, headerTimeZone, freshnessNowMs) : null;
+  const showHeaderConnection = connectionPresentation.label !== 'Refreshing' && connectionPresentation.label !== 'Awaiting teacher';
+  const canShowClassPicker = (isTeacher || isAdmin) && !scheduledSupervisionId && !hasObservedSelection;
+  const canHeaderResync = (isTeacher || isAdmin) && activeSession && !activeSessionIsScheduled && !scheduledSupervisionId && !hasObservedSelection;
+  const canHeaderPastSessions = isTeacher && !scheduledSupervisionId;
+  const showObservePicker = isAdmin && (observableActivities.length > 0 || hasObservedSelection);
+  const headerExtensionWarning = Boolean(scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
+  const headerTimingNotice = classStartTimingNotice?.scope === classReaderKey;
+  const headerNotices = hasObservedSelection || dashboardActivityError || headerExtensionWarning || headerTimingNotice
+    || isTeacher && todayScheduleChanges.length > 0;
 
   return (
     <DashboardThemeContext.Provider value={dashboardTheme.active}>
@@ -7019,196 +7069,95 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           onDenied={refreshDeniedClaimedPreview}
         />
       ))}
-      {/* Header */}
+      {/* Navigation and the complete class/activity bar share one sticky boundary. */}
       <DashboardHeader
         brand={<>
-          <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
-            <rect width="48" height="48" rx="12" fill="var(--brand)"/>
-            <path d="M12 24L36 14L30 36L24 28L36 14" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round"/>
+          <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg" aria-hidden="true">
+            <rect width="48" height="48" rx="12" fill="var(--brand)" />
+            <path d="M12 24L36 14L30 36L24 28L36 14" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" />
           </svg>
           <div className="min-w-0">
             <h1 className="brand-wordmark text-lg leading-6 font-bold text-chrome-fg tracking-tight truncate">ClassPilot</h1>
-            <p className="text-xs leading-4 text-chrome-muted truncate" title={(currentUser?.schoolName ? currentUser.schoolName + " · " : "") + (isAdmin ? "Admin Dashboard" : "Teacher Dashboard")}>
-              {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
-              {currentUser?.schoolName && ' \u2022 '}
-              {isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard'}
+            <p className="text-xs leading-4 text-chrome-muted truncate" title={currentUser?.schoolName || (isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard')}>
+              {currentUser?.schoolName || (isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard')}
             </p>
           </div>
-          <span className="dashboard-header-ornament-slot"><HeaderOrnament /></span>
         </>}
-        controls={<>
-          {isTeacher && !scheduledSupervisionId ? <ClassStartControls part="picker" groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
-                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
-                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
-          {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls part="picker" admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
-                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
-                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
-            <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
-            {connectionPresentation.label}
-          </div>
-          {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-brand-soft" data-testid="badge-scheduled-testing"><span className="dashboard-header-label" title={activityTitle(effectiveActivity)}>{activityTitle(effectiveActivity)}</span></Badge> : null}
-          {isTeacher && !scheduledSupervisionId && activeSession && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-active-session">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              <span className="dashboard-header-label" title={groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}>{groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}</span>
-            </div>
-          )}
-          {isTeacher && !scheduledSupervisionId && activeSessionIsScheduled && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-automatic-session">
-              <Clock className="h-3.5 w-3.5" />
-              Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
-            </div>
-          )}
-          {scheduledAssignment && nextActivityLabel && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-next-activity">
-              <span className="dashboard-header-label" title={"Next: " + nextActivityLabel}>Next: {nextActivityLabel}</span>
-            </div>
-          )}
-          {isTeacher && !scheduledSupervisionId && (
-            <>
-
-              {activeSession ? (
-                <div className="dashboard-header-group">
-                  {!activeSessionIsScheduled && (
-                    <button
-                      type="button"
-                      onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                      disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
-                      data-testid="button-resync-session"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setShowPastSessions(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors"
-                    title="Open recent class sessions and their Session Summaries"
-                    data-testid="button-past-sessions"
-                  >
-                    <Clock className="h-3.5 w-3.5" /> Past sessions
-                  </button>
-                </div>
-              ) : (
-                <div className="dashboard-header-group">
-                  <button
-                    type="button"
-                    onClick={() => setShowPastSessions(true)}
-                    className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover"
-                    title="Open recent class sessions and their Session Summaries"
-                    data-testid="button-past-sessions"
-                  >
-                    <Clock className="h-3.5 w-3.5" /> Past sessions
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-          {/* Admin Class Selection */}
-          {isAdmin && (
-            <>
-
-              {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
-                <>
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-admin-teaching">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                    <span className="dashboard-header-label" title={groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}>Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}</span>
-                  </div>
-                  {activeSessionIsScheduled && (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
-                      <Clock className="h-3.5 w-3.5" />
-                      Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
-                    </div>
-                  )}
-                  {!activeSessionIsScheduled && (
-                    <button
-                      type="button"
-                      onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
-                      disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
-                      data-testid="button-admin-resync-session"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
-                    </button>
-                  )}
-
-                </>
-              )}
-              <div className={`dashboard-header-observe flex items-center gap-1.5 rounded-lg border px-2 transition-colors ${observedSession ? 'bg-chrome-elevated border-chrome-control-border text-chrome-fg-soft' : 'bg-transparent border-chrome-control-border text-chrome-muted'}`}>
-                <Eye className="h-4 w-4" />
-                <select
-                  value={adminObservedSessionId || ""}
-                  onChange={handleAdminObservedSessionChange}
-                  disabled={observableActivities.length === 0 && !adminObservedSessionId}
-                  aria-label="Observe active ClassPilot activity"
-                  title={observableActivities.find(activity => activity.id === adminObservedSessionId)?.name || 'Observe activity'}
-                  data-testid="select-admin-observe"
-                  className="h-full w-[130px] max-w-[130px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value="">{adminObservedSessionId ? "Stop observing" : observableActivities.length === 0 ? "No active activities" : "Observe activity"}</option>
-                  {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
-                  {observableActivities.map(activity => (
-                    <option key={activity.id} value={activity.id}>
-                      {activityPurpose(activity) === 'claim' ? 'Claimed students' : `${activityPurposeLabel(activity)}: ${activity.name}`}{activity.owner?.name ? ` - ${activity.owner.name}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
-          {currentUser?.impersonating && (
-            <Button variant="destructive" size="sm" onClick={() => stopImpersonateMutation.mutate()} disabled={stopImpersonateMutation.isPending} data-testid="button-stop-impersonating">
-              <UserCog className="h-4 w-4 mr-2" />Stop Impersonating
-            </Button>
-          )}
+        navigation={<>
+          {(isTeacher || isAdmin) ? <Link to="/classpilot/my-settings" data-testid="button-my-settings"><User className="h-4 w-4" aria-hidden="true" />Teaching tools</Link> : null}
+          {isAdmin ? <Link to="/classpilot/admin" data-testid="button-admin"><Shield className="h-4 w-4" aria-hidden="true" />Admin Panel</Link> : null}
         </>}
-        primaryActions={<>
-          {isTeacher && !scheduledSupervisionId ? <ClassStartControls part="action" groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
-                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)}
-                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
-          {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls part="action" admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
-                manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)}
-                onStart={group => beginClassStart(group)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
-          {isTeacher && !scheduledSupervisionId && activeSession ? (
-            <button onClick={() => setEndClassTarget(activeSession)} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
-              <X className="h-3.5 w-3.5" /> End Class
-            </button>
-          ) : null}
-          {isAdmin && activeSession && !scheduledSupervisionId && !retainedObservedSession ? (
-            <button onClick={() => setEndClassTarget(activeSession)} disabled={dashboardCapabilities.observedOtherClass || endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
-              <X className="h-3.5 w-3.5" /> End Class
-            </button>
-          ) : null}
-        </>}
-        utilities={<>
-          <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
-          <ThemeToggle />
-          {(isTeacher || isAdmin) && !scheduledSupervisionId && (
-            <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-chrome-control-border px-3 py-2 text-xs font-medium text-chrome-subtle hover:bg-chrome-control-hover" data-testid="button-my-settings" title="Teaching tools">
-              <User className="h-4 w-4" /> Teaching tools
-            </button>
-          )}
-          {isAdmin && !scheduledSupervisionId && (
-            <>
-              <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-chrome-control-border text-chrome-muted hover:bg-chrome-control-hover transition-colors" data-testid="button-admin">
-                <Shield className="h-4 w-4" /> Admin Panel
-              </button>
+        account={<DashboardAccountMenu key={classReaderKey} user={currentUser} onSignOut={requestLogout} pending={logoutPending} />}
+      >
+        <DashboardActivityBar bannerRef={activityBannerRef} title={headerTitle} state={headerState}
+          details={<>
+            {headerAutomatic || headerManualToday || headerEndLabel ? <p data-testid={headerAutomatic ? (isAdmin ? 'badge-admin-automatic-session' : 'badge-automatic-session') : undefined}>
+              {headerAutomatic ? 'Automatic' : headerManualToday ? 'Manual today' : ''}{(headerAutomatic || headerManualToday) && headerEndLabel ? ' · ' : ''}{headerEndLabel ? `Ends ${headerEndLabel}` : ''}
+            </p> : null}
+            {headerOtherAssignment ? <p>Scheduled: {headerOtherAssignment.name}{headerOtherAssignment.supervisionStatus === 'awaiting_teacher' ? ' · Awaiting live supervision' : ''}</p> : null}
+            {!hasObservedSelection && nextActivityLabel ? <p data-testid="badge-next-activity">Next: {nextActivityLabel}{headerNextAutomatic ? ' · Automatic' : ''}</p> : null}
+          </>}
+          status={showHeaderConnection ? <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
+            <span className={`h-2 w-2 rounded-full ${connectionDotClasses}`} aria-hidden="true" />{connectionPresentation.label}
+          </div> : null}
+          controls={<>
+            {canShowClassPicker ? <ClassStartControls admin={isAdmin} groups={isAdmin ? adminTeachingGroups : groups}
+              selectedId={isAdmin ? adminStartGroupId : startGroupId} onSelect={isAdmin ? setAdminStartGroupId : setStartGroupId}
+              activeSession={activeSession} onStart={group => beginClassStart(group)}
+              disabled={dashboardCapabilities.observedOtherClass || isAdmin && adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
+            {headerTeaching ? <button type="button" onClick={() => setEndClassTarget(activeSession)}
+              disabled={endSessionMutation.isPending || isAdmin && dashboardCapabilities.observedOtherClass}
+              className="border border-red-700 bg-red-700 text-white hover:bg-red-800 disabled:opacity-50"
+              data-testid={isAdmin ? 'button-admin-end-session' : 'button-end-session'}>End Class</button> : null}
+            {scheduledSupervisionId && studentView === 'class' && !hasObservedSelection ? <Button variant="outline"
+              disabled={endTestingMutation.isPending || roomWorkspace && (classStudentTargetsUnavailable || students.length === 0)}
+              onClick={() => setEndTestingTarget({ contextId: scheduledSupervisionId, name: effectiveActivity.name,
+                schoolId: activeSchoolId, scope: classReaderKey, contextAuthorityRevision, contextType: effectiveActivity.contextType, purpose: activityPurpose(effectiveActivity),
+                ...(roomWorkspace ? { dialogScopeKey: roomDialogScopeKey, expectedStudentIds: students.map(student => student.studentId) } : {}) })}>{activityEndLabel(effectiveActivity)}</Button> : null}
+            {hasObservedSelection ? <Button variant="outline" data-testid="button-stop-observing" onClick={() => {
+              setAdminObservedSessionId(null); setStudentView('class');
+            }}>Stop observing</Button> : studentView !== 'class' ? <Button variant="outline" onClick={() => {
+              setAdminObservedSessionId(null); setStudentView('class');
+            }}>View current class</Button> : null}
+            {canHeaderPastSessions || canHeaderResync ? <DashboardClassActions key={classReaderKey} admin={isAdmin}
+              onPastSessions={canHeaderPastSessions ? () => setShowPastSessions(true) : undefined}
+              onResync={canHeaderResync ? () => resyncSessionMutation.mutate({ sessionId: activeSession.id }) : undefined}
+              resyncDisabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending} /> : null}
+            {currentUser?.impersonating ? <Button variant="destructive" size="sm" onClick={() => stopImpersonateMutation.mutate()} disabled={stopImpersonateMutation.isPending} data-testid="button-stop-impersonating"><UserCog className="mr-2 h-4 w-4" aria-hidden="true" />Stop Impersonating</Button> : null}
+          </>}
+          observer={isAdmin && (showObservePicker || observableActivitiesPending || observableActivitiesError) ? <div className="dashboard-activity-observe">
+            {showObservePicker ? <><Eye className="h-4 w-4 shrink-0" aria-hidden="true" /><select value={adminObservedSessionId || ''} onChange={handleAdminObservedSessionChange}
+              aria-label="Observe active ClassPilot activity" data-testid="select-admin-observe">
+              <option value="">{hasObservedSelection ? 'Stop observing' : 'Observe activity'}</option>
+              {hasObservedSelection && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
+              {observableActivities.map(activity => <option key={activity.id} value={activity.id}>
+                {activityPurpose(activity) === 'claim' ? 'Claimed students' : `${activityPurposeLabel(activity)}: ${activity.name}`}{activity.owner?.name ? ` - ${activity.owner.name}` : ''}
+              </option>)}
+            </select></> : null}
+            {observableActivitiesError ? <><span role="alert">Activities could not refresh.</span><Button variant="outline" size="sm" disabled={observableActivitiesRefreshing} onClick={() => void refreshObservableActivities()}>Retry activities</Button></>
+              : !showObservePicker && observableActivitiesPending ? <span role="status">Loading activities…</span> : null}
+          </div> : null}
+          notices={headerNotices ? <>
+            {dashboardActivityError && !hasObservedSelection ? <div role="alert"><p>Class assignment could not refresh.</p><Button variant="outline" size="sm" disabled={dashboardActivityRefreshing} onClick={() => void refreshDashboardActivity({ cancelRefetch: true })}>Retry class assignment</Button></div> : null}
+            {hasObservedSelection ? <div data-testid="observe-read-only-banner">
+              <p className="font-semibold">Observe mode is read-only</p>
+              <p>Screen previews and activity can be reviewed. Student controls and Class tools are disabled while observing. Observe does not start or take control of the class.</p>
+              {retainedObservedSession?.observationUnavailable ? <p>Activity unavailable. Choose another activity or stop observing.</p> : null}
+              {retainedObservedSession?.supervisionStatus === 'awaiting_teacher' ? <p data-testid="observe-awaiting-teacher">The teacher has not started live supervision. You can still review screen previews and activity.</p> : null}
+            </div> : null}
+            {headerExtensionWarning ? <p className="text-chrome-fg">Extension update required for full classroom tools on some student Chromebooks.</p> : null}
+            {headerTimingNotice ? <div role="status" data-testid="class-start-timing-notice">
+              {classStartTimingNotice.name} is outside its available class time. Make period changes in Teaching tools.{' '}
+              <Link className="font-medium underline" to={`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`}>Open Today’s schedule</Link>
+            </div> : null}
+            {isTeacher && todayScheduleChanges.length > 0 ? <Link className="inline-flex flex-wrap items-center gap-2 text-sm underline" to="/classpilot/my-settings/schedule-changes" data-testid="today-schedule-change-indicator">
+              <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>Schedule changed today · {scheduleClassName(todayScheduleChanges[0])} {formatScheduleWindow(effectiveWindow(todayScheduleChanges[0]))}{todayScheduleChanges.length > 1 ? ` · +${todayScheduleChanges.length - 1} more` : ''}</span><span>View</span>
+            </Link> : null}
+          </> : null}
+        />
+      </DashboardHeader>
 
-            </>
-          )}
-          <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-chrome-elevated text-chrome-muted hover:bg-chrome-elevated-hover transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
-            <LogOut className="h-[18px] w-[18px]" />
-          </button>
-        </>}
-      />
-      {classStartTimingNotice?.scope === classReaderKey ? <div role="status" className="border-b bg-card px-6 py-3 text-sm" data-testid="class-start-timing-notice">
-        {classStartTimingNotice.name} is outside its available class time. Make period changes in Teaching tools.
-        {' '}<button type="button" className="font-medium text-primary underline" onClick={() => navigate(`/classpilot/my-settings/today?selectedGroupId=${encodeURIComponent(classStartTimingNotice.groupId)}`)}>Open Today’s schedule</button>
-      </div> : null}
       {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview}
         returnFocusRef={classStartTriggerRef}
         currentSessionId={activeSession?.id || null} targetAvailable={[...groups, ...adminTeachingGroups].some(group => group.id === classStartReview.groupId)}
@@ -7218,74 +7167,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           ...(classStartReview.overlap ? { acknowledgeOverlap: true } : {}),
         })} /> : null}
 
-      {isTeacher && todayScheduleChanges.length > 0 ? (
-        <button
-          type="button"
-          onClick={() => navigate("/classpilot/my-settings/schedule-changes")}
-          className="flex w-full items-center justify-center gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-left text-xs font-semibold text-amber-950 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100 dark:hover:bg-amber-950/55"
-          data-testid="today-schedule-change-indicator"
-        >
-          <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            Schedule changed today · {scheduleClassName(todayScheduleChanges[0])} {formatScheduleWindow(effectiveWindow(todayScheduleChanges[0]))}
-            {todayScheduleChanges.length > 1 ? ` · +${todayScheduleChanges.length - 1} more` : ""}
-          </span>
-          <span className="underline underline-offset-2">View</span>
-        </button>
-      ) : null}
-
       {/* Sidebar + Main Content */}
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
       <main className={showSidebar ? 'lg:ml-80' : ''}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
-        {scheduledClassEnabled ? (() => {
-          // Each part of the banner is conditional, so it can end up with nothing
-          // drawn at all - a class running with no next period, which is simply
-          // the last class of the day. The card chrome would then be an empty
-          // bordered box. Keep the section mounted either way so the live region
-          // still announces a class change to a screen reader, and drop the
-          // chrome when there is nothing to show.
-          const bannerTitleDrawn = Boolean(scheduledSupervisionId && studentView === 'class' && !retainedObservedSession) || dashboardActivityError || scheduledActivity.pending
-            || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'));
-          const bannerExtensionWarning = Boolean(scheduledSupervisionId
-            && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
-          const bannerActions = studentView !== 'class' || adminObservedSessionId || dashboardActivityError
-            || (scheduledSupervisionId && studentView === 'class' && !retainedObservedSession);
-          const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next && !scheduledAssignment)
-            || bannerExtensionWarning || Boolean(bannerActions);
-          return (
-          <section ref={activityBannerRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true"
-            data-testid="scheduled-class-banner" className={bannerVisible
-              ? "mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring" : "sr-only"}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className={bannerVisible ? 'font-semibold' : 'sr-only'}>{retainedObservedSession
-                  ? activityTitle(retainedObservedSession)
-                  : dashboardActivityError ? 'Class assignment could not refresh'
-                  : scheduledActivity.pending && !roomWorkspace ? 'Updating class'
-                    : scheduledAssignment ? activityTitle(scheduledAssignment)
-                      : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
-                {scheduledActivity.next && !scheduledAssignment && !retainedObservedSession ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
-                  {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
-                  {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
-                {scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student))
-                  ? <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">Extension update required for full classroom tools on some student Chromebooks.</p> : null}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {(studentView !== 'class' || adminObservedSessionId) ? <Button variant="outline" onClick={() => {
-                  setAdminObservedSessionId(null); setStudentView('class');
-                }}>View current class</Button> : null}
-                {dashboardActivityError && !retainedObservedSession ? <Button variant="outline" disabled={dashboardActivityRefreshing}
-                  onClick={() => void refreshDashboardActivity({ cancelRefetch: true })}>Retry class assignment</Button> : null}
-                {scheduledSupervisionId && studentView === 'class' && !retainedObservedSession ? <Button variant="outline" disabled={endTestingMutation.isPending || roomWorkspace && (classStudentTargetsUnavailable || students.length === 0)}
-                  onClick={() => setEndTestingTarget({ contextId: scheduledSupervisionId, name: effectiveActivity.name,
-                    schoolId: activeSchoolId, scope: classReaderKey, contextAuthorityRevision, contextType: effectiveActivity.contextType, purpose: activityPurpose(effectiveActivity),
-                    ...(roomWorkspace ? { dialogScopeKey: roomDialogScopeKey, expectedStudentIds: students.map(student => student.studentId) } : {}) })}>{activityEndLabel(effectiveActivity)}</Button> : null}
-              </div>
-            </div>
-          </section>
-          );
-        })() : null}
         {/* Remote Control Toolbar */}
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
@@ -7311,19 +7196,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
-
-        {dashboardCapabilities.observedOtherClass ? (
-          <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
-            <Eye className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              <p className="font-semibold">Observe mode is read-only</p>
-              <p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed. Student controls and Class tools are disabled while observing. Observe does not start or take control of the class.</p>
-              {retainedObservedSession?.supervisionStatus === 'awaiting_teacher' ? (
-                <p className="mt-1 text-xs opacity-80" data-testid="observe-awaiting-teacher">The teacher has not started live supervision. You can still review screen previews and activity.</p>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
 
         {automaticallyShowingSupervision ? (
           <div ref={supervisionNoticeRef} tabIndex={-1} className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="assigned-testing-notice">
