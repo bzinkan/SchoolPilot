@@ -9,6 +9,8 @@ import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { signUserToken } from "../src/services/jwt.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "../src/db/microsoftSignInMigration.js";
 import { policySqlFor } from "../src/db/rlsPolicies.js";
+import { getTenantStore } from "../src/db/tenantContext.js";
+import { getDatabaseErrorDetails } from "../src/util/databaseError.js";
 
 const school = randomUUID(), otherSchool = randomUUID();
 const teacher = randomUUID(), scheduledTeacher = randomUUID(), admin = randomUUID(), outsider = randomUUID();
@@ -277,4 +279,47 @@ test("removing a current device leaves retained observed-client history intact",
   const clients = await scoped(() => service.getClasspilotAdoptionClients(school,"7d",{now}));
   assert.equal(clients.totalClients,4);
   assert.deepEqual(clients.versions.find(value=>value.version==="2.9.6"),{version:"2.9.6",count:1});
+});
+
+test("client details stay within the request budget when many frozen class windows overlap",{skip:process.env.RLS_GUC_ENABLED!=="true"},async () => {
+  // Re-reading and sorting the same check-ins for every student/session exhausted
+  // the production statement budget. This uses the real restricted tenant role.
+  const sessionIds = Array.from({length:1000},()=>randomUUID());
+  const historicalClients = [randomUUID(),randomUUID()];
+  await fixture.query(`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time,session_mode)
+    SELECT id,$2,$3,$4,'2026-10-29 14:00:00'::timestamp+ordinality*interval '1 millisecond',
+      '2026-10-29 14:45:00'::timestamp+ordinality*interval '1 millisecond','live'
+    FROM unnest($1::varchar[]) WITH ORDINALITY AS sessions(id,ordinality)`,[sessionIds,school,groups.archived,teacher]);
+  await fixture.query(`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at)
+    SELECT $1,s.id,s.group_id,student_id,s.start_time AT TIME ZONE 'UTC'
+    FROM teaching_sessions s CROSS JOIN unnest($3::varchar[]) AS roster(student_id) WHERE s.id=ANY($2::varchar[])`,[school,sessionIds,students]);
+  for (const [index,clientId] of historicalClients.entries()) {
+    await fixture.query(`INSERT INTO heartbeats(device_id,student_id,school_id,active_tab_title,extension_version,timestamp)
+      SELECT $1,$2,$3,'Fixture',CASE WHEN sample=10000 THEN $4::text ELSE '2.9.6' END,
+        '2026-10-29 14:01:00'::timestamp+sample*interval '250 milliseconds'
+      FROM generate_series(1,10000) AS samples(sample)`,[clientId,students[index],school,index===0?" 2.9.7 ":null]);
+    // A newer check-in outside every qualifying class window must not win.
+    await fixture.query(`INSERT INTO heartbeats(device_id,student_id,school_id,active_tab_title,extension_version,timestamp)
+      VALUES($1,$2,$3,'Fixture','9.9.9','2026-10-29 15:00:00')`,[clientId,students[index],school]);
+  }
+  for (const table of ["teaching_sessions","classpilot_session_students","heartbeats"]) await fixture.query(`ANALYZE ${table}`);
+  await scoped(async () => {
+    const client = getTenantStore()?.client;
+    assert.ok(client,"This regression must exercise a restricted tenant connection");
+    const previous = (await client.query<{statement_timeout:string}>("SHOW statement_timeout")).rows[0]!.statement_timeout;
+    try {
+      await client.query("SELECT set_config('statement_timeout','1500ms',false)");
+      let clients: Awaited<ReturnType<typeof service.getClasspilotAdoptionClients>>;
+      try { clients = await service.getClasspilotAdoptionClients(school,"7d",{now}); }
+      catch(error) {
+        if (getDatabaseErrorDetails(error).code === "57014") assert.fail("Observed-client details exceeded the 1500ms statement budget for overlapping class windows");
+        throw error;
+      }
+      assert.equal(clients.totalClients,6);
+      assert.deepEqual(clients.versions,[
+        {version:"2.9.4",count:1},{version:"2.9.5",count:1},{version:"2.9.6",count:1},{version:"2.9.7",count:2},{version:null,count:1},
+      ]);
+      assert.doesNotMatch(JSON.stringify(clients),/deviceId|studentId|9\.9\.9/);
+    } finally { await client.query("SELECT set_config('statement_timeout',$1,false)",[previous]); }
+  });
 });
