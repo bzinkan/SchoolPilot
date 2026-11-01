@@ -32,7 +32,7 @@ export const ADMIN_NAVIGATION = [
   ] },
   { label: 'Reports', items: [
     { id: 'usage', label: 'Monitored Browser Time', to: `${admin}/usage` },
-    { id: 'analytics', label: 'Analytics', to: `${admin}/analytics` },
+    { id: 'analytics', label: 'Adoption & health', to: `${admin}/analytics` },
     { id: 'audit', label: 'Audit logs', to: `${admin}?tab=audit` },
   ] },
   { label: 'Settings', items: [

@@ -159,20 +159,23 @@ const StudentReportCard = memo(function StudentReportCard({ student, reportVersi
   );
 });
 
-export default function SessionMonitoringReportDialog({ target, onClose }) {
+export default function SessionMonitoringReportDialog({ target, onClose, schoolId, queryIdentity }) {
   const { toast } = useToast();
   const {
     data: sessionReport,
     isLoading,
     error,
   } = useQuery({
-    queryKey: ['/api/classpilot/teaching-sessions/report', target?.id],
-    queryFn: () => apiRequest(
+    queryKey: queryIdentity ? ['/api/classpilot/teaching-sessions/report', queryIdentity, schoolId, target?.id] : ['/api/classpilot/teaching-sessions/report', target?.id],
+    queryFn: ({ signal }) => apiRequest(
       'GET',
       `/classpilot/teaching-sessions/${encodeURIComponent(target.id)}/report`,
+      undefined,
+      { signal, ...(schoolId ? { headers: { 'X-School-Id': schoolId } } : {}) },
     ),
     enabled: !!target?.id,
     retry: false,
+    ...(queryIdentity ? { gcTime: 0 } : {}),
     refetchInterval: (query) => query.state.data?.state === 'pending' ? 5000 : false,
   });
   const report = useMemo(
@@ -231,7 +234,9 @@ export default function SessionMonitoringReportDialog({ target, onClose }) {
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
               {error?.response?.data?.code === 'SUMMARY_EXPIRED'
                 ? 'This Session Summary has expired under the school’s retention policy.'
-                : 'The Session Summary could not be generated. No “No activity” conclusion or summary email will be sent.'}
+                : error
+                  ? 'Could not load this Session Summary. Its reporting status is unavailable.'
+                  : 'The Session Summary could not be generated. No “No activity” conclusion or summary email will be sent.'}
             </div>
           )}
           {report ? (

@@ -79,6 +79,11 @@ import {
   getClasspilotAdminAnalyticsByTeacher,
   getClasspilotAdminAnalyticsSummary,
 } from "../services/classpilotAdminAnalytics.js";
+import { requireClasspilotEntitlement } from "../middleware/requireClasspilotEntitlement.js";
+import {
+  getClasspilotAdoptionOverview, getClasspilotAdoptionFailures, getClasspilotReportingAvailability,
+  getClasspilotAdoptionTools, getClasspilotAdoptionClients,
+} from "../services/classpilotAdoptionHealth.js";
 import {
   getClasspilotDashboardSchoolTimezone,
   getClasspilotDashboardSnapshot,
@@ -855,6 +860,26 @@ router.get("/admin/analytics/summary", ...classPilotAdminAnalyticsAuth, async (r
   } catch (err) {
     next(err);
   }
+});
+
+// Additive read-only reporting surface. Legacy analytics DTOs remain unchanged.
+router.get("/admin/analytics/adoption-health/:section", ...classPilotAdminAnalyticsAuth, requireClasspilotEntitlement, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const schoolId = res.locals.schoolId!;
+    const period = req.query.period === undefined ? "7d" : req.query.period;
+    if (typeof period !== "string" || !["today","7d","30d"].includes(period)) return res.status(400).json({ error:"Invalid reporting period" });
+    const page = req.query.page === undefined ? 1 : Number(req.query.page);
+    if (!Number.isSafeInteger(page) || page<1 || page>1_000_000) return res.status(400).json({error:"Invalid failure page"});
+    switch (req.params.section) {
+      case "overview": return res.json(await getClasspilotAdoptionOverview(schoolId,period));
+      case "failures": return res.json(await getClasspilotAdoptionFailures(schoolId,period,{page}));
+      case "availability": return res.json(await getClasspilotReportingAvailability(schoolId,period));
+      case "tools": return res.json(await getClasspilotAdoptionTools(schoolId,period));
+      case "clients": return res.json(await getClasspilotAdoptionClients(schoolId,period));
+      default: return res.status(404).json({error:"Not found"});
+    }
+  } catch (err) { next(err); }
 });
 
 router.get("/admin/analytics/by-teacher", ...classPilotAdminAnalyticsAuth, async (req, res, next) => {
