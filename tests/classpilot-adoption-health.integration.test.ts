@@ -12,7 +12,7 @@ import { policySqlFor } from "../src/db/rlsPolicies.js";
 
 const school = randomUUID(), otherSchool = randomUUID();
 const teacher = randomUUID(), scheduledTeacher = randomUUID(), admin = randomUUID(), outsider = randomUUID();
-const students = [randomUUID(), randomUUID()];
+const students: [string, string] = [randomUUID(), randomUUID()];
 const groups = { math: randomUUID(), pending: randomUUID(), failed: randomUUID(), empty: randomUUID(), archived: randomUUID() };
 const devices = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
 const now = new Date("2026-11-01T18:00:00.000Z");
@@ -46,6 +46,11 @@ async function addSession(key: string, groupId: string, state: string | null, op
   return id;
 }
 
+async function addStudentObservation(sessionId: string, studentId: string, seconds: number, observedAt: string) {
+  await fixture.query(`INSERT INTO classpilot_session_student_reports(school_id,report_id,teaching_session_id,student_id,student_name_snapshot,status,eligible_seconds,observed_seconds,first_observed_at,last_observed_at)
+    SELECT school_id,id,teaching_session_id,$2,'Frozen student','complete',$3,$3,$4,$4 FROM classpilot_session_reports WHERE teaching_session_id=$1`,[sessionId,studentId,seconds,observedAt]);
+}
+
 before(async () => {
   assert.ok(["127.0.0.1","localhost","[::1]"].includes(new URL(process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL || "").hostname),"Use the disposable local fixture database only");
   mock.timers.enable({ apis: ["setInterval"] });
@@ -53,7 +58,7 @@ before(async () => {
   try {
     await setup.query("BEGIN"); await setup.query(MICROSOFT_SIGN_IN_EXPAND_SQL);
     if (process.env.RLS_GUC_ENABLED === "true") {
-      for (const table of ["groups","students","teaching_sessions","classpilot_session_reports","classpilot_session_staff","classpilot_session_usage","classpilot_commands","heartbeats","devices","classpilot_session_students","settings"]) {
+      for (const table of ["groups","students","teaching_sessions","classpilot_session_reports","classpilot_session_student_reports","classpilot_session_staff","classpilot_session_usage","classpilot_commands","heartbeats","devices","classpilot_session_students","settings"]) {
         for (const statement of policySqlFor(table)) await setup.query(statement);
         await setup.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
         await setup.query(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
@@ -84,6 +89,10 @@ before(async () => {
   await addSession("outside",groups.math,null,{end:"2026-10-25 03:00:00"});
   for (const [key,seconds] of [["readyA",90],["readyB",450]] as const) await fixture.query(`INSERT INTO classpilot_session_usage(school_id,teaching_session_id,group_id,student_id,local_date,total_seconds,heartbeat_count,first_seen,last_seen)
     VALUES($1,$2,$3,$4,'2026-10-29',$5,2,'2026-10-29T14:01:00Z','2026-10-29T14:40:00Z')`,[school,sessions[key],groups.math,students[0],seconds]);
+  for (const [key,seconds] of [["readyA",90],["readyB",450]] as const) {
+    const sessionId = sessions[key]; assert.ok(sessionId);
+    await addStudentObservation(sessionId,students[0],seconds,"2026-10-29T14:40:00Z");
+  }
   // A newer observation from an unfinished lesson must never enter completed-session adoption.
   await fixture.query("INSERT INTO classpilot_session_usage(school_id,teaching_session_id,group_id,student_id,local_date,total_seconds,heartbeat_count) VALUES($1,$2,$3,$4,'2026-10-29',200,20)",[school,sessions.unfinished,groups.math,students[1]]);
   for (const [index,id] of devices.entries()) {
@@ -193,11 +202,67 @@ test("failure pagination has accurate totals and nonoverlapping pages of twenty"
 test("both repeated school-local hours on the fall-back day belong to Today exactly once",async () => {
   const ends = ["2026-11-01 05:30:00","2026-11-01 06:30:00"];
   for (const [index,end] of ends.entries()) {
+    const student = students[index]; assert.ok(student);
     const id = await addSession(`dst${index}`,groups.math,"ready",{end,eligible:100,observed:100});
-    await fixture.query("INSERT INTO classpilot_session_usage(school_id,teaching_session_id,group_id,student_id,local_date,total_seconds,heartbeat_count,first_seen,last_seen) VALUES($1,$2,$3,$4,'2026-11-01',100,10,$5,$5)",[school,id,groups.math,students[index],end.replace(" ","T")+"Z"]);
+    await fixture.query("INSERT INTO classpilot_session_usage(school_id,teaching_session_id,group_id,student_id,local_date,total_seconds,heartbeat_count,first_seen,last_seen) VALUES($1,$2,$3,$4,'2026-11-01',100,10,$5,$5)",[school,id,groups.math,student,end.replace(" ","T")+"Z"]);
+    await addStudentObservation(id,student,100,end.replace(" ","T")+"Z");
   }
   const value = await scoped(() => service.getClasspilotAdoptionOverview(school,"today",{now}));
   assert.equal(value.summary.completedSessions,2); assert.equal(value.summary.studentsObserved,2);
   assert.equal(value.classes.find(row=>row.groupId===groups.math)?.daysWithObservations,1);
   assert.equal(value.period.rangeStartUtc.toISOString(),"2026-11-01T04:00:00.000Z");
+});
+
+test("a class starter and assigned primary teacher do not multiply a completed session",async () => {
+  const groupId = randomUUID();
+  await fixture.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Two primary snapshots','admin_class','active')",[groupId,school,teacher]);
+  const ready = await addSession("twoPrimaryReady",groupId,"ready",{teacherId:scheduledTeacher,eligible:100,observed:50,partial:1});
+  const failed = await addSession("twoPrimaryFailed",groupId,"failed",{teacherId:scheduledTeacher,attempts:4});
+  for (const id of [ready,failed]) await fixture.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,staff_name_snapshot) VALUES($1,$2,$3,'primary','Assigned primary teacher')",[school,id,teacher]);
+  await addStudentObservation(ready,students[0],50,"2026-10-29T14:40:00Z");
+  await fixture.query("INSERT INTO classpilot_commands(school_id,teaching_session_id,teacher_id,target_scope,command_type,requested_count,created_at) VALUES($1,$2,$3,'class','open-tab',25,'2026-10-29 14:10:00')",[school,ready,scheduledTeacher]);
+  const overview = await scoped(() => service.getClasspilotAdoptionOverview(school,"7d",{now}));
+  const row = overview.classes.find(value=>value.groupId===groupId)!;
+  assert.equal(row.sessionCount,2); assert.equal(row.readySummaryCount,1);
+  assert.equal(overview.summary.teachersWithLiveSessions,2);
+  const availability = await scoped(() => service.getClasspilotReportingAvailability(school,"7d",{now}));
+  assert.equal(availability.classes.find(value=>value.groupId===groupId)?.readySummaryCount,1);
+  assert.equal(availability.coveragePercent,60.8,"One additional 50/100 summary joins the existing 740/1200 totals once");
+  const failures = await scoped(() => service.getClasspilotAdoptionFailures(school,"7d",{now}));
+  assert.equal(failures.total,24);
+  assert.equal(failures.failures.filter(value=>value.teachingSessionId===failed).length,1);
+  assert.equal(failures.failures.find(value=>value.teachingSessionId===failed)?.teacherName,"Frozen teacher label");
+  assert.equal((await scoped(() => service.getClasspilotAdoptionTools(school,"7d",{now}))).totalActions,3);
+});
+
+for (const scenario of [
+  {key:"midnightToday",period:"today",end:"2026-11-01 04:30:00",date:"2026-10-31",observation:"2026-11-01T03:50:00Z",version:"2.9.5",clients:1},
+  {key:"midnightRangeStart",period:"7d",end:"2026-10-26 04:30:00",date:"2026-10-25",observation:"2026-10-26T03:50:00Z",version:"2.9.4",clients:4},
+]) test(`${scenario.key}: end-selected sessions retain observations from before the local range start`,async () => {
+  const groupId = randomUUID(), clientId = randomUUID();
+  await fixture.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,$4,'admin_class','active')",[groupId,school,teacher,scenario.key]);
+  const id = await addSession(scenario.key,groupId,"ready",{end:scenario.end,eligible:100,observed:100});
+  // Frozen membership is captured at the lesson start, including on the first day of the range.
+  await fixture.query("UPDATE classpilot_session_students SET captured_at=(SELECT start_time AT TIME ZONE 'UTC' FROM teaching_sessions WHERE id=$1) WHERE teaching_session_id=$1",[id]);
+  await addStudentObservation(id,students[0],100,scenario.observation);
+  await fixture.query("INSERT INTO classpilot_session_usage(school_id,teaching_session_id,group_id,student_id,local_date,total_seconds,heartbeat_count,first_seen,last_seen) VALUES($1,$2,$3,$4,$5,100,1,$6,$6)",[school,id,groupId,students[0],scenario.date,scenario.observation]);
+  await fixture.query("INSERT INTO devices(device_id,school_id,class_id,device_name) VALUES($1,$2,$2,'Midnight client')",[clientId,school]);
+  await fixture.query("INSERT INTO heartbeats(device_id,student_id,school_id,active_tab_title,extension_version,timestamp) VALUES($1,$2,$3,'Fixture',$4,$5)",[clientId,students[0],school,scenario.version,scenario.observation]);
+  const overview = await scoped(() => service.getClasspilotAdoptionOverview(school,scenario.period,{now}));
+  const row = overview.classes.find(value=>value.groupId===groupId)!;
+  assert.equal(row.sessionCount,1); assert.equal(row.observedStudentCount,1); assert.equal(row.daysWithObservations,1);
+  assert.equal(row.lastObservedAt,new Date(scenario.observation).toISOString());
+  const clients = await scoped(() => service.getClasspilotAdoptionClients(school,scenario.period,{now}));
+  assert.equal(clients.totalClients,scenario.clients); assert.ok(clients.versions.some(value=>value.version===scenario.version&&value.count===1));
+  // Usage is cleaned by its start date independently of retained immutable report detail.
+  await fixture.query("DELETE FROM classpilot_session_usage WHERE teaching_session_id=$1",[id]);
+  const retained = await scoped(() => service.getClasspilotAdoptionOverview(school,scenario.period,{now}));
+  assert.equal(retained.classes.find(value=>value.groupId===groupId)?.observedStudentCount,1);
+});
+
+test("removing a current device leaves retained observed-client history intact",async () => {
+  await fixture.query("DELETE FROM devices WHERE school_id=$1 AND device_id=$2",[school,devices[1]]);
+  const clients = await scoped(() => service.getClasspilotAdoptionClients(school,"7d",{now}));
+  assert.equal(clients.totalClients,4);
+  assert.deepEqual(clients.versions.find(value=>value.version==="2.9.6"),{version:"2.9.6",count:1});
 });

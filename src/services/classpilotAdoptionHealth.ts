@@ -35,13 +35,13 @@ function completed(c: Context): SQL {
       CASE WHEN r.id IS NULL OR r.state='expired' OR r.expires_at<=${c.now.toISOString()}::timestamptz OR r.detail_expired_at IS NOT NULL THEN 'unavailable'
         WHEN r.state='ready' THEN 'ready' WHEN r.state IN ('pending','materializing') THEN 'preparing'
         WHEN r.state='failed' THEN 'failed' ELSE 'unavailable' END AS report_state,
-      r.attempt_count,r.updated_at AS failed_at,r.total_eligible_seconds,r.total_observed_seconds,
+      r.id AS report_id,r.attempt_count,r.updated_at AS failed_at,r.total_eligible_seconds,r.total_observed_seconds,
       r.partial_count,r.none_count,r.not_expected_count,r.unavailable_count
     FROM teaching_sessions s
     LEFT JOIN classpilot_session_reports r ON r.school_id=${c.schoolId} AND r.teaching_session_id=s.id
     LEFT JOIN groups g ON g.school_id=${c.schoolId} AND g.id=s.group_id
     LEFT JOIN users u ON u.id=s.teacher_id
-    LEFT JOIN classpilot_session_staff staff ON staff.school_id=${c.schoolId} AND staff.teaching_session_id=s.id AND staff.role='primary'
+    LEFT JOIN classpilot_session_staff staff ON staff.school_id=${c.schoolId} AND staff.teaching_session_id=s.id AND staff.staff_id=s.teacher_id AND staff.role='primary'
     WHERE s.school_id=${c.schoolId} AND s.end_time IS NOT NULL
       AND s.end_time>=${utcTimestampForSql(c.period.rangeStartUtc)}::timestamp
       AND s.end_time<${utcTimestampForSql(c.now)}::timestamp
@@ -59,13 +59,14 @@ function activeClasses(c: Context): SQL {
   )`;
 }
 
-function readyUsage(c: Context): SQL {
-  return sql`ready_usage AS (
-    SELECT u.group_id,u.student_id,u.local_date,u.last_seen FROM classpilot_session_usage u
-    JOIN completed c ON c.id=u.teaching_session_id AND c.group_id=u.group_id AND c.report_state='ready'
-    WHERE u.school_id=${c.schoolId} AND u.total_seconds>0
-      AND u.local_date>=${c.period.startLocalDate} AND u.local_date<=${c.period.todayLocalDate}
-      AND u.local_date>=${c.range.retainedFrom}
+function readyObservations(c: Context): SQL {
+  // The end-selected cohort owns the whole stored report, including observations
+  // before midnight. Legacy usage rows have independent start-date cleanup.
+  return sql`ready_observations AS (
+    SELECT c.group_id,u.student_id,(c.end_time AT TIME ZONE 'UTC' AT TIME ZONE ${c.period.timeZone})::date AS local_date,
+      u.last_observed_at AS last_seen FROM classpilot_session_student_reports u
+    JOIN completed c ON c.id=u.teaching_session_id AND c.report_id=u.report_id AND c.report_state='ready'
+    WHERE u.school_id=${c.schoolId} AND u.observed_seconds>0
   )`;
 }
 
@@ -92,14 +93,14 @@ type ClassRow = { groupId:string; groupName:string; teacherName:string; sessionC
 export async function getClasspilotAdoptionOverview(schoolId: string, period?: string, options: Options = {}) {
   const c = await context(schoolId,period,options);
   const [classResult, totals, states] = await Promise.all([
-    db.execute<ClassRow>(sql`WITH ${completed(c)},${activeClasses(c)},${readyUsage(c)},
+    db.execute<ClassRow>(sql`WITH ${completed(c)},${activeClasses(c)},${readyObservations(c)},
       sessions AS (SELECT group_id,count(*)::int AS n,count(*) FILTER(WHERE report_state='ready')::int AS ready FROM completed GROUP BY group_id),
-      observations AS (SELECT group_id,count(DISTINCT local_date)::int AS days,count(DISTINCT student_id)::int AS students,max(last_seen) AS last_seen FROM ready_usage GROUP BY group_id)
+      observations AS (SELECT group_id,count(DISTINCT local_date)::int AS days,count(DISTINCT student_id)::int AS students,max(last_seen) AS last_seen FROM ready_observations GROUP BY group_id)
       SELECT a.id AS "groupId",a.name AS "groupName",a.teacher_name AS "teacherName",COALESCE(s.n,0)::int AS "sessionCount",
         COALESCE(s.ready,0)::int AS "readySummaryCount",COALESCE(o.days,0)::int AS days,COALESCE(o.students,0)::int AS "observedStudents",o.last_seen AS "lastObservedAt"
       FROM active_classes a LEFT JOIN sessions s ON s.group_id=a.id LEFT JOIN observations o ON o.group_id=a.id ORDER BY a.name,a.id`),
-    db.execute<{ observed:number; teachers:number; enrolled:number }>(sql`WITH ${completed(c)},${activeClasses(c)},${readyUsage(c)} SELECT
-      (SELECT count(DISTINCT u.student_id)::int FROM ready_usage u JOIN active_classes a ON a.id=u.group_id) AS observed,
+    db.execute<{ observed:number; teachers:number; enrolled:number }>(sql`WITH ${completed(c)},${activeClasses(c)},${readyObservations(c)} SELECT
+      (SELECT count(DISTINCT u.student_id)::int FROM ready_observations u JOIN active_classes a ON a.id=u.group_id) AS observed,
       (SELECT count(DISTINCT c.teacher_id)::int FROM completed c JOIN active_classes a ON a.id=c.group_id WHERE c.session_mode='live') AS teachers,
       (SELECT count(*)::int FROM students WHERE school_id=${c.schoolId} AND status='active') AS enrolled`),
     reportCounts(c),
@@ -171,17 +172,17 @@ export async function getClasspilotAdoptionClients(schoolId: string, period?: st
   // Exact accepted observations and frozen membership establish the window. Mutable
   // roster/device assignments and latest fleet inventory are not historical evidence.
   const result = await db.execute<{version:string|null;count:number}>(sql`WITH ${completed(c)},clients AS (
-    SELECT observed.version FROM devices d CROSS JOIN LATERAL (
-    SELECT NULLIF(btrim(h.extension_version),'') AS version
-    FROM heartbeats h WHERE h.school_id=${c.schoolId} AND h.device_id=d.device_id
-      AND h.timestamp>=${utcTimestampForSql(c.period.rangeStartUtc)}::timestamp
-      AND h.timestamp>${utcTimestampForSql(c.cutoff)}::timestamp
-      AND h.timestamp<${utcTimestampForSql(c.now)}::timestamp
-      AND EXISTS(SELECT 1 FROM completed c JOIN classpilot_session_students frozen
-        ON frozen.school_id=${c.schoolId} AND frozen.teaching_session_id=c.id AND frozen.student_id=h.student_id
-        WHERE h.timestamp>=GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC') AND h.timestamp<c.end_time)
-    ORDER BY h.timestamp DESC,h.id DESC LIMIT 1
-    ) observed WHERE d.school_id=${c.schoolId}
+    SELECT DISTINCT ON (observed.device_id) NULLIF(btrim(observed.extension_version),'') AS version
+    FROM completed c JOIN classpilot_session_students frozen
+      ON frozen.school_id=${c.schoolId} AND frozen.teaching_session_id=c.id
+    CROSS JOIN LATERAL (
+      SELECT DISTINCT ON (h.device_id) h.device_id,h.extension_version,h.timestamp,h.id
+      FROM heartbeats h WHERE h.school_id=${c.schoolId} AND h.student_id=frozen.student_id
+        AND h.timestamp>=GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC')
+        AND h.timestamp>${utcTimestampForSql(c.cutoff)}::timestamp AND h.timestamp<c.end_time
+      ORDER BY h.device_id,h.timestamp DESC,h.id DESC
+    ) observed
+    ORDER BY observed.device_id,observed.timestamp DESC,observed.id DESC
   ) SELECT version,count(*)::int AS count FROM clients GROUP BY version ORDER BY version NULLS LAST`);
   return {...publicContext(c),totalClients:result.rows.reduce((total,row)=>total+row.count,0),versions:result.rows};
 }
