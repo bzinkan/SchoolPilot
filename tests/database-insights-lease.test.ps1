@@ -1065,7 +1065,7 @@ try {
     Assert-Condition $staleWatchdogRejected `
         "Validate must fail closed when the detached watchdog heartbeat is stale."
     $assertions++
-    $receiptForWatchdog = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40
+    $receiptForWatchdog = Read-DatabaseInsightsLeaseReceipt $receiptPath $acquired.receiptSha256
     Write-DatabaseInsightsWatchdogHeartbeat $watchdogPath $receiptForWatchdog $acquired.receiptSha256 "monitoring"
     $script:MockMonitoringInterval = 60
     $script:MockMonitoringRoleArn = "arn:aws:iam::135775632425:role/unexpected-rds-monitoring-role"
