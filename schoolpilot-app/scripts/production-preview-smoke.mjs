@@ -417,7 +417,9 @@ export function responseBodyFor(
     apiFailure('preview_api_request_not_allowlisted');
   }
 
-  if (testCase.persona !== personas.classpilotTeacher) {
+  // Login handoff uses the same teacher with one membership to avoid a school
+  // picker. Its protected reads still need the exact allowlisted fixtures.
+  if (testCase.persona !== personas.classpilotTeacher && testCase.persona !== classpilotLoginPersona) {
     apiFailure('preview_api_persona_invalid');
   }
 
