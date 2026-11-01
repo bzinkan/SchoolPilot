@@ -23,6 +23,18 @@ let base = "";
 const sessions: Record<string, string> = {};
 const scoped = <T>(action: () => Promise<T>) => runWithTenantContext({ schoolId: school }, action);
 
+async function addClass(groupId: string, name: string, status = "active") {
+  const client = await fixture.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,$4,'admin_class',$5)",[groupId,school,teacher,name,status]);
+    await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')",[groupId,teacher]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK"); throw error;
+  } finally { client.release(); }
+}
+
 async function addSession(key: string, groupId: string, state: string | null, options: {
   mode?: string; teacherId?: string; end?: string | null; expired?: boolean; skipped?: boolean;
   observed?: number; eligible?: number; partial?: number; none?: number; notExpected?: number;
@@ -75,7 +87,7 @@ before(async () => {
     await fixture.query("INSERT INTO settings(school_id,school_name,ws_shared_key,retention_hours) VALUES($1,'Adoption school','synthetic-only','720')",[id]);
   }
   for (const id of students) await fixture.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Fixture','Student','active')",[id,school]);
-  for (const [name,id] of Object.entries(groups)) await fixture.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,$4,'admin_class',$5)",[id,school,teacher,name,name === "archived" ? "archived" : "active"]);
+  for (const [name,id] of Object.entries(groups)) await addClass(id,name,name === "archived" ? "archived" : "active");
   await addSession("readyA",groups.math,"ready",{eligible:100,observed:90,partial:1,notExpected:1,unavailable:1});
   await addSession("readyB",groups.math,"ready",{mode:"scheduled_report",teacherId:scheduledTeacher,end:"2026-10-29 14:46:00",eligible:900,observed:450,partial:1,none:1});
   await fixture.query("INSERT INTO classpilot_session_summary_deliveries(school_id,teaching_session_id,recipient_kind,recipient_email,state) VALUES($1,$2,'teacher','fixture@adoption.example.edu','failed')",[school,sessions.readyA]);
@@ -215,7 +227,7 @@ test("both repeated school-local hours on the fall-back day belong to Today exac
 
 test("a class starter and assigned primary teacher do not multiply a completed session",async () => {
   const groupId = randomUUID();
-  await fixture.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Two primary snapshots','admin_class','active')",[groupId,school,teacher]);
+  await addClass(groupId,"Two primary snapshots");
   const ready = await addSession("twoPrimaryReady",groupId,"ready",{teacherId:scheduledTeacher,eligible:100,observed:50,partial:1});
   const failed = await addSession("twoPrimaryFailed",groupId,"failed",{teacherId:scheduledTeacher,attempts:4});
   for (const id of [ready,failed]) await fixture.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,staff_name_snapshot) VALUES($1,$2,$3,'primary','Assigned primary teacher')",[school,id,teacher]);
@@ -240,7 +252,7 @@ for (const scenario of [
   {key:"midnightRangeStart",period:"7d",end:"2026-10-26 04:30:00",date:"2026-10-25",observation:"2026-10-26T03:50:00Z",version:"2.9.4",clients:4},
 ]) test(`${scenario.key}: end-selected sessions retain observations from before the local range start`,async () => {
   const groupId = randomUUID(), clientId = randomUUID();
-  await fixture.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,$4,'admin_class','active')",[groupId,school,teacher,scenario.key]);
+  await addClass(groupId,scenario.key);
   const id = await addSession(scenario.key,groupId,"ready",{end:scenario.end,eligible:100,observed:100});
   // Frozen membership is captured at the lesson start, including on the first day of the range.
   await fixture.query("UPDATE classpilot_session_students SET captured_at=(SELECT start_time AT TIME ZONE 'UTC' FROM teaching_sessions WHERE id=$1) WHERE teaching_session_id=$1",[id]);
