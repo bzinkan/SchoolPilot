@@ -171,18 +171,41 @@ export async function getClasspilotAdoptionClients(schoolId: string, period?: st
   const c = await context(schoolId,period,options);
   // Exact accepted observations and frozen membership establish the window. Mutable
   // roster/device assignments and latest fleet inventory are not historical evidence.
-  const result = await db.execute<{version:string|null;count:number}>(sql`WITH ${completed(c)},clients AS (
-    SELECT DISTINCT ON (observed.device_id) NULLIF(btrim(observed.extension_version),'') AS version
+  // Merge overlapping frozen windows, then seek the latest qualifying check-in
+  // per client. Walking distinct client IDs through the existing school/device
+  // index avoids scanning every retained heartbeat to enumerate those clients.
+  const result = await db.execute<{version:string|null;count:number}>(sql`WITH RECURSIVE ${completed(c)},student_windows AS MATERIALIZED (
+    SELECT frozen.student_id,
+      range_agg(tsrange(GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC'),c.end_time,'[)')) AS eligible,
+      min(GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC')) AS window_start,max(c.end_time) AS window_end
     FROM completed c JOIN classpilot_session_students frozen
       ON frozen.school_id=${c.schoolId} AND frozen.teaching_session_id=c.id
+    WHERE GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC')<c.end_time
+    GROUP BY frozen.student_id
+  ),bounds AS (
+    SELECT min(window_start) AS window_start,max(window_end) AS window_end FROM student_windows
+  ),client_ids(device_id) AS (
+    (SELECT h.device_id FROM heartbeats h WHERE h.school_id=${c.schoolId} AND EXISTS(SELECT 1 FROM student_windows)
+      ORDER BY h.device_id LIMIT 1)
+    UNION ALL
+    SELECT next.device_id FROM client_ids previous CROSS JOIN LATERAL (
+      SELECT h.device_id FROM heartbeats h WHERE h.school_id=${c.schoolId} AND h.device_id>previous.device_id
+      ORDER BY h.device_id LIMIT 1
+    ) next
+  ),clients AS (
+    SELECT NULLIF(btrim(observed.extension_version),'') AS version FROM client_ids client
     CROSS JOIN LATERAL (
-      SELECT DISTINCT ON (h.device_id) h.device_id,h.extension_version,h.timestamp,h.id
-      FROM heartbeats h WHERE h.school_id=${c.schoolId} AND h.student_id=frozen.student_id
-        AND h.timestamp>=GREATEST(c.start_time,frozen.captured_at AT TIME ZONE 'UTC')
-        AND h.timestamp>${utcTimestampForSql(c.cutoff)}::timestamp AND h.timestamp<c.end_time
-      ORDER BY h.device_id,h.timestamp DESC,h.id DESC
+      SELECT h.extension_version FROM heartbeats h WHERE h.school_id=${c.schoolId} AND h.device_id=client.device_id
+        AND h.timestamp>${utcTimestampForSql(c.cutoff)}::timestamp
+        AND h.timestamp>=(SELECT window_start FROM bounds) AND h.timestamp<(SELECT window_end FROM bounds)
+        AND EXISTS (
+          SELECT 1 FROM student_windows windows WHERE windows.student_id=h.student_id AND windows.eligible @> h.timestamp
+          -- Keep this as a check on the ordered index seek, rather than a join
+          -- that reads and sorts the client's entire retained history first.
+          OFFSET 0
+        )
+      ORDER BY h.timestamp DESC,h.id DESC LIMIT 1
     ) observed
-    ORDER BY observed.device_id,observed.timestamp DESC,observed.id DESC
   ) SELECT version,count(*)::int AS count FROM clients GROUP BY version ORDER BY version NULLS LAST`);
   return {...publicContext(c),totalClients:result.rows.reduce((total,row)=>total+row.count,0),versions:result.rows};
 }
