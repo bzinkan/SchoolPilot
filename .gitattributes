@@ -3,3 +3,4 @@ infra/modules/turn/user-data.sh.tftpl text eol=lf
 infra/modules/turn/relay-metrics.py text eol=lf
 infra/modules/turn/refresh-certificate.sh text eol=lf
 tests/fixtures/restriction-resource-matcher-cases.json text eol=lf
+scripts/load/usage/linux-runner/*.sh text eol=lf
