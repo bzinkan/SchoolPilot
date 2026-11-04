@@ -190,7 +190,8 @@ const KNOWN_AI_TOOLS = new Set([
   "copilot.microsoft.com", "quillbot.com", "deepseek.com", "you.com",
 ]);
 
-// Reviewed unsafe domain rules create alerts; no classification closes a tab.
+// Reviewed unsafe domain rules create alerts; the heartbeat safety dispatcher
+// independently requests closure of the exact current offending tab.
 const KNOWN_UNSAFE: Map<string, UnsafeSearchType> = new Map([
   ["pornhub.com", "sexual"], ["xvideos.com", "sexual"], ["xnxx.com", "sexual"],
   ["xhamster.com", "sexual"], ["redtube.com", "sexual"], ["youporn.com", "sexual"],

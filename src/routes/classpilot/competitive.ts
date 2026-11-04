@@ -984,12 +984,12 @@ export async function recordBrowserSafetyTimeline(options: {
   url: string;
   title?: string;
   classification: any;
-  /** Retained for caller compatibility; AI safety processing is always review-first. */
+  /** Requested action; close-tab does not assert client-confirmed closure. */
   actionTaken?: "close-tab" | "alert-only";
 }) {
   const safetyAlert = options.classification?.safetyAlert;
   if (!safetyAlert) return null;
-  const actionTaken = "alert-only";
+  const actionTaken = options.actionTaken ?? "alert-only";
   const { classpilotBrowserSafetySeverity } = await import("../../services/classpilotBrowserSafetySeverity.js");
   const severity = classpilotBrowserSafetySeverity(options.classification);
   const recorded = await recordSafetyAlert({
@@ -1036,7 +1036,7 @@ export async function recordBrowserSafetyTimeline(options: {
     title: `Browser safety alert: ${safetyAlert}`,
     summary: describeClasspilotSafetyReason(options.classification),
     severity,
-    metadata: toPublicBrowserSafetyTimelineMetadata(options.classification),
+    metadata: toPublicBrowserSafetyTimelineMetadata(options.classification, actionTaken),
   });
   return { caseId: recorded.caseId, decisionId: decision.id, created:true };
 }

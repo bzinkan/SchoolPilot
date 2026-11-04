@@ -160,6 +160,13 @@ describe("ClassPilot public AI decision serialization", () => {
     assert.equal("actorUserId" in (timeline as any), false);
   });
 
+  it("records requested safety closure without accepting identifiers or a classifier-supplied action", () => {
+    const classification = { domain: "google.com", safetyAlert: "sexual", actionTaken: "closed", deviceId: "private" };
+    assert.equal(toPublicBrowserSafetyTimelineMetadata(classification, "close-tab").actionTaken, "close-tab");
+    assert.equal(toPublicBrowserSafetyTimelineMetadata(classification).actionTaken, "alert-only");
+    assert.equal("deviceId" in toPublicBrowserSafetyTimelineMetadata(classification, "close-tab"), false);
+  });
+
   it("allowlists ClassPilot AI timeline metadata from legacy persisted rows", () => {
     const metadata = toPublicClasspilotAiTimelineMetadata({
       domain: "example.edu",

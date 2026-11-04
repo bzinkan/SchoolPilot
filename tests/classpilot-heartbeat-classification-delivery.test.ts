@@ -13,8 +13,14 @@ const executable = ts.transpileModule(`async function heartbeatAfterPersistence(
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 type Fields = Record<string, unknown>;
-function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean; observedUrl?: string; classificationResult?: Awaited<ReturnType<typeof import("../src/services/aiClassification.js").classifyUrl>> } = {}) {
-  const order: string[] = [], historical: Fields[] = [], published: Fields[] = [], tracked: Promise<unknown>[] = [];
+type SafetyClose = {
+  action: NonNullable<ReturnType<typeof resolveCurrentClasspilotSafetyAction>>;
+  schoolId: string; studentId: string; studentSessionId: string; deviceId: string;
+  expectedControlRevision: number; deliveredControlRevision: number;
+};
+function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean; observedUrl?: string; suppressed?: boolean; timelineCreated?: boolean; timelineFailure?: boolean; closeFailure?: boolean; classificationResult?: Awaited<ReturnType<typeof import("../src/services/aiClassification.js").classifyUrl>> } = {}) {
+  const order: string[] = [], historical: Fields[] = [], published: Fields[] = [], tracked: Promise<unknown>[] = [], safetyTimeline: Fields[] = [];
+  const safetyCloses: SafetyClose[] = [];
   let releaseClassification!: () => void;
   let releaseForeground!: () => void;
   const classificationReady = options.delayedClassification ? new Promise<void>(resolve => { releaseClassification = resolve; }) : Promise.resolve();
@@ -23,7 +29,8 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
   const phaseCounters: Array<{ counter: string; operation: string }> = [];
   const snapshot = { revision: 3, observedAt: 1000, activeTabUrl: options.observedUrl ?? "https://www.ixl.com/math", heartbeatId: "heartbeat",
     state: "active", schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device",
-    allOpenTabs: [], classroomState: { teachingSessionId: "class" } };
+    activeTabRef: "unsafe-tab", tabSnapshotRevision: 7, extensionCapabilities: ["exactTabCloseV1"],
+    allOpenTabs: [{ tabRef: "unsafe-tab", url: options.observedUrl ?? "https://www.ixl.com/math", title: "Synthetic lesson" }], classroomState: { teachingSessionId: "class" } };
   const classification = options.classificationResult ?? { category: "educational", contentCategory: "education", safetyAlert: options.safety ? "violence" : null, domain: "www.ixl.com" };
   const context = {
     Promise, Date, trackingWindowScreenshotLeaseNegotiated: false, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
@@ -33,7 +40,7 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
     activeTabUrl: snapshot.activeTabUrl, activeTabTitle: "Synthetic lesson", favicon: undefined, allOpenTabs: [], screenshotHealth: undefined,
     extensionVersion: "2.9.7", chromeVersion: "120", screenLocked: false, flightPathActive: false, activeFlightPathName: undefined,
     isScreenSharing: false, isScreenRecording: false, cameraActive: false, visibilityState: "visible", trackingStatus: "active",
-    restrictionAuthStateByDevice: new Map(), MAX_DEVICE_HEARTBEAT_ENTRIES: 100, classroomState: { restrictions: {} },
+    restrictionAuthStateByDevice: new Map(), MAX_DEVICE_HEARTBEAT_ENTRIES: 100, classroomState: { revision: 2, restrictions: {} },
     setBoundedMap(map: Map<string, unknown>, key: string, value: unknown) { map.set(key, value); },
     classpilotRestrictionAuthTransitionMetric() { return null; }, recordHeartbeatHotPathCounter(counter: string) { counters.push(counter); },
     recordUsageCapacityCounter(counter: string, operation: string) { phaseCounters.push({ counter, operation }); },
@@ -48,7 +55,8 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
     async patchClasspilotRealtimeClassification() { order.push("realtime-classification"); return options.staleAtClassification
       ? { status: "stale", snapshot: null } : { status: "updated", snapshot: { ...snapshot, revision: 4 } }; },
     updateDeviceClassification() { order.push("memory-classification"); },
-    async isSafetyUrlSuppressed() { return false; },
+    async isSafetyUrlSuppressed() { return options.suppressed === true; },
+    classpilotTeacherIntentForUrl() { return null; }, async schoolAllowedDomainsForTaskIntent() { return []; },
     async runWithTenantContext(_scope: Fields, action: () => Promise<unknown>) { return action(); },
     async publishRevisionedRealtimeUpdate(_snapshot: Fields, message: Fields) {
       order.push(`authority:${message.type}`);
@@ -60,12 +68,21 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
       order.push("safety-fence");
       return resolveCurrentClasspilotSafetyAction(input);
     },
-    async loadClasspilotSafetyContext() { return { studentName: "Synthetic student" }; }, describeClasspilotSafetyReason() { return "Synthetic reason"; },
-    async recordBrowserSafetyTimeline() { order.push("safety-timeline"); return { created: true }; },
+    async dispatchClasspilotSafetyClose(input: SafetyClose) {
+      order.push("safety-close"); safetyCloses.push(input);
+      if (options.closeFailure) throw new Error("Synthetic safety dispatch failure");
+      return true;
+    },
+    async loadClasspilotSafetyContext() { order.push("safety-context"); return { studentName: "Synthetic student" }; }, describeClasspilotSafetyReason() { return "Synthetic reason"; },
+    async recordBrowserSafetyTimeline(input: Fields) {
+      order.push("safety-timeline"); safetyTimeline.push(input);
+      if (options.timelineFailure) throw new Error("Synthetic safety persistence failure");
+      return { created: options.timelineCreated !== false };
+    },
     broadcastToStaffSessionLocal() { order.push("safety-local-alert"); }, async publishWS() { order.push("safety-remote-alert"); return true; },
   };
   const run: () => Promise<unknown> = runInNewContext(executable, context);
-  return { run, order, historical, published, tracked, counters, phaseCounters, release: () => releaseClassification?.(), releaseForeground: () => releaseForeground?.(),
+  return { run, order, historical, published, tracked, counters, phaseCounters, safetyCloses, safetyTimeline, release: () => releaseClassification?.(), releaseForeground: () => releaseForeground?.(),
     drain: async () => { await Promise.allSettled(tracked); } };
 }
 
@@ -81,6 +98,65 @@ test("heartbeat registers historical classification before a failed foreground a
   assert.equal(f.historical[0]?.heartbeatId, "heartbeat");
   assert.deepEqual(f.counters, ["heartbeatOptionalTelemetryFailures"]);
   assert.deepEqual(f.phaseCounters, [{ counter: "heartbeatOptionalTelemetryFailures", operation: "heartbeat_background" }]);
+});
+
+test("flagged porn and xxx searches close their exact current tab before safety reporting", async () => {
+  const { classifyUrl } = await import("../src/services/aiClassification.js");
+  for (const query of ["porn", "xxx"]) {
+    const observedUrl = `https://www.google.com/search?q=${query}`;
+    const result = await classifyUrl(observedUrl, `${query} - Google Search`);
+    assert.equal(result?.safetyAlert, "sexual");
+    assert.equal(result?.source, "search");
+    const f = fixture({ observedUrl, classificationResult: result });
+    await f.run(); await f.drain();
+    assert.equal(f.safetyCloses.length, 1, query);
+    const close = f.safetyCloses[0]; assert.ok(close);
+    assert.deepEqual({ schoolId: close.schoolId, studentId: close.studentId, studentSessionId: close.studentSessionId, deviceId: close.deviceId },
+      { schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device" });
+    assert.equal(close.expectedControlRevision, 3);
+    assert.equal(close.deliveredControlRevision, 2, "withheld ownership revisions must not leak into the client envelope");
+    const action = close.action;
+    assert.equal(action.classifiedUrl, observedUrl);
+    assert.deepEqual(action.closeTabData, { tabRefs: ["unsafe-tab"], snapshotRevision: 7 });
+    assert.ok(f.order.indexOf("safety-close") < f.order.indexOf("safety-context"));
+    assert.ok(f.order.indexOf("safety-close") < f.order.indexOf("safety-timeline"));
+    assert.equal(f.safetyTimeline[0]?.actionTaken, "close-tab", "the record describes the requested action, not a confirmed closure");
+    assert.ok(f.order.includes("safety-local-alert"));
+  }
+});
+
+test("repeated safety observations still close the tab when their alert was already recorded", async () => {
+  const f = fixture({ safety: true, timelineCreated: false });
+  await f.run(); await f.drain();
+  assert.equal(f.safetyCloses.length, 1);
+  assert.ok(f.order.indexOf("safety-close") < f.order.indexOf("safety-timeline"));
+  assert.equal(f.order.includes("safety-local-alert"), false, "duplicate notification suppression remains independent");
+});
+
+test("safety persistence failures do not prevent the independent tab-close attempt", async () => {
+  const f = fixture({ safety: true, timelineFailure: true });
+  await f.run(); await f.drain();
+  assert.equal(f.safetyCloses.length, 1);
+  assert.ok(f.order.indexOf("safety-close") < f.order.indexOf("safety-timeline"));
+});
+
+test("a safety close dispatch failure still records and broadcasts the concern", async () => {
+  const f = fixture({ safety: true, closeFailure: true });
+  await f.run(); await f.drain();
+  assert.equal(f.safetyCloses.length, 1);
+  assert.equal(f.safetyTimeline.length, 1);
+  assert.equal(f.safetyTimeline[0]?.actionTaken, "alert-only");
+  assert.ok(f.order.includes("safety-local-alert"));
+  assert.ok(f.order.includes("safety-remote-alert"));
+});
+
+test("safe, approved, and superseded observations never dispatch a safety close", async () => {
+  for (const options of [{}, { safety: true, suppressed: true }, { safety: true, staleAtWrite: true }, { safety: true, staleAtClassification: true }]) {
+    const f = fixture(options);
+    await f.run(); await f.drain();
+    assert.equal(f.safetyCloses.length, 0, JSON.stringify(options));
+    assert.equal(f.safetyTimeline.length, 0, JSON.stringify(options));
+  }
 });
 
 test("failed classification publication does not suppress current safety handling", async () => {
