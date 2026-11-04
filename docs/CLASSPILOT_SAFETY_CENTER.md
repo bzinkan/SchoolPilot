@@ -22,6 +22,10 @@ These changes reduce known false positives; they are not a guarantee of model ac
 
 Use the case, review, student-name, and school-local date filters to find a report. Open it to see individual concerns, the reported URL when retained, available explanation and evidence, observations, assignment, notes, delivery status, and administrator history.
 
+Initial and follow-up safety emails link directly to the selected student report at `https://school-pilot.net/classpilot/admin/safety?case=<caseId>`. These messages disable SendGrid click tracking for both plain text and HTML, so their links do not depend on the email tracking domain. Other email workflows retain their existing provider settings.
+
+If you need to sign in, the web app preserves the report destination through email/password or OAuth sign-in and any required school selection. The selected report loads independently of the report list's filters, including retained closed reports and merged-case redirects. An expired or inaccessible report shows an unavailable message; the link does not grant access or automatically switch schools.
+
 Alerts and administrator actions have independent pages of 100 entries. Use **Older alerts** or **Older actions** to continue, and the corresponding **Newest** button to return. Delivery details belong to the displayed alerts. Pagination preserves events that occurred within the same millisecond.
 
 - **Mark reviewed** records the assessment and stops the alert's pending follow-up. It does not approve future activity.
@@ -47,6 +51,24 @@ A `close-tab` action records a request, not client-confirmed closure. The websit
 School Allowed Domains and Flight Paths express classroom intent for off-task reporting. They do not approve safety content across a website. Use the exact URL approval in Safety Center to stop future safety alerts for a reviewed page, including its specific query and fragment.
 
 ## Operator rollout
+
+### Repairing links in previously sent emails
+
+The direct-link application change does not rewrite delivered emails. Older messages may contain `http://url6369.school-pilot.net/ls/click?...` tracking links. SchoolPilot's HSTS policy includes subdomains; the tracking hostname needs a valid HTTPS certificate even for an older HTTP link. Keep HSTS enabled.
+
+Deploy and verify direct safety-email links first, then use an agreed maintenance window outside school hours for the provider/DNS migration. The production sending credential may lack branding permissions; use an authenticated SendGrid administrator account and DNS access. Do not rotate the sending credential to perform this repair.
+
+Follow [SendGrid's existing-branding Auto SSL migration](https://help.twilio.com/articles/47689899318555-Enabling-SSL-for-Click-and-Open-Tracking):
+
+1. Privately capture the existing branding's account/subuser, region, default status, domain, subdomain, and DNS records. Save a synthetic tracked report link in a controlled inbox before migration. Do not test with a real student's email link or put tracking tokens in source control.
+2. Remove the existing link-branding entry and its old link-branding DNS records. Recreate it for `school-pilot.net` with **Use custom link subdomain** set to **url6369** and **Auto provision SSL certificate** enabled, retaining the original account/subuser and default status.
+3. Install exactly the new branding and certificate-validation DNS records returned by SendGrid, then verify them. Preserve unrelated sender authentication, SPF, DKIM, application DNS, and CloudFront settings.
+4. Wait for DNS propagation and certificate issuance. Existing links may not resolve during the transition; propagation can take up to 48 hours. If provisioning or verification fails, resolve the provider/DNS error rather than changing the tracking hostname or declaring the repair complete.
+5. Validate HTTPS certificate hostname checks without bypassing TLS verification. Open the saved pre-migration tracked link unchanged and confirm it reaches its original authenticated report. Check a newly delivered direct-link safety email through sign-in as well.
+
+SendGrid documents that previously sent links resolve after its same-subdomain migration is verified. A new hostname would not repair those links. Do not mass-resend student notifications or create a separate proxy for this procedure. Retain non-sensitive verification evidence and keep any account snapshots or synthetic tracking tokens outside source control.
+
+### Product rollout
 
 Apply the additive migrations and admit the reviewed tenant-table inventory before deploying the dependent API/UI and worker. Configure the existing secret-encryption key and email provider for durable URL approval and delivery. A missing provider is recorded as a delivery failure, not a successful send. Pilot alert volume and review actions before broad activation.
 

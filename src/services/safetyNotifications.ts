@@ -117,7 +117,7 @@ export async function dispatchSafetyNotifications(options:{send?:(message:EmailS
     const origin=process.env.PUBLIC_APP_URL||process.env.APP_URL||'https://school-pilot.net';
     // Missing provider configuration is not evidence that a safety notification was sent.
     const result:EmailSendResult=(options.providerConfigured??Boolean(process.env.SENDGRID_API_KEY))
-      ?await sendSafetyEmailBounded(options.send??sendEmailWithResult,{to:recipient,subject:first.kind==='followup'?'ClassPilot: unacknowledged student safety alerts':'ClassPilot: student safety report',text:safetyEmailText(eligible,eligible[0]?.timezone||'America/New_York',origin),customArgs:{workflow:'safety-center-v1'}})
+      ?await sendSafetyEmailBounded(options.send??sendEmailWithResult,{to:recipient,subject:first.kind==='followup'?'ClassPilot: unacknowledged student safety alerts':'ClassPilot: student safety report',text:safetyEmailText(eligible,eligible[0]?.timezone||'America/New_York',origin),customArgs:{workflow:'safety-center-v1'},disableClickTracking:true})
       :{status:'transient_failure',error:'EMAIL_PROVIDER_UNCONFIGURED'};
     recordRuntimePerformanceCounter(result.status==='sent'?(first.kind==='followup'?'safetyFollowupsSent':'safetyEmailsSent'):result.status==='unknown'?'safetyEmailUnknown':'safetyEmailFailures');
     const outcomes=new Map<string,{status:string;delaySeconds:number;ids:string[]}>();
