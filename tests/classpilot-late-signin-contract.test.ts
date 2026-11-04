@@ -312,20 +312,21 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
     devices,
     /trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl\([\s\S]*deliveredControlRevision: finalClassroomState\?\.revision \?\? 0/,
   );
-  // Safety findings now enter administrator review without authoring a device
-  // command. The runtime publish-gate suite verifies that legacy auto-close
-  // settings cannot restore the retired path.
+  // Safety closure uses the exact authenticated binding, retaining the
+  // distinction between the server ownership revision and the revision that
+  // the student was authorized to receive.
   const safetyEffects = section(
     devices,
     "const safetyAction = resolveCurrentClasspilotSafetyAction({",
     "const onForegroundFailure = () => {",
   );
   assert.match(safetyEffects, /realtimeMutation: realtimeClassification,[\s\S]*?schoolId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?deviceId,[\s\S]*?heartbeatId: heartbeat\.id/);
-  assert.match(safetyEffects, /if \(safetyAction\)[\s\S]*?recordBrowserSafetyTimeline\(\{[\s\S]*?actionTaken: "alert-only"/);
+  assert.match(safetyEffects, /if \(safetyAction\)[\s\S]*?dispatchClasspilotSafetyClose\(\{[\s\S]*?action: safetyAction,[\s\S]*?schoolId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?deviceId,[\s\S]*?expectedControlRevision: controlState\?\.revision \?\? 0,[\s\S]*?deliveredControlRevision: classroomState\?\.revision \?\? 0/);
+  assert.match(safetyEffects, /recordBrowserSafetyTimeline\(\{[\s\S]*?actionTaken: safetyCloseRequested \? "close-tab" : "alert-only"/);
   assert.doesNotMatch(
     safetyEffects,
     /classpilotControlStateExactBinding\(|revalidateClasspilotSafetyExactBinding\(|executeClasspilotCommand\(|type: "remote-control"|command: "close-tab"|authPassThrough:|controlRevision:/,
-    "alert-only safety processing must not reveal a deferred revision or send a control command"
+    "the route must delegate safety closure rather than construct an unchecked device command or reveal deferred state"
   );
   assert.match(
     source("../src/services/storage.ts"),

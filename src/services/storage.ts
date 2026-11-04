@@ -22370,7 +22370,8 @@ export async function revalidateClasspilotSafetyExactBinding(options: {
   deviceId: string;
   expectedControlRevision: number;
   deliveredControlRevision?: number;
-}): Promise<{ controlRevision: number } | undefined> {
+  classifiedUrl?: string;
+}, onAuthorized?: (binding: { controlRevision: number }) => void): Promise<{ controlRevision: number } | undefined> {
   if (!Number.isSafeInteger(options.expectedControlRevision) || options.expectedControlRevision < 0) {
     return undefined;
   }
@@ -22379,9 +22380,21 @@ export async function revalidateClasspilotSafetyExactBinding(options: {
   if (!Number.isSafeInteger(deliveredControlRevision) || deliveredControlRevision < 0) {
     return undefined;
   }
+  const { canonicalSafetyUrl, safetyUrlFingerprint } = await import("./safetyUrl.js");
+  const classifiedUrl = onAuthorized ? canonicalSafetyUrl(options.classifiedUrl) : null;
+  if (onAuthorized && !classifiedUrl) return undefined;
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    if (classifiedUrl) {
+      // Serialize approval/revocation with the close, using the Safety Center's
+      // URL lock before taking student-control locks. An approval may have
+      // committed since the classifier's earlier suppression check.
+      const fingerprint = safetyUrlFingerprint(options.schoolId, classifiedUrl);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`safety-url:${options.schoolId}:${fingerprint}`},0))`);
+      const { isSafetyUrlSuppressed } = await import("./safetyCenter.js");
+      if (await isSafetyUrlSuppressed(options.schoolId, classifiedUrl, transactionDb)) return undefined;
+    }
     await lockClasspilotStudentControlAuthorities(
       options.schoolId,
       [options.studentId],
@@ -22398,9 +22411,20 @@ export async function revalidateClasspilotSafetyExactBinding(options: {
       .limit(1)
       .for("share");
     const controlRevision = state?.revision ?? 0;
-    return controlRevision === options.expectedControlRevision
+    const binding = controlRevision === options.expectedControlRevision
       ? { controlRevision: deliveredControlRevision }
       : undefined;
+    // A school-policy close is transient: retain the student-control lock
+    // through synchronous delivery and relay initiation, and recheck the lease
+    // using the database clock after the control-state read.
+    if (binding && onAuthorized) {
+      // Time-based school/license expiry can pass while advisory locks wait;
+      // use a fresh uncached entitlement read after those waits as well.
+      await assertClasspilotEntitled(options.schoolId, transactionDb);
+      if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
+      assertClasspilotSynchronousAuthorityResult(onAuthorized(binding));
+    }
+    return binding;
   });
 }
 

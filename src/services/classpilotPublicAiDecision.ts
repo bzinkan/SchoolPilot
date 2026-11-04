@@ -121,7 +121,8 @@ export function toPublicAiDecisionTimelineMetadata(
 }
 
 export function toPublicBrowserSafetyTimelineMetadata(
-  classification: Record<string, unknown> | null | undefined
+  classification: Record<string, unknown> | null | undefined,
+  actionTaken: "close-tab" | "alert-only" = "alert-only",
 ): Record<string, unknown> {
   const safe = {
     domain: classification?.domain ?? null,
@@ -130,7 +131,7 @@ export function toPublicBrowserSafetyTimelineMetadata(
     safetyAlert: classification?.safetyAlert ?? null,
     confidence: classification?.confidence ?? null,
     matchedRule: classification?.source ?? null,
-    actionTaken: "alert-only",
+    actionTaken,
     teacherIntentSource: classification?.teacherIntentSource ?? null,
   };
   return redactClasspilotInternalIdentifiers(safe) as Record<string, unknown>;

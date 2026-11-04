@@ -139,8 +139,13 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
     websocket,
     /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?binding: \{[\s\S]*?schoolId: client\.schoolId!?,[\s\S]*?deviceId: client\.deviceId!?,[\s\S]*?studentId: client\.studentId!?,[\s\S]*?studentSessionId: client\.studentSessionId!?,[\s\S]*?controlRevision: delivered\?\.revision \?\? 0,[\s\S]*?classroomState: delivered/
   );
-  // Login is checked above. Assert each remaining delivery surface directly:
-  // alert-only safety processing no longer authors a device command envelope.
+  // Login is checked above. Safety closure delegates the exact-bound command
+  // and passes the delivered revision separately from server ownership.
+  assert.match(
+    heartbeat,
+    /dispatchClasspilotSafetyClose\(\{[\s\S]*?action: safetyAction,[\s\S]*?schoolId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?deviceId,[\s\S]*?expectedControlRevision: controlState\?\.revision \?\? 0,[\s\S]*?deliveredControlRevision: classroomState\?\.revision \?\? 0/
+  );
+  // Assert each remaining delivery surface directly.
   const settingsStart = devices.indexOf('router.get("/extension/settings"');
   const settingsEnd = devices.indexOf('router.post("/extension/student-login"', settingsStart);
   assert.ok(settingsStart >= 0 && settingsEnd > settingsStart);

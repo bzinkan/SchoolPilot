@@ -4,7 +4,7 @@ import { getSettingsForSchool, getStudentById } from "./storage.js";
 export type ClasspilotSafetyContext = {
   /** School-wide Allowed Domains (already validated on write). */
   allowedDomains: string[];
-  /** When false the school wants alerts without automatic tab closing. */
+  /** Legacy compatibility value; this does not control safety tab closure. */
   autoBlockUnsafeUrls: boolean;
   aiSafetyEmailsEnabled: boolean;
   /** Display name for staff surfaces; null when the student row is unavailable. */
@@ -22,7 +22,8 @@ const FAIL_SAFE_CONTEXT: ClasspilotSafetyContext = {
  * Loaded once per AI safety hit, never per heartbeat. Safety hits are rare, so
  * one short tenant-scoped read is acceptable; the heartbeat hot path itself
  * keeps using the cached tracking projection. Any failure degrades to the
- * review-first posture (no exemption, no automatic action, no name).
+ * reporting fallback (no exemption and no name). Exact-tab closure runs
+ * independently before this optional reporting context is loaded.
  */
 export async function loadClasspilotSafetyContext(options: {
   schoolId: string;

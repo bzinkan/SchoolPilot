@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import type { WebSocket } from "ws";
+import { Client } from "pg";
 
 // These values must be set before importing any application module: the
 // screenshot upload path resolves its cadence only for a school whose
@@ -22,6 +23,7 @@ process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
 process.env.CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1 = "true";
 process.env.CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1 = "true";
 process.env.CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1 = "true";
+process.env.CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2 = "true";
 
 // Several application modules own process-lifetime housekeeping intervals.
 // Keep only this worker's intervals non-blocking so the test worker can exit.
@@ -39,6 +41,7 @@ process.env.REDIS_URL = process.env.TEST_REDIS_URL;
 
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const { runWithTenantContext } = await import("../dist/middleware/tenantContext.js");
+const { tenantALS } = await import("../dist/db/tenantContext.js");
 const storage = await import("../dist/services/storage.js");
 const schema = await import("../dist/schema/index.js");
 const drizzle = await import("drizzle-orm");
@@ -673,9 +676,93 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
     assert.equal(limited.body.error, "Too many screenshot uploads, please wait");
   });
 
-  it("legacy auto-block and email flags produce safety cases for review and admin outbox without closing tabs", async () => {
-    await inSchool(() => storage.upsertSettings(schoolId, { autoBlockUnsafeUrls: true, aiSafetyEmailsEnabled: false,
-      allowedDomains: ["pornhub.com"] }));
+  it("revalidates safety delivery against the current session, device, revision and manual lease", async () => {
+    const controlState = await inSchool(() => storage.getClasspilotStudentControlState(schoolId, observed.studentId));
+    assert.ok(controlState);
+    const binding = { schoolId, studentId: observed.studentId, studentSessionId: observed.studentSessionId,
+      deviceId: observed.deviceId, expectedControlRevision: controlState.revision,
+      deliveredControlRevision: controlState.revision + 100, classifiedUrl: "https://www.google.com/search?q=xxx" };
+    let calls = 0;
+    const send = () => { calls += 1; };
+    assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(
+      { ...binding, studentSessionId: randomUUID() }, send)), undefined);
+    assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(
+      { ...binding, deviceId: `${observed.deviceId}-retired` }, send)), undefined);
+    assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(
+      { ...binding, expectedControlRevision: controlState.revision + 1 }, send)), undefined);
+    assert.equal(calls, 0, "retired bindings and stale control revisions must never reach synchronous delivery");
+
+    try {
+      await inSchool(() => db.update(studentSessions).set({ authKind: "manual_shared",
+        manualLeaseExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+        sessionRecoveryTokenHash: randomUUID().replaceAll("-", "").padEnd(64, "a"),
+      }).where(drizzle.eq(studentSessions.id, observed.studentSessionId)));
+      assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(binding, send)), undefined);
+      assert.equal(calls, 0, "an expired manual lease must never authorize safety delivery");
+    } finally {
+      await inSchool(() => db.update(studentSessions).set({ authKind: "managed_profile",
+        manualLeaseExpiresAt: null, sessionRecoveryTokenHash: null,
+      }).where(drizzle.eq(studentSessions.id, observed.studentSessionId)));
+    }
+  });
+
+  it("retains the control lock through the safety callback and preserves a deferred delivered revision", async () => {
+    const priorRls = process.env.RLS_GUC_ENABLED;
+    process.env.RLS_GUC_ENABLED = "true";
+    const contender = new Client({ connectionString: process.env.DATABASE_URL });
+    let callbackRan = false;
+    let checkedLock = false;
+    try {
+      await contender.connect();
+      await contender.query("BEGIN");
+      const lockKey = `classpilot:student-control:${schoolId}:${observed.studentId}`;
+      const binding = await inSchool(async () => {
+        const store = tenantALS.getStore();
+        assert.ok(store, "the lock probe requires one owned tenant checkout");
+        const controlState = await storage.getClasspilotStudentControlState(schoolId, observed.studentId);
+        assert.ok(controlState);
+        const deferredRevision = controlState.revision + 100;
+        const traced = new Proxy(store.db, {
+          get(target, property) {
+            if (property === "transaction") {
+              return (action: Parameters<typeof target.transaction>[0]) => target.transaction(async tx => {
+                const result = await action(tx);
+                assert.equal(callbackRan, true, "the authorized callback must run inside the transaction");
+                const probe = await contender.query("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey]);
+                assert.equal(probe.rows[0]?.acquired, false, "the control lock must remain held after synchronous delivery");
+                checkedLock = true;
+                return result;
+              });
+            }
+            const value = Reflect.get(target, property);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return tenantALS.run({ ...store, db: traced }, () => storage.revalidateClasspilotSafetyExactBinding({
+          schoolId, studentId: observed.studentId, studentSessionId: observed.studentSessionId, deviceId: observed.deviceId,
+          expectedControlRevision: controlState.revision, deliveredControlRevision: deferredRevision,
+          classifiedUrl: "https://www.google.com/search?q=xxx",
+        }, current => {
+          assert.equal(current.controlRevision, deferredRevision, "deferred foreground delivery must retain its delivered revision");
+          callbackRan = true;
+        }));
+      });
+      assert.ok(binding);
+      assert.equal(checkedLock, true);
+      const released = await contender.query("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey]);
+      assert.equal(released.rows[0]?.acquired, true, "the lock must release only after the delivery transaction commits");
+    } finally {
+      await contender.query("ROLLBACK").catch(() => {});
+      await contender.end();
+      if (priorRls === undefined) delete process.env.RLS_GUC_ENABLED;
+      else process.env.RLS_GUC_ENABLED = priorRls;
+    }
+  });
+
+  it("closes each harmful search's exact tab despite merged alerts and legacy flags, while retaining administrator review", async () => {
+    await inSchool(() => storage.upsertSettings(schoolId, { autoBlockUnsafeUrls: false, aiSafetyEmailsEnabled: false,
+      allowedDomains: ["google.com"] }));
+    const safetyCapabilities = [...ACCEPTED_CAPABILITIES, "exactTabCloseV2"];
     const delivered: Array<Record<string, unknown>> = [];
     const socket = {
       readyState: 1 as const,
@@ -683,13 +770,23 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
     } as WebSocket;
     registerWsClient(socket);
     authenticateWsClient(socket, { role: "student", schoolId, studentId: observed.studentId,
-      studentSessionId: observed.studentSessionId, deviceId: observed.deviceId, acceptedCapabilities: ACCEPTED_CAPABILITIES });
-    const unsafeUrl = 'https://pornhub.com/';
+      studentSessionId: observed.studentSessionId, deviceId: observed.deviceId, acceptedCapabilities: safetyCapabilities });
+    const unsafeUrl = "https://www.google.com/search?q=xxx";
+    const unsafeTabRef = "synthetic-harmful-search-tab";
+    const snapshotRevision = 7;
+    const safetyCloses = () => delivered.filter(frame => frame.type === "remote-control")
+      .map(frame => ({ frame, command: frame.command as Record<string, unknown> }))
+      .filter(({ command }) => command.type === "close-tab");
     const heartbeat = async () => {
       const response = await fetch(`${baseUrl}/api/classpilot/device/heartbeat`, {
         method: "POST", headers: { authorization: `Bearer ${observed.token}`, "content-type": "application/json" },
-        body: JSON.stringify({ clientProtocolVersion: 3, capabilities: ACCEPTED_CAPABILITIES,
-          activeTabUrl: unsafeUrl, activeTabTitle: "Synthetic known-list safety fixture" }),
+        body: JSON.stringify({ clientProtocolVersion: 3, capabilities: safetyCapabilities,
+          activeTabUrl: unsafeUrl, activeTabTitle: "Synthetic search safety fixture", activeTabRef: unsafeTabRef,
+          tabSnapshotRevision: snapshotRevision,
+          allOpenTabs: [
+            { tabRef: unsafeTabRef, url: unsafeUrl, title: "Synthetic search safety fixture" },
+            { tabRef: "synthetic-school-lesson-tab", url: `https://${domain}/lesson`, title: "School lesson" },
+          ] }),
       });
       assert.equal(response.status, 200);
       await response.json();
@@ -697,25 +794,69 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
     };
     try {
       await heartbeat();
+      assert.equal(safetyCloses().length, 1, "the first harmful search must issue an exact tab-close command");
       await heartbeat();
-      const alerts = await inSchool(() => db.execute(sql`SELECT a.id,a.case_id,a.observation_count,a.reviewed_at FROM student_safety_alerts a
+      const closes = safetyCloses();
+      assert.equal(closes.length, 2, "merging an alert must not suppress closure of a repeated harmful search");
+      const controlState = await inSchool(() => storage.getClasspilotStudentControlState(schoolId, observed.studentId));
+      assert.ok(controlState);
+      const exactBinding = { bindingVersion: 2, schoolId, deviceId: observed.deviceId,
+        studentId: observed.studentId, studentSessionId: observed.studentSessionId, controlRevision: controlState.revision };
+      for (const { frame, command } of closes) {
+        assert.equal(frame.studentId, observed.studentId);
+        assert.equal(frame.studentSessionId, observed.studentSessionId);
+        assert.deepEqual(frame.exactBinding, exactBinding);
+        assert.deepEqual(command.exactBinding, exactBinding);
+        assert.deepEqual(command.authority, { kind: "school_policy", schoolId, source: "ai_safety" });
+        assert.deepEqual(command.data, { tabRefs: [unsafeTabRef], snapshotRevision,
+          studentId: observed.studentId, studentSessionId: observed.studentSessionId });
+        assert.equal(frame.deliveryPolicy, "transient_action");
+        assert.equal(command.deliveryPolicy, "transient_action");
+        assert.equal(command.expiresAt, frame.expiresAt);
+        const remaining = Date.parse(String(frame.expiresAt)) - new Date().getTime();
+        assert.ok(remaining > 0 && remaining <= 15_000, "safety closure must retain its short delivery deadline");
+      }
+      const alerts = await inSchool(() => db.execute(sql`SELECT a.id,a.case_id,a.observation_count,a.reviewed_at,a.concern,a.classification_source,a.matched_term FROM student_safety_alerts a
         WHERE a.school_id=${schoolId} AND a.student_id=${observed.studentId}`));
       assert.equal(alerts.rows.length, 1);
       const alert = alerts.rows[0]!;
       assert.equal(alert.observation_count, 2);
       assert.equal(alert.reviewed_at, null);
-      const outbox = await inSchool(() => db.execute(sql`SELECT recipient,status FROM safety_notification_outbox
+      assert.equal(alert.concern, "sexual");
+      assert.equal(alert.classification_source, "search");
+      assert.equal(alert.matched_term, "xxx");
+      const decisions = await inSchool(() => db.execute(sql`SELECT action_taken FROM classpilot_ai_decisions
+        WHERE school_id=${schoolId} AND student_id=${observed.studentId} AND safety_alert='sexual'`));
+      assert.deepEqual(decisions.rows, [{ action_taken: "close-tab" }], "the decision must describe the requested closure");
+      const timeline = await inSchool(() => db.execute(sql`SELECT metadata->>'actionTaken' AS action_taken FROM student_timeline_events
+        WHERE school_id=${schoolId} AND student_id=${observed.studentId} AND event_type='browser_safety_alert'`));
+      assert.deepEqual(timeline.rows, [{ action_taken: "close-tab" }], "the timeline must preserve the requested action without claiming client confirmation");
+      const outbox = await inSchool(() => db.execute(sql`SELECT id,recipient,status FROM safety_notification_outbox
         WHERE school_id=${schoolId} AND alert_id=${alert.id} AND kind='initial'`));
-      assert.deepEqual(outbox.rows, [{ recipient: `${tag}-admin@${domain}`, status: 'pending' }]);
+      assert.deepEqual(outbox.rows.map(row => ({ recipient: row.recipient, status: row.status })),
+        [{ recipient: `${tag}-admin@${domain}`, status: 'pending' }]);
       const commands = await inSchool(() => db.execute(sql`SELECT command_type FROM classpilot_commands WHERE school_id=${schoolId}`));
-      assert.equal(commands.rows.length, 0);
-      assert.equal(delivered.some(item => ['close-tab','close-tabs','close-url','block-url'].includes(String(item.type))), false);
+      assert.equal(commands.rows.length, 0, "automatic safety closure must not invent teacher command authority");
+      const settings = await inSchool(() => storage.getSettingsForSchool(schoolId));
+      assert.deepEqual(settings?.blockedDomains ?? [], [], "closing a harmful query must not block Google or another whole website");
       await inSchool(() => safety.reviewSafetyAlert({ schoolId, alertId: String(alert.id), actorId: safetyAdminId, revision: 0, action: 'suppress' }));
+      let approvedUrlDelivered = false;
+      const approvedBinding = await inSchool(() => storage.revalidateClasspilotSafetyExactBinding({
+        schoolId, studentId: observed.studentId, studentSessionId: observed.studentSessionId, deviceId: observed.deviceId,
+        expectedControlRevision: controlState.revision, deliveredControlRevision: controlState.revision, classifiedUrl: unsafeUrl,
+      }, () => { approvedUrlDelivered = true; }));
+      assert.equal(approvedBinding, undefined, "a late exact-URL approval must invalidate an already classified safety action");
+      assert.equal(approvedUrlDelivered, false, "the locked approval recheck must prevent stale approved-URL closure");
       await heartbeat();
+      assert.equal(safetyCloses().length, 2, "an exact approved URL must not be automatically closed again");
       const current = [...sharedRealtimeRows.values()].map(raw => JSON.parse(raw)).find(row => row.studentId === observed.studentId);
       assert.equal(current.aiClassification.safetyAlert, null);
       const after = await inSchool(() => db.execute(sql`SELECT observation_count FROM student_safety_alerts WHERE school_id=${schoolId} AND id=${alert.id}`));
       assert.equal(after.rows[0]?.observation_count, 2);
+      const afterOutbox = await inSchool(() => db.execute(sql`SELECT id,recipient,status FROM safety_notification_outbox
+        WHERE school_id=${schoolId} AND alert_id=${alert.id} AND kind='initial'`));
+      assert.deepEqual(afterOutbox.rows, outbox.rows.map(row => ({ ...row, status: "cancelled" })),
+        "approval may cancel the existing unsent notification but must not recreate it");
     } finally { removeWsClient(socket); }
   });
 

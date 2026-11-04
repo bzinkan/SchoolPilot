@@ -38,7 +38,11 @@ The durable delivery log distinguishes pending, sending, accepted, cancelled, fa
 
 Exact URL approvals are encrypted school configuration and persist until revoked. Raw browser URLs, heartbeats, email bodies, and screenshot content retain their independent retention limits. Minimal case provenance stays while a case is open and for at least the greater of 90 days or school retention after closure. The existing count/delete rollout control still governs case-spine deletion. Historical exported evidence packets are not rewritten.
 
-AI detections leave tabs open. Existing teacher commands and explicit school/classroom restrictions continue to apply. The former Settings controls for AI safety emails and automatic tab closure do not control this workflow.
+During normal monitored browsing, a qualifying harmful search or unsafe-page detection immediately requests closure of the exact offending tab and records the concern for administrator review. Each repeated detection can request closure even when its alert merges with an existing report. Closure does not wait for evidence capture or notification delivery. The former Settings controls for AI safety emails and automatic tab closure do not disable this workflow.
+
+Closure requires the current authenticated student/session/device binding and a trustworthy tab target. Stale bindings, changed control authority, missing targets and ambiguous legacy URLs do not broaden into closing other tabs. A saved exact-URL approval suppresses subsequent detection and automatic closure for that URL. Allowed Domains and Flight Paths do not exempt harmful searches.
+
+A `close-tab` action records a request, not client-confirmed closure. The website's **Not blocked**/**Block saved** label and school-wide **Enforcement** counts describe the administrator's website policy; they do not report whether this particular safety tab closed. Closing a harmful Google query does not add Google to the school blocklist. The separate after-hours safety-only collector has no tab snapshot and continues to report concerns without inventing an exact tab target. Existing teacher commands and explicit school/classroom restrictions continue to apply.
 
 School Allowed Domains and Flight Paths express classroom intent for off-task reporting. They do not approve safety content across a website. Use the exact URL approval in Safety Center to stop future safety alerts for a reviewed page, including its specific query and fragment.
 

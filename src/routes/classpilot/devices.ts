@@ -248,6 +248,7 @@ import {
   resolveCurrentClasspilotSafetyAction,
 } from "../../services/classpilotSafetyAction.js";
 import { loadClasspilotSafetyContext } from "../../services/classpilotSafetyContext.js";
+import { dispatchClasspilotSafetyClose } from "../../services/classpilotSafetyClose.js";
 import { resolveClasspilotEntitlement } from "../../services/classpilotEntitlement.js";
 import { scheduleClasspilotCommandUpdate } from "../../services/classpilotCommandUpdateScheduler.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
@@ -4585,6 +4586,13 @@ router.post("/device/heartbeat",
             // stale result, but no evidence, staff alert, or email may
             // escape unless this exact heartbeat still owns the active binding.
             if (safetyAction) {
+              // Attempt the exact offending tab on every detection, even when
+              // the alert merges or evidence/notification work fails later.
+              const safetyCloseRequested = await dispatchClasspilotSafetyClose({
+                action: safetyAction, schoolId, studentId, studentSessionId, deviceId,
+                expectedControlRevision: controlState?.revision ?? 0,
+                deliveredControlRevision: classroomState?.revision ?? 0,
+              }).catch(() => false);
               // Ordinary allowed-site/Flight Path rules express teaching intent.
               // Only exact administrator Safety URL approvals suppress safety alerts.
               const safetyContext = await loadClasspilotSafetyContext({ schoolId, studentId });
@@ -4602,7 +4610,7 @@ router.post("/device/heartbeat",
                   url: safetyAction.classifiedUrl,
                   title: safetyAction.classifiedTitle,
                   classification,
-                  actionTaken: "alert-only",
+                  actionTaken: safetyCloseRequested ? "close-tab" : "alert-only",
                 }).catch(() => null);
                 let captureRequest: {
                   requestId: string;
@@ -4681,7 +4689,7 @@ router.post("/device/heartbeat",
                 matchedTerm: classification.matchedTerm ?? null,
                 source: classification.source ?? null,
                 reason: safetyReason,
-                actionTaken: "alert-only",
+                actionTaken: safetyCloseRequested ? "close-tab" : "alert-only",
                 timestamp: new Date().toISOString(),
               };
               const alertSessionId = safetyAction.teachingSessionId;
