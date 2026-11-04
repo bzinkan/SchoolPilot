@@ -50,8 +50,30 @@ test("41 already-pending alerts for one student and recipient produce one bounde
   const send=async(message:EmailSendOptions)=>{sent.push(message);return {status:"sent" as const,providerMessageId:"cohort-one"};};
   await dispatchSafetyNotifications({providerConfigured:true,send});await dispatchSafetyNotifications({providerConfigured:true,send});
   assert.equal(sent.length,1);assert.equal(sent[0]!.to,data.recipients[0]);assert.match(sent[0]!.text!,/41 safety alert\(s\)/);
+  assert.equal(sent[0]!.disableClickTracking,true);
   assert.equal((sent[0]!.text!.match(/^• /gm)||[]).length,20);assert.match(sent[0]!.text!,/21 additional alert\(s\) are included/);assert(sent[0]!.text!.includes(`case=${alerts[0]!.caseId}`));
   const rows=await initialRows(data.schoolId);assert.equal(rows.length,41);assert(rows.every(row=>row.status==="sent"&&row.attempts===1&&row.provider_message_id==="cohort-one"&&row.submission_started_at));
+});
+
+test("follow-up digests preserve separate direct report links without click tracking",async()=>{
+  const data=await fixture(1,2),sent:EmailSendOptions[]=[];
+  const cases=[];
+  for(const studentId of data.students) cases.push((await observations(data.schoolId,studentId,1))[0]!.caseId);
+  const send=async(message:EmailSendOptions)=>{sent.push(message);return {status:"sent" as const,providerMessageId:`direct-${sent.length}`};};
+  await dispatchSafetyNotifications({providerConfigured:true,send});
+  assert.equal(sent.length,2);
+  await pool.query("UPDATE safety_notification_outbox SET due_at=now()-interval '1 second' WHERE school_id=$1 AND kind='followup'",[data.schoolId]);
+  await dispatchSafetyNotifications({providerConfigured:true,send});
+  assert.equal(sent.length,3);
+  const followup=sent[2]!;
+  assert.equal(followup.subject,"ClassPilot: unacknowledged student safety alerts");
+  assert.equal(followup.disableClickTracking,true);
+  for(const caseId of cases) assert(followup.text!.includes(`https://school-pilot.net/classpilot/admin/safety?case=${caseId}`));
+  assert(sent.every(message=>message.disableClickTracking===true));
+  await dispatchSafetyNotifications({providerConfigured:true,send});
+  assert.equal(sent.length,3,"Accepted initial and follow-up notifications are not resent");
+  const rows=(await pool.query("SELECT kind,status,attempts FROM safety_notification_outbox WHERE school_id=$1",[data.schoolId])).rows;
+  assert.equal(rows.length,4);assert(rows.every(row=>row.status==="sent"&&row.attempts===1));
 });
 
 test("interleaved report and recipient rows reserve complete bundles without extra emails on the next drain",async()=>{

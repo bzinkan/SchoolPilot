@@ -31,6 +31,8 @@ export type EmailSendOptions = {
   text?: string;
   html?: string;
   customArgs?: Record<string, string>;
+  /** Keep authenticated report links direct instead of using provider redirects. */
+  disableClickTracking?: boolean;
 };
 
 export type EmailSendResult =
@@ -66,6 +68,9 @@ export async function sendEmailWithResult(options: EmailSendOptions): Promise<Em
     if (options.html) msg.html = options.html;
     if (options.text) msg.text = options.text;
     if (options.customArgs) msg.customArgs = options.customArgs;
+    if (options.disableClickTracking) {
+      msg.trackingSettings = { clickTracking: { enable: false, enableText: false } };
+    }
     if (!msg.html && !msg.text) msg.text = options.subject;
     const [response] = await sgMail.send(msg);
     const rawMessageId = response?.headers?.["x-message-id"];
