@@ -40,6 +40,79 @@ function assertInvalid(policy: unknown, expectedCode?: string) {
 }
 
 describe("ClassPilot SSO policy validation", () => {
+  it("decodes reordered persisted defaults with fresh revisions and independent nested objects", () => {
+    const input = disabledClasspilotSsoPolicy();
+    const reordered = {
+      profiles: input.profiles.map(profile => ({
+        hostRules: profile.hostRules.map(rule => ({ includeSubdomains: rule.includeSubdomains, hostname: rule.hostname })),
+        startUrl: profile.startUrl, name: profile.name, id: profile.id,
+      })),
+      attemptTtlSeconds: input.attemptTtlSeconds, defaultProfileId: input.defaultProfileId,
+      enabled: input.enabled, schemaVersion: input.schemaVersion,
+    };
+    const first = classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: reordered, classpilotSsoPolicyRevision: 7 });
+    assert.deepEqual(first, { policy: canonicalizeClasspilotSsoPolicy(reordered), revision: 7, valid: true });
+    assert.notEqual(first.policy.profiles, reordered.profiles);
+    assert.notEqual(first.policy.profiles[0]!.hostRules[0], reordered.profiles[0]!.hostRules[0]);
+    first.policy.enabled = true;
+    first.policy.profiles[0]!.name = "Changed";
+    first.policy.profiles[0]!.hostRules[0]!.hostname = "evil.example.edu";
+    first.policy.profiles[0]!.hostRules.push({ hostname: "other.example.edu", includeSubdomains: true });
+    first.policy.profiles.pop();
+    const next = classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: reordered, classpilotSsoPolicyRevision: 9 });
+    assert.deepEqual(next, { policy: disabledClasspilotSsoPolicy(), revision: 9, valid: true });
+    const invalidRevision = classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: reordered, classpilotSsoPolicyRevision: -1 });
+    assert.equal(invalidRevision.revision, 0);
+  });
+
+  it("observes default-to-enabled-to-custom-to-default changes immediately", () => {
+    const input = disabledClasspilotSsoPolicy();
+    assert.equal(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: input }).policy.enabled, false);
+    input.enabled = true;
+    assert.deepEqual(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: input }), {
+      policy: canonicalizeClasspilotSsoPolicy(input), revision: 0, valid: true,
+    });
+    const customized = { ...customPolicy({ startUrl: "https://LOGIN.EXAMPLE.EDU/district" }), enabled: false };
+    assert.deepEqual(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: customized, classpilotSsoPolicyRevision: 11 }), {
+      policy: canonicalizeClasspilotSsoPolicy(customized), revision: 11, valid: true,
+    });
+    assert.deepEqual(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: disabledClasspilotSsoPolicy(), classpilotSsoPolicyRevision: 12 }), {
+      policy: disabledClasspilotSsoPolicy(), revision: 12, valid: true,
+    });
+  });
+
+  it("keeps malformed near-default policies fail closed", () => {
+    const base = disabledClasspilotSsoPolicy();
+    const invalid: unknown[] = [
+      { ...base, schemaVersion: 2 }, { ...base, enabled: "false" },
+      { ...base, attemptTtlSeconds: 301 }, { ...base, unexpected: true },
+      { schemaVersion: 1, enabled: false, defaultProfileId: "clever", profiles: base.profiles },
+      { ...base, profiles: [base.profiles[0], base.profiles[0]] },
+      { ...base, profiles: base.profiles.map(profile => ({ id: profile.id, startUrl: profile.startUrl, hostRules: profile.hostRules })) },
+      { ...base, profiles: base.profiles.map(profile => ({ ...profile, hostRules: profile.hostRules.map(rule => ({ hostname: rule.hostname })) })) },
+      { ...base, profiles: base.profiles.map(profile => ({ ...profile, startUrl: "https://evilclever.com/" })) },
+      { ...base, profiles: base.profiles.map(profile => ({ ...profile, hostRules: profile.hostRules.map(rule => ({ ...rule, includeSubdomains: true })) })) },
+      { ...base, profiles: base.profiles.map(profile => ({ ...profile, unexpected: true })) },
+      { ...base, profiles: base.profiles.map(profile => ({ ...profile, hostRules: profile.hostRules.map(rule => ({ ...rule, unexpected: true })) })) },
+    ];
+    for (const policy of invalid) {
+      assert.throws(() => canonicalizeClasspilotSsoPolicy(policy), ClasspilotSsoPolicyValidationError);
+      assert.deepEqual(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: policy, classpilotSsoPolicyRevision: 17 }), {
+        policy: disabledClasspilotSsoPolicy(), revision: 17, valid: false,
+      });
+    }
+    const throwing = new Proxy(base, { ownKeys() { throw new Error("Unreadable policy"); } });
+    assert.equal(classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: throwing }).valid, false);
+  });
+
+  it("preserves an omitted default profile on a disabled persisted policy", () => {
+    const base = disabledClasspilotSsoPolicy();
+    const input = { schemaVersion: base.schemaVersion, enabled: false, attemptTtlSeconds: base.attemptTtlSeconds, profiles: base.profiles };
+    const result = classpilotSsoPolicyFromSettings({ classpilotSsoPolicy: input, classpilotSsoPolicyRevision: 19 });
+    assert.deepEqual(result, { policy: canonicalizeClasspilotSsoPolicy(input), revision: 19, valid: true });
+    assert.equal(result.policy.defaultProfileId, null);
+  });
+
   it("canonicalizes a bounded HTTPS provider and retains a necessary query string", () => {
     const result = canonicalizeClasspilotSsoPolicy(customPolicy({
       startUrl: "https://Login.Example.Edu/start?district=alpha",
