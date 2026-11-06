@@ -55,7 +55,6 @@ import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { MANUAL_TODAY_QUERY, useManualToday } from '../hooks/useManualToday';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
-import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
 import { buildAvailableRoster, filterAvailableRoster, NO_AVAILABLE_CLASS, NO_AVAILABLE_GRADE } from '../lib/availableStudents';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
@@ -1049,7 +1048,6 @@ export default function Dashboard() {
   ), [activeSchoolId, activeSessionQueryKey, classReaderKey, isAdmin]);
 
   const staffCoverageEnabled = isAdmin || isTeacher;
-  const coverageFallbackInterval = wsAuthenticated ? false : 10000;
 
   const { data: coverageCapabilities = {} } = useQuery({
     queryKey: ['/api/coverage/capabilities', activeSchoolId, currentUser?.id],
@@ -1080,15 +1078,9 @@ export default function Dashboard() {
       testingNextBoundaryAt: data?.testingNextBoundaryAt || null,
     }),
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'available',
-    refetchInterval: query => {
-      const serverTime = Date.parse(query.state.data?.serverTime);
-      const offset = Number.isFinite(serverTime) ? serverTime - query.state.dataUpdatedAt : 0;
-      // A failed activation may produce no student-ownership event. Reconcile
-      // current labels while the socket is healthy as well as at boundaries.
-      return (query.state.data?.students || EMPTY_LIST).some(student => (
-        activeAvailableTestingGroup(student, Date.now() + offset)
-      )) ? 10000 : coverageFallbackInterval;
-    },
+    // Available has no student telemetry subscription. Keep its current page
+    // and presence fresh even while the classroom websocket is connected.
+    refetchInterval: 10000,
   });
   const availablePickupStudents = availablePickupData.students;
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;

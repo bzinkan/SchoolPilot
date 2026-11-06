@@ -8971,4 +8971,51 @@ test('licensed product sidebars follow the complete header and keep their first 
   }
 });
 
+test('Available current pages refresh while the WebSocket remains authenticated', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const now = new Date('2026-08-25T13:02:00Z');
+  await page.clock.setFixedTime(now);
+  const harness = await configureDashboard(page, { aggregate: aggregateController(), transportProbe: true });
+  let phase = 'stale';
+  let availableReads = 0;
+  await page.route('**/api/coverage/available-students', async route => {
+    availableReads += 1;
+    const observedAt = phase === 'stale' ? '2026-08-25T12:55:00Z' : now.toISOString();
+    const rows = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((studentId, index) => student({
+      studentId, studentName: index ? 'Scheduled student' : 'Available student',
+      supervisionState: 'available', supervisionContext: null, classes: [],
+      lastSeenAt: observedAt, realtimeObservedAt: observedAt,
+      activeTabTitle: `${phase} lesson ${index + 1}`,
+      activeTabUrl: `https://lesson.example.edu/${phase}/${index + 1}`,
+    }));
+    await route.fulfill({ json: { students: [rows[0]], scheduledCoverageGroups: [{
+      id: 'available-refresh-conflict', className: 'Scheduled science', teacherName: 'Scheduled teacher',
+      students: [rows[1]],
+    }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await waitUntil(() => harness.websocketConnections.some(connection => connection.authenticationResponses > 0),
+    'Available is tested with an authenticated live connection');
+  await page.getByTestId('button-view-available-students').click();
+  const availableCard = page.getByTestId(`card-available-student-${STUDENT_ID}`);
+  const scheduledCard = page.getByTestId(`card-scheduled-coverage-student-${SIGNED_OUT_STUDENT_ID}`);
+  await availableCard.getByText('Preview unavailable', { exact: true }).waitFor();
+  await scheduledCard.getByText('Preview unavailable', { exact: true }).waitFor();
+  phase = 'current';
+  await availableCard.getByText('https://lesson.example.edu/current/1', { exact: true }).waitFor({ timeout: 12_500 });
+  await scheduledCard.getByText('https://lesson.example.edu/current/2', { exact: true }).waitFor();
+  assert.match(await availableCard.innerText(), /current lesson 1/);
+  assert.match(await scheduledCard.innerText(), /current lesson 2/);
+  assert.equal(await availableCard.getByText('Preview unavailable', { exact: true }).count(), 0);
+  assert.equal(await scheduledCard.getByText('Preview unavailable', { exact: true }).count(), 0);
+
+  await page.getByTestId('button-view-class-students').click();
+  const readsAfterLeaving = availableReads;
+  await page.waitForTimeout(10_500);
+  assert.equal(availableReads, readsAfterLeaving, 'Available polling stops after leaving its view');
+  assert.deepEqual(harness.commandPosts, [], 'Reviewing current pages never sends student commands');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
