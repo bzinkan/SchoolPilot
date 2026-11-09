@@ -437,6 +437,103 @@ test('chat roster: Messages lists the whole class in the grid order with presenc
   await page.close();
 });
 
+test('unread messages: launcher and Next unread open every waiting conversation without closing Class tools', { timeout: 90_000 }, async () => {
+  const { page, harness } = await messagesPage({ students: rosterClass(), openPanel: false });
+  try {
+    const originalTitle = await page.title();
+    const originalIcon = await page.locator('link[rel="icon"]').getAttribute('href');
+    const messages = [
+      storedChatMessage({ id: 'unread-ben-1', studentId: SECOND_STUDENT_ID, content: 'Ben first', createdAt: '2026-09-18T14:02:00.000Z' }),
+      storedChatMessage({ id: 'unread-dee', studentId: FOURTH_STUDENT_ID, content: 'Dee later', createdAt: '2026-09-18T14:04:00.000Z' }),
+      storedChatMessage({ id: 'unread-cy', studentId: THIRD_STUDENT_ID, content: 'Cy oldest, read only', createdAt: '2026-09-18T14:01:00.000Z' }),
+      storedChatMessage({ id: 'unread-ben-2', studentId: SECOND_STUDENT_ID, content: 'Ben second', createdAt: '2026-09-18T14:03:00.000Z' }),
+    ];
+    for (const row of messages) await harness.sendWebSocketMessage(studentChatEvent(row));
+    const launcherMessages = page.getByTestId('class-tools-messages');
+    await launcherMessages.getByText('Messages 3', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.title.startsWith('(4) ClassPilot'));
+    assert.notEqual(await page.locator('link[rel="icon"]').getAttribute('href'), originalIcon);
+    await launcherMessages.focus();
+    await page.keyboard.press('Enter');
+    await threadText(page, 'Cy oldest, read only').waitFor();
+    await page.getByTestId('chat-thread-read-only').waitFor();
+    await expectChatUnread(page, 3);
+    await chatEvidence(page, 'unread-next-conversation', { unreadMessages: 3, unreadConversations: 2, selectedThreadReadOnly: true });
+    assert.equal(await page.getByTestId('class-tools-panel').isVisible(), true);
+    // Clicking Messages again advances rather than toggling the panel shut.
+    await launcherMessages.focus();
+    await page.keyboard.press('Enter');
+    await threadText(page, 'Ben first').waitFor();
+    await threadText(page, 'Ben second').waitFor();
+    await expectChatUnread(page, 1);
+    await page.getByTestId('chat-next-unread').click();
+    await threadText(page, 'Dee later').waitFor();
+    await expectChatUnread(page, 0);
+    assert.equal(await page.getByTestId('chat-next-unread').isDisabled(), true);
+    assert.equal(await page.getByTestId('chat-next-unread').innerText(), 'All caught up');
+    assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), FOURTH_STUDENT_ID);
+    assert.equal(await page.title(), originalTitle);
+    assert.equal(await page.locator('link[rel="icon"]').getAttribute('href'), originalIcon);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('unread messages: Next unread stays accessible in one pane with school messaging off and off-roster threads', { timeout: 90_000 }, async () => {
+  const { page, harness } = await messagesPage({ students: rosterClass() });
+  try {
+    await page.setViewportSize({ width: 600, height: 900 });
+    const rows = [
+      storedChatMessage({ id: 'unread-off-roster', studentId: 'off-roster-student', content: 'Former student message', createdAt: '2026-09-18T14:01:00.000Z' }),
+      storedChatMessage({ id: 'unread-school-off', studentId: SECOND_STUDENT_ID, content: 'Message before school switch off', createdAt: '2026-09-18T14:02:00.000Z' }),
+    ];
+    for (const row of rows) await harness.sendWebSocketMessage(studentChatEvent(row));
+    await expectChatUnread(page, 2);
+    await harness.setSettings({ schoolStudentMessagingEnabled: false });
+    await page.getByTestId('chat-school-off-banner').waitFor();
+    await page.getByTestId('chat-next-unread').click();
+    await threadText(page, rows[0].content).waitFor();
+    await page.getByTestId('chat-thread-read-only').waitFor();
+    assert.equal(await page.getByTestId('chat-conversations').count(), 0);
+    await expectChatUnread(page, 1);
+    await chatEvidence(page, 'unread-next-conversation-narrow', { unreadMessages: 1, schoolMessagingEnabled: false, singlePane: true });
+    await page.getByTestId('chat-next-unread').click();
+    await threadText(page, rows[1].content).waitFor();
+    await expectChatUnread(page, 0);
+    assert.equal(await page.getByTestId('chat-next-unread').isVisible(), true);
+    assert.equal(await page.getByTestId('chat-next-unread').isDisabled(), true);
+    assert.equal(await replyInput(page).isDisabled(), true);
+    assert.deepEqual(harness.commandPosts, []);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('unread messages: a visible but unfocused open thread retains arrivals until window focus returns', { timeout: 90_000 }, async () => {
+  const { page, harness, mutations } = await messagesPage({ students: rosterClass() });
+  try {
+    await page.getByTestId(`chat-conversation-${STUDENT_ID}`).click();
+    await page.getByTestId('chat-thread').waitFor();
+    // Window focus can be lost without document visibility changing, for
+    // example when the teacher works in another application beside Chrome.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
+      window.dispatchEvent(new Event('blur'));
+    });
+    const row = storedChatMessage({ id: 'unfocused-arrival', content: 'Please see this when you return' });
+    await harness.sendWebSocketMessage(studentChatEvent(row));
+    await threadText(page, row.content).waitFor();
+    await afterFrames(page);
+    assert.equal(await page.getByTestId('chat-drawer-unread-count').innerText(), '1');
+    assert.equal(mutations.filter(mutation => mutation.pathname.endsWith('/read')).length, 0);
+    await page.waitForFunction(() => document.title.startsWith('(1) ClassPilot'));
+    await page.evaluate(() => {
+      delete document.hasFocus;
+      window.dispatchEvent(new Event('focus'));
+    });
+    await expectChatUnread(page, 0);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); }
+});
+
 test('chat roster: "need reply", Find with Enter and Escape, arrow keys, a read-only With-staff row, and one pane', { timeout: 120_000 }, async () => {
   const fixture = await messagesPage({ students: rosterClass() });
   const { page, harness } = fixture;

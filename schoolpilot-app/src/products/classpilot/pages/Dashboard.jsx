@@ -191,8 +191,9 @@ import { desktopSourceKey } from '../lib/nativeDesktop';
 import { useClasspilotPreviewRecovery } from '../hooks/useClasspilotPreviewRecovery';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
+import useClasspilotMessageAlert from '../hooks/useClasspilotMessageAlert';
 import { chatStudentName, countUnreadByStudent, deriveChatConversations, describeChatReplyError, looksLikeQuestion } from '../lib/chatThreads';
-import { broadcastButtonLabel, buildMessagingRoster } from '../lib/chatRoster';
+import { broadcastButtonLabel, buildMessagingRoster, longestWaitingUnreadId } from '../lib/chatRoster';
 import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
 import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, tabActionFeedback, exactTabPayloadForStudents, exactTabCapability, tileFocusLifecycleObserved, tileFocusTelemetryObservedAt } from '../lib/focusControls';
@@ -2107,6 +2108,8 @@ export default function Dashboard() {
     () => deriveChatConversations(studentMessages, chatReplies, chatNameById),
     [studentMessages, chatReplies, chatNameById],
   );
+  useClasspilotMessageAlert(chatConversations.totalUnread);
+  const nextUnreadConversationId = longestWaitingUnreadId(chatConversations.conversations);
   // The class's hard messaging switch (a pause still lets the teacher write).
   // While it is off a tile offers no Message; its unread badge still opens a
   // thread that has unread messages, to read.
@@ -2548,7 +2551,7 @@ export default function Dashboard() {
               };
               if (!chat.receiveStudentMessage(newMsg)) return;
               const chatViewNow = chatViewRef.current;
-              if (chatViewNow.visible && chatViewNow.studentId === message.data.studentId && document.visibilityState === 'visible') {
+              if (chatViewNow.visible && chatViewNow.studentId === message.data.studentId && document.visibilityState === 'visible' && document.hasFocus()) {
                 // The teacher is looking at this thread: it reads as seen and needs no toast.
                 queueReadReceipts(chat.markRead(newMsg.id));
                 return;
@@ -8989,6 +8992,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           storageKey={`classpilot-tools:${activeSchoolId}:${currentUser?.id}`}
           open={chatView.open} tab={chatView.tab} suspended={Boolean(selectedStudentRow && !selectedStudentDetailsRevoked)}
           onOpen={(opener) => { chatOpenerRef.current = opener; setChatView(current => ({ ...current, open: true })); }}
+          onNextUnread={(opener) => openChatThread(nextUnreadConversationId, opener)}
           onClose={closeChatDrawer} onTabChange={(tab) => setChatView(current => ({ ...current, tab }))}
           onReserveWidth={setClassToolsReservedWidth}
           contextLabel={effectiveActivity?.groupName || effectiveActivity?.name || groups.find(group => group.id === effectiveActivity?.groupId)?.name || 'Current class'}

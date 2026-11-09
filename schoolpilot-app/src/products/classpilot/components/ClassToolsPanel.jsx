@@ -29,7 +29,7 @@ export function ClassTimerCountdown({ timer, className }) {
   </span>;
 }
 
-export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose, onTabChange, suspended = false, helpCount, unreadConversationCount,
+export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose, onTabChange, onNextUnread, suspended = false, helpCount, unreadConversationCount,
   contextLabel, recipientLabel, timer, onReserveWidth, renderMessages, help, activities, tools }) {
   const preferencesKey = `${storageKey}:layout:v1`;
   const [preferences, setPreferences] = useState(() => readPreferences(preferencesKey));
@@ -186,11 +186,22 @@ export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose
       </div>)}
       <footer className="border-t border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-slate-500 shrink-0">New actions for {recipientLabel}. Active tools keep their original recipients.</footer>
     </section>
-    {!suspended && !(narrow && visible) && <button ref={launcherRef} type="button" data-testid="teacher-fab" aria-expanded={visible} aria-label="Class tools" onClick={(event) => visible ? close() : onOpen(event.currentTarget)}
-      style={{ right: narrow ? 16 : x, bottom: narrow ? 16 : y }} className="fixed z-40 rounded-full bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 px-4 py-3 shadow-lg flex items-center gap-3 border border-white/20 focus-visible:ring-2 focus-visible:ring-amber-400">
-      <GraduationCap className="h-5 w-5" /><span className="text-sm font-semibold">Class tools</span>
-      <span className="text-xs" aria-label={`${helpCount} help requests`}>Help {helpCount}</span><span className="text-xs" aria-label={`${unreadConversationCount} unread conversations`}>Messages {unreadConversationCount}</span>
-      <ClassTimerCountdown timer={timer} className="text-sm" />
-    </button>}
+    {!suspended && !(narrow && visible) && <div
+      style={{ right: narrow ? 16 : x, bottom: narrow ? 16 : y }} role="group" aria-label="Class tools shortcuts"
+      className="fixed z-40 rounded-full bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 shadow-lg flex items-stretch border border-white/20">
+      <button ref={launcherRef} type="button" data-testid="teacher-fab" aria-expanded={visible} aria-label="Class tools" onClick={(event) => visible ? close() : onOpen(event.currentTarget)}
+        className="rounded-l-full px-4 py-3 flex items-center gap-3 focus-visible:ring-2 focus-visible:ring-amber-400">
+        <GraduationCap className="h-5 w-5" /><span className="text-sm font-semibold">Class tools</span>
+        <span className="text-xs" aria-label={`${helpCount} help requests`}>Help {helpCount}</span>
+        <ClassTimerCountdown timer={timer} className="text-sm" />
+      </button>
+      <button type="button" data-testid="class-tools-messages"
+        aria-label={unreadConversationCount > 0 ? `${unreadConversationCount} unread conversations. Open next unread conversation` : 'Open Messages'}
+        title={unreadConversationCount > 0 ? 'Open the oldest unread conversation' : 'Open Messages'}
+        onClick={(event) => onNextUnread(event.currentTarget)}
+        className={cn('rounded-r-full border-l border-white/20 px-3 py-3 text-xs focus-visible:ring-2 focus-visible:ring-amber-400', unreadConversationCount > 0 && 'bg-blue-600 text-white font-semibold hover:bg-blue-500')}>
+        <span aria-live="polite" aria-atomic="true">Messages {unreadConversationCount}</span>
+      </button>
+    </div>}
   </>;
 }
