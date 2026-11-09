@@ -82,21 +82,34 @@ function Invoke-NativeProcessIdentityRegression {
             $node.Name -ceq 'Test-BoundProcessPresent'
     }, $true)
     Assert-Condition ($null -ne $definition) 'The actual supervisor identity subject is missing.'
-    $subject = $definition.Extent.Text.Replace(
+    $wrapper = $definition.Extent.Text.Replace(
         'Test-BoundProcessPresent', 'Invoke-NativeIdentitySubject'
     )
-    $exitCheck = 'try { if ($process.HasExited) { return $false } } catch { }'
+    $observer = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Test-ObservedBoundProcessPresent'
+    }, $true)
+    Assert-Condition ($null -ne $observer) 'The actual process observation helper is missing.'
+    Assert-Condition ($wrapper.Contains('return Test-ObservedBoundProcessPresent $process $Identity')) `
+        'The native subject must delegate to the actual process observation helper.'
+    $subject = $observer.Extent.Text + [Environment]::NewLine + $wrapper
+    $exitCheck = @'
+        $observedExit = $false
+        try { $observedExit = $Process.HasExited } catch { }
+        if ($observedExit -eq $true) { return $false }
+'@
     Assert-Condition ($subject.Contains($exitCheck)) 'The proven-exit fence must remain in the actual subject.'
     # The native fault is injected only between process lookup and property
     # inspection; production still executes its real identity/exception path.
     $exitInjection = @'
         $script:NativeIdentityExitChild.StandardInput.WriteLine('exit')
-        if (-not $process.WaitForExit(5000)) { throw 'The controlled harmless child did not exit.' }
-        $actualStarted = ConvertTo-UtcString $process.StartTime
+        if (-not $Process.WaitForExit(5000)) { throw 'The controlled harmless child did not exit.' }
+        $actualStarted = ConvertTo-UtcString $Process.StartTime
 '@
     $legacy = $subject.Replace($exitCheck, '')
-    $forceExit = '$actualStarted = ConvertTo-UtcString $process.StartTime'
-    $forceAccessDenial = '$actualPath = [IO.Path]::GetFullPath($process.Path)'
+    $forceExit = '$actualStarted = ConvertTo-UtcString $Process.StartTime'
+    $forceAccessDenial = '$actualPath = [IO.Path]::GetFullPath($Process.Path)'
     $variants = @(
         @{name='legacy-live';code=$legacy;expected='present'},
         @{name='actual-live';code=$subject;expected='present'},
@@ -1359,6 +1372,57 @@ Assert-Condition (
 
 $workerText = Get-Content -LiteralPath $workerPath -Raw
 $supervisorText = Get-Content -LiteralPath $supervisorPath -Raw
+& {
+    # Load only the pure process-observation functions, never the supervisor's
+    # command entry point. Script properties make the exit race deterministic.
+    $processTokens = $null
+    $processErrors = $null
+    $processAst = [Management.Automation.Language.Parser]::ParseInput(
+        $supervisorText, [ref]$processTokens, [ref]$processErrors
+    )
+    foreach ($functionName in @(
+        'Get-Value','Get-RequiredValue','ConvertTo-UtcString','Test-ObservedBoundProcessPresent'
+    )) {
+        $definition = $processAst.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq $functionName
+        }, $true)
+        Assert-Condition ($null -ne $definition) "Missing process observation function: $functionName"
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $started = [datetime]::UtcNow
+    $identity = @{startedAtUtc=(ConvertTo-UtcString $started);path=$supervisorPath}
+    $live = [pscustomobject]@{StartTime=$started;Path=$supervisorPath;HasExited=$false}
+    Assert-Condition (Test-ObservedBoundProcessPresent $live $identity) `
+        'An exact live process identity must remain present.'
+    Assert-Condition (-not (Test-ObservedBoundProcessPresent $live @{
+        startedAtUtc=(ConvertTo-UtcString $started.AddSeconds(-1));path=$supervisorPath
+    })) 'A reused PID with another creation time must remain absent.'
+    foreach ($failedProperty in @('StartTime','Path')) {
+        $exited = [pscustomobject]@{StartTime=$started;Path=$supervisorPath;HasExited=$true}
+        $exited.PSObject.Properties.Remove($failedProperty)
+        $exited | Add-Member -MemberType ScriptProperty -Name $failedProperty -Value {
+            throw 'The process exited during identity inspection.'
+        }
+        Assert-Condition (-not (Test-ObservedBoundProcessPresent $exited $identity)) `
+            "A positively observed process exit during $failedProperty inspection must be absent."
+        $exited.HasExited = $false
+        Assert-Throws { Test-ObservedBoundProcessPresent $exited $identity } `
+            'bound process identity could not be inspected safely' `
+            "A live process with unreadable $failedProperty must still be refused."
+        $exited.PSObject.Properties.Remove('HasExited')
+        $exited | Add-Member -MemberType ScriptProperty -Name HasExited -Value {
+            throw 'Process exit could not be established.'
+        }
+        Assert-Throws { Test-ObservedBoundProcessPresent $exited $identity } `
+            'bound process identity could not be inspected safely' `
+            'An unproven process exit must still be refused.'
+    }
+    Assert-Throws { Test-ObservedBoundProcessPresent $exited @{path=$supervisorPath} } `
+        'required preparation value is missing' `
+        'A missing expected identity field must not be reclassified as process exit.'
+}
 $binderText = Get-Content -LiteralPath $binderPath -Raw
 $diagnosticText = Get-Content -LiteralPath $diagnosticPath -Raw
 $certificationText = Get-Content -LiteralPath $certificationPath -Raw
