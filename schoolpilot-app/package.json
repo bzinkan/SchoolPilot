@@ -26,7 +26,7 @@
     "test:classpilot-coverage-group-editor": "node --test scripts/coverage-group-editor-browser.test.mjs",
     "test:classpilot-coverage-workflow": "node --test scripts/coverage-supervision-workflow-browser.test.mjs scripts/supervision-session-review-browser.test.mjs",
     "test:classpilot-recipient-freeze": "node --test scripts/classpilot-recipient-freeze.test.mjs",
-    "test:classpilot-messages-roster-browser": "node --test scripts/classpilot-messages-roster-browser.test.mjs",
+    "test:classpilot-messages-roster-browser": "node --test --test-concurrency=1 scripts/classpilot-message-alert-browser.test.mjs scripts/classpilot-messages-roster-browser.test.mjs",
     "test:classpilot-dashboard-isolation": "node --test scripts/classpilot-dashboard-isolation.test.mjs scripts/classpilot-read-recovery.test.mjs",
     "test:classpilot-student-data": "node --test scripts/classpilot-student-data.test.mjs",
     "test:classpilot-student-data-browser": "node scripts/classpilot-student-data-browser.mjs",
