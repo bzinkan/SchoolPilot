@@ -29,8 +29,8 @@ export default function ClassPilotLanding() {
 
   const features = [
     {
-      title: 'Live Screen View',
-      desc: 'See every student screen in real-time. Click to expand. Instant visibility across your entire classroom.',
+      title: 'Classroom Screen Previews',
+      desc: 'View refreshed Chromebook screenshots and browser activity for connected students in your active class or supervision group.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -39,8 +39,8 @@ export default function ClassPilotLanding() {
       ),
     },
     {
-      title: 'Smart Alerts',
-      desc: 'Get notified when students go off-task. Automatic detection of non-educational sites during class time.',
+      title: 'Activity Context',
+      desc: 'Review browser activity categories alongside teacher-selected sites. Categories support staff judgment about classroom activity.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
@@ -49,8 +49,8 @@ export default function ClassPilotLanding() {
       ),
     },
     {
-      title: 'Google Classroom Sync',
-      desc: 'Import your rosters automatically. Classes, students, and groups sync with zero manual setup.',
+      title: 'School-Managed Rosters',
+      desc: 'Administrators import Google Classroom or Workspace records, then manage class assignments and school rosters.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -61,8 +61,8 @@ export default function ClassPilotLanding() {
       ),
     },
     {
-      title: 'Privacy-First Design',
-      desc: 'Monitoring only during school hours. Automatic privacy mode respects student time outside class.',
+      title: 'School-Managed Access',
+      desc: 'School-configured monitoring hours and role-based access determine when staff can view student activity.',
       icon: (
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -73,13 +73,13 @@ export default function ClassPilotLanding() {
   ];
 
   const steps = [
-    { num: '01', title: 'Create Account', desc: 'Sign up with Google. Your Classroom rosters sync automatically.' },
-    { num: '02', title: 'Deploy Extension', desc: 'School Admin deploys the Chrome extension via Google Workspace for Education.' },
-    { num: '03', title: 'Start Teaching', desc: 'Open dashboard. See every screen. Keep everyone on track.' },
+    { num: '01', title: 'Plan School Setup', desc: 'Request information. Your administrator connects school rosters and prepares staff access.' },
+    { num: '02', title: 'Deploy Extension', desc: 'Your school administrator deploys the ClassPilot Chrome extension to managed Chromebooks.' },
+    { num: '03', title: 'Open Your Classroom', desc: 'View connected students under your supervision and use classroom tools to guide browsing.' },
   ];
 
   return (
-    <div style={{
+    <div className="cp-about-page" style={{
       minHeight: '100vh',
       background: '#0f172a',
       fontFamily: "'Inter', -apple-system, sans-serif",
@@ -89,7 +89,45 @@ export default function ClassPilotLanding() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap');
 
-        * { box-sizing: border-box; }
+        .cp-about-page, .cp-about-page * { box-sizing: border-box; }
+        .cp-about-page .cp-hero-grid > div,
+        .cp-about-page .cp-features-grid > div,
+        .cp-about-page .cp-steps-grid > div {
+          min-width: 0;
+          max-width: 100%;
+        }
+        .cp-about-page .cp-preview-header,
+        .cp-about-page .cp-preview-title,
+        .cp-about-page .cp-student-meta {
+          flex-wrap: wrap;
+        }
+        .cp-about-page .cp-student-meta { min-width: 0; }
+        .cp-about-page .cp-student-meta span { overflow-wrap: anywhere; }
+        .cp-about-page .cp-feature-button {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          width: 100%;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+        .cp-about-page a:focus-visible,
+        .cp-about-page button:focus-visible {
+          outline: 3px solid #fbbf24;
+          outline-offset: 6px;
+        }
+        .cp-about-page .cp-sample-caption {
+          margin: 20px 0 0;
+          color: #94a3b8;
+          font-size: 12px;
+          line-height: 1.6;
+          text-align: center;
+        }
 
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(40px); }
@@ -111,11 +149,11 @@ export default function ClassPilotLanding() {
           100% { transform: scale(1.5); opacity: 0; }
         }
 
-        .loaded .fade-1 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-        .loaded .fade-2 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards; opacity: 0; }
-        .loaded .fade-3 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards; opacity: 0; }
-        .loaded .fade-4 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards; opacity: 0; }
-        .loaded .fade-5 { animation: fadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.5s forwards; opacity: 0; }
+        .cp-about-page .loaded .fade-1 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .cp-about-page .loaded .fade-2 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards; opacity: 0; }
+        .cp-about-page .loaded .fade-3 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards; opacity: 0; }
+        .cp-about-page .loaded .fade-4 { animation: fadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards; opacity: 0; }
+        .cp-about-page .loaded .fade-5 { animation: fadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.5s forwards; opacity: 0; }
 
         .cp-nav-link {
           color: #94a3b8;
@@ -190,26 +228,102 @@ export default function ClassPilotLanding() {
         }
 
         @media (max-width: 768px) {
-          .cp-hero-grid {
-            grid-template-columns: 1fr !important;
-            gap: 40px !important;
+          .cp-about-page > section { padding: 64px 20px !important; }
+          .cp-about-page .cp-about-nav {
+            padding: 20px !important;
+            gap: 12px;
+            flex-wrap: wrap;
           }
-          .cp-hero-title {
-            font-size: 48px !important;
+          .cp-about-page .cp-about-nav > a {
+            flex-shrink: 0;
+            gap: 8px !important;
+          }
+          .cp-about-page .cp-about-nav > a svg { width: 32px; height: 32px; }
+          .cp-about-page .cp-about-nav > a span { font-size: 18px !important; }
+          .cp-about-page .cp-about-nav .cp-btn-primary {
+            font-size: 12px;
+            line-height: 1.4;
+            padding: 12px 14px;
+          }
+          .cp-about-page .cp-hero-grid {
+            grid-template-columns: minmax(0, 1fr) !important;
+            gap: 40px !important;
+            padding: 8px 20px 64px !important;
+            min-height: 0 !important;
+          }
+          .cp-about-page .cp-hero-title {
+            font-size: clamp(38px, 11vw, 48px) !important;
+            letter-spacing: -1px !important;
+          }
+          .cp-about-page h2 { font-size: 38px !important; }
+          .cp-about-page .cp-hero-grid .fade-1 { max-width: 100%; line-height: 1.6; }
+          .cp-about-page .cp-hero-grid .fade-3 { font-size: 16px !important; }
+          .cp-about-page .cp-hero-preview {
+            display: grid;
+            gap: 14px;
+            perspective: none !important;
+          }
+          .cp-about-page .cp-preview-dashboard { animation: none !important; transform: none !important; }
+          .cp-about-page .cp-preview-header { padding: 16px !important; gap: 10px; }
+          .cp-about-page .cp-preview-title { gap: 8px !important; }
+          .cp-about-page .cp-preview-title span { font-size: 12px !important; }
+          .cp-about-page .cp-students-grid,
+          .cp-about-page .cp-feature-students-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+          .cp-about-page .cp-students-grid { padding: 16px !important; gap: 10px !important; }
+          .cp-about-page .cp-hero-alert,
+          .cp-about-page .cp-hero-badge {
+            position: static !important;
+            animation: none !important;
+          }
+          .cp-about-page .cp-hero-badge { justify-self: start; }
+          .cp-about-page .cp-feature-visual { padding: 20px !important; }
+          .cp-about-page .cp-feature-card { padding: 18px !important; }
+          .cp-about-page .cp-feature-button { gap: 12px; }
+          .cp-about-page .cp-feature-button > span:last-child { font-size: 17px !important; }
+          .cp-about-page .cp-feature-button svg { flex-shrink: 0; }
+          .cp-about-page .cp-feature-description { padding-left: 0 !important; }
+          .cp-about-page .cp-step-card { padding: 30px 24px !important; }
+          .cp-about-page .cp-feature-card:hover { transform: none; }
+          .cp-about-page .cp-sample-caption { margin-top: 10px; }
+          .cp-about-page .cp-hero-title,
+          .cp-about-page h2,
+          .cp-about-page p { overflow-wrap: break-word; }
+          .cp-about-page .cp-student-card { min-width: 0; }
+          .cp-about-page .cp-preview-header > div { min-width: 0; }
+          .cp-about-page .cp-preview-header > div:last-child { font-size: 12px !important; }
+          .cp-about-page .cp-hero-grid .cp-btn-primary,
+          .cp-about-page .cp-hero-grid .cp-btn-secondary { max-width: 100%; }
+          .cp-about-page .cp-feature-visual p { overflow-wrap: anywhere; }
+          .cp-about-page .cp-feature-button > span:first-child { display: flex; }
+          .cp-about-page .cp-features-grid > div { width: 100%; }
+          .cp-about-page .cp-feature-students-grid > div { min-width: 0; }
+          .cp-about-page .cp-feature-visual svg { flex-shrink: 0; }
+          .cp-about-page .cp-hero-alert > div:last-child { min-width: 0; }
+          .cp-about-page .cp-hero-grid > div { width: 100%; }
+          .cp-about-page .cp-features-grid {
+            grid-template-columns: minmax(0, 1fr) !important;
+            gap: 40px !important;
           }
           .cp-nav-links-desktop {
             display: none !important;
           }
-          .cp-features-grid {
-            grid-template-columns: 1fr !important;
-          }
           .cp-steps-grid {
-            grid-template-columns: 1fr !important;
+            grid-template-columns: minmax(0, 1fr) !important;
           }
           .cp-footer-grid {
             grid-template-columns: 1fr !important;
             gap: 32px !important;
           }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .cp-about-page *, .cp-about-page *::before, .cp-about-page *::after {
+            animation: none !important;
+            transition: none !important;
+            scroll-behavior: auto !important;
+          }
+          .cp-about-page .loaded [class*="fade-"] { opacity: 1; }
         }
       `}</style>
 
@@ -235,7 +349,7 @@ export default function ClassPilotLanding() {
       }} />
 
       {/* Navigation */}
-      <nav style={{
+      <nav className="cp-about-nav" style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -258,7 +372,6 @@ export default function ClassPilotLanding() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <a href="/login" className="cp-nav-link">Sign in</a>
           <a href="/get-started" className="cp-btn-primary">Request Information</a>
         </div>
       </nav>
@@ -286,7 +399,7 @@ export default function ClassPilotLanding() {
             letterSpacing: '0.5px',
             border: '1px solid rgba(251, 191, 36, 0.2)',
           }}>
-            FERPA COMPLIANT · PRIVACY-FIRST
+            SCHOOL-MANAGED CHROMEBOOKS
           </div>
 
           <h1 className="fade-2 cp-serif cp-hero-title" style={{
@@ -297,9 +410,9 @@ export default function ClassPilotLanding() {
             letterSpacing: '-2px',
             color: '#f8fafc',
           }}>
-            See every screen,{' '}
-            <span style={{ fontStyle: 'italic', color: '#fbbf24' }}>keep every student</span>{' '}
-            focused
+            See classroom activity,{' '}
+            <span style={{ fontStyle: 'italic', color: '#fbbf24' }}>guide student</span>{' '}
+            browsing
           </h1>
 
           <p className="fade-3" style={{
@@ -308,7 +421,7 @@ export default function ClassPilotLanding() {
             color: '#94a3b8',
             margin: '0 0 40px 0',
           }}>
-            Real-time classroom monitoring built for education. Know what your students are doing on their devices — and gently guide them back when they drift.
+            Refreshed Chromebook screen previews and browser activity for connected students under your supervision. Guide browsing and review activity from your classroom dashboard.
           </p>
 
           <div className="fade-4" style={{ display: 'flex', gap: '16px', marginBottom: '48px', flexWrap: 'wrap' }}>
@@ -328,8 +441,8 @@ export default function ClassPilotLanding() {
             flexWrap: 'wrap',
           }}>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>10 min</div>
-              <div style={{ fontSize: '14px', color: '#64748b' }}>setup time</div>
+              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>Guided</div>
+              <div style={{ fontSize: '14px', color: '#64748b' }}>school setup</div>
             </div>
             <div>
               <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>IT-ready</div>
@@ -339,12 +452,12 @@ export default function ClassPilotLanding() {
         </div>
 
         {/* Right: Product Preview */}
-        <div className="fade-5" style={{
+        <div className="fade-5 cp-hero-preview" style={{
           position: 'relative',
           perspective: '1000px',
         }}>
           {/* Main dashboard card */}
-          <div style={{
+          <div className="cp-preview-dashboard" style={{
             background: '#1e293b',
             borderRadius: '24px',
             boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 40px 80px rgba(0,0,0,0.4)',
@@ -353,14 +466,14 @@ export default function ClassPilotLanding() {
             animation: 'float 6s ease-in-out infinite',
           }}>
             {/* Dashboard header */}
-            <div style={{
+            <div className="cp-preview-header" style={{
               padding: '20px 24px',
               borderBottom: '1px solid #334155',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className="cp-preview-title" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{
                   width: '10px',
                   height: '10px',
@@ -376,14 +489,14 @@ export default function ClassPilotLanding() {
                     animation: 'pulse-ring 2s infinite',
                   }} />
                 </div>
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9' }}>Live — Period 3</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9' }}>Sample · Period 3</span>
                 <span style={{ fontSize: '13px', color: '#64748b' }}>Algebra II</span>
               </div>
-              <div style={{ fontSize: '13px', color: '#64748b' }}>24 students</div>
+              <div style={{ fontSize: '13px', color: '#64748b' }}>Classroom preview</div>
             </div>
 
             {/* Student grid */}
-            <div style={{
+            <div className="cp-students-grid" style={{
               padding: '20px',
               display: 'grid',
               gridTemplateColumns: 'repeat(3, 1fr)',
@@ -430,7 +543,7 @@ export default function ClassPilotLanding() {
                     )}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div className="cp-student-meta" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div style={{
                         width: '24px',
                         height: '24px',
@@ -458,7 +571,7 @@ export default function ClassPilotLanding() {
           </div>
 
           {/* Floating alert card */}
-          <div style={{
+          <div className="cp-hero-alert" style={{
             position: 'absolute',
             bottom: '40px',
             left: '-60px',
@@ -489,13 +602,13 @@ export default function ClassPilotLanding() {
               </svg>
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9' }}>Off-task detected</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9' }}>Activity to review</div>
               <div style={{ fontSize: '12px', color: '#64748b' }}>Student 6 · Reddit</div>
             </div>
           </div>
 
           {/* Stats badge */}
-          <div style={{
+          <div className="cp-hero-badge" style={{
             position: 'absolute',
             top: '40px',
             right: '-40px',
@@ -507,9 +620,10 @@ export default function ClassPilotLanding() {
             animation: 'float 4s ease-in-out infinite',
             animationDelay: '-1s',
           }}>
-            <div style={{ fontSize: '24px', fontWeight: 600 }}>92%</div>
-            <div style={{ fontSize: '12px', opacity: 0.7 }}>on-task rate</div>
+            <div style={{ fontSize: '24px', fontWeight: 600 }}>Sample</div>
+            <div style={{ fontSize: '12px', opacity: 0.7 }}>classroom activity</div>
           </div>
+          <p className="cp-sample-caption">Illustrative interface with sample data</p>
         </div>
       </section>
 
@@ -552,7 +666,6 @@ export default function ClassPilotLanding() {
                 <div
                   key={i}
                   className="cp-feature-card"
-                  onClick={() => setActiveFeature(i)}
                   style={{
                     padding: '20px 24px',
                     borderRadius: '16px',
@@ -560,21 +673,28 @@ export default function ClassPilotLanding() {
                     border: `1px solid ${activeFeature === i ? 'rgba(251, 191, 36, 0.2)' : 'transparent'}`,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: activeFeature === i ? '12px' : 0 }}>
-                    <div style={{ color: activeFeature === i ? '#fbbf24' : '#64748b' }}>
+                  <button
+                    type="button"
+                    className="cp-feature-button"
+                    aria-pressed={activeFeature === i}
+                    aria-controls="cp-feature-visual"
+                    aria-describedby={activeFeature === i ? `cp-feature-description-${i}` : undefined}
+                    onClick={() => setActiveFeature(i)}
+                  >
+                    <span aria-hidden="true" style={{ color: activeFeature === i ? '#fbbf24' : '#64748b' }}>
                       {feature.icon}
-                    </div>
+                    </span>
                     <span style={{
                       fontSize: '18px',
                       fontWeight: 500,
                       color: activeFeature === i ? '#f8fafc' : '#94a3b8',
                     }}>{feature.title}</span>
-                  </div>
+                  </button>
                   {activeFeature === i && (
-                    <p style={{
+                    <p id={`cp-feature-description-${i}`} className="cp-feature-description" style={{
                       fontSize: '15px',
                       color: '#94a3b8',
-                      margin: 0,
+                      margin: '12px 0 0',
                       paddingLeft: '44px',
                       lineHeight: 1.6,
                     }}>{feature.desc}</p>
@@ -585,14 +705,14 @@ export default function ClassPilotLanding() {
           </div>
 
           {/* Right: Feature visual */}
-          <div style={{
+          <div id="cp-feature-visual" className="cp-feature-visual" role="region" aria-label="Selected feature illustration" style={{
             background: '#0f172a',
             borderRadius: '24px',
             padding: '40px',
             border: '1px solid #334155',
           }}>
             {activeFeature === 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+              <div className="cp-feature-students-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
                 {[
                   { initials: 'AJ', status: 'on-task', site: 'Google Docs' },
                   { initials: 'BK', status: 'on-task', site: 'Khan Academy' },
@@ -643,7 +763,7 @@ export default function ClassPilotLanding() {
                       )}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div className="cp-student-meta" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <div style={{
                           width: '18px',
                           height: '18px',
@@ -686,8 +806,8 @@ export default function ClassPilotLanding() {
                     <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
                   </svg>
                 </div>
-                <div style={{ fontSize: '20px', fontWeight: 500, marginBottom: '8px', color: '#f8fafc' }}>Off-task Alert</div>
-                <div style={{ fontSize: '15px', color: '#64748b' }}>Student browsing non-educational site</div>
+                <div style={{ fontSize: '20px', fontWeight: 500, marginBottom: '8px', color: '#f8fafc' }}>Activity Context</div>
+                <div style={{ fontSize: '15px', color: '#64748b' }}>A browser category helps staff review activity</div>
               </div>
             )}
             {activeFeature === 2 && (
@@ -753,8 +873,8 @@ export default function ClassPilotLanding() {
                         <path d="M12 6v6l4 2"/>
                       </svg>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#64748b' }}>School hours</div>
-                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#22c55e' }}>Active</div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>Monitoring hours</div>
+                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#22c55e' }}>School policy</div>
                   </div>
                   <div style={{ textAlign: 'center' }}>
                     <div style={{
@@ -775,15 +895,16 @@ export default function ClassPilotLanding() {
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                       </svg>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#64748b' }}>After hours</div>
-                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#f8fafc' }}>Private</div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>Staff access</div>
+                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#f8fafc' }}>Role-based</div>
                   </div>
                 </div>
                 <div style={{ fontSize: '14px', color: '#94a3b8', maxWidth: '280px', margin: '0 auto' }}>
-                  Student privacy is automatically protected outside of class time
+                  School-configured hours and staff permissions govern access to student activity
                 </div>
               </div>
             )}
+            <p className="cp-sample-caption">Illustrative interface with sample data</p>
           </div>
         </div>
       </section>
@@ -809,7 +930,7 @@ export default function ClassPilotLanding() {
               letterSpacing: '-1px',
               color: '#f8fafc',
             }}>
-              Up and running in <span style={{ fontStyle: 'italic', color: '#94a3b8' }}>minutes</span>
+              School setup, <span style={{ fontStyle: 'italic', color: '#94a3b8' }}>with guidance</span>
             </h2>
           </div>
 
@@ -876,37 +997,37 @@ export default function ClassPilotLanding() {
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                Is ClassPilot a content filter? Is it CIPA-compliant?
+                Does ClassPilot replace our content filter?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                ClassPilot is a <strong>classroom visibility layer</strong>, not a network-level content filter.
-                It runs alongside your existing CIPA-compliant filter (Securly, GoGuardian DNS, Lightspeed, etc.) — not as a replacement.
-                ClassPilot complements CIPA compliance by adding per-student classroom visibility, AI-powered safety alerts,
-                and automatic tab-close on content that slips past the network filter. The primary filtering obligation under CIPA
-                should remain at your network perimeter.
+                ClassPilot provides <strong>classroom visibility and controls</strong>, including screen previews,
+                Flight Paths, and browser activity review. Use it alongside your school's network content filter.
+                Classroom controls and safety reports do not replace school filtering policies or establish CIPA compliance.
               </p>
             </div>
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                How fast does the AI actually react to unsafe content?
+                How are potential safety concerns handled?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                Three tiers. <strong>Instant (0 seconds):</strong> a curated list of known-unsafe domains (pornography, graphic violence, drug marketplaces)
-                and unsafe search queries are blocked the moment the extension sees them. <strong>Within ~10 seconds:</strong> novel URLs are classified by Gemini
-                on the next heartbeat cycle. If flagged unsafe, the tab is closed automatically and the teacher and administrator are alerted.
-                <strong> Never-blocked automatically:</strong> non-educational but safe sites (YouTube, news, etc.) are logged and shown to the teacher,
-                but not auto-closed — teachers decide what counts as off-task for their class.
+                Reviewed website and search rules, together with Gemini classification, help identify potential concerns.
+                Safety Center records concerns for <strong>administrator review</strong> and queues notifications to active school administrators.
+                Staff assess the context and choose a response. Classification can be unavailable or mistaken;
+                detection, notification delivery, and review are not guaranteed to be immediate.
+                Classroom restrictions are separate from safety review, and a non-educational category alone does not confirm a safety concern.
               </p>
             </div>
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                What data do you send to third parties (like Google)?
+                What browser data is sent for AI classification?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                Only the <strong>URL string and page title</strong>. No student names, no emails, no student IDs, no PII.
-                ClassPilot uses Google's Gemini API paid tier for this classification. See our{' '}
+                Browser classification uses the <strong>URL and page title</strong>, alongside classification instructions.
+                It does not attach roster identity fields, screenshots, page bodies, or full browsing history to that request.
+                URLs and page titles can themselves contain names, email addresses, search terms, or other personal information;
+                these inputs are not guaranteed to be anonymous. ClassPilot uses Google's Gemini API for this classification. See our{' '}
                 <a href="/ai-transparency" style={{ color: '#b45309' }}>AI Transparency</a> and{' '}
                 <a href="/subprocessors" style={{ color: '#b45309' }}>Subprocessors</a> pages for full details.
               </p>
@@ -914,13 +1035,15 @@ export default function ClassPilotLanding() {
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                What's your FERPA / data ownership position?
+                How is student data governed?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                We operate as a "school official" under FERPA with direct school control over all student data.
-                Schools own 100% of their data; we have no license to use it beyond providing the service.
-                We'll sign your NDPA, SDPA, or state-specific variant (CA, TX, IL, NY). On contract termination,
-                all student data is returned or destroyed within 30 days per your written direction.
+                Student records remain <strong>school-owned</strong>. Schoolpilot processes them to provide the service
+                under the school's direct control. Our{' '}
+                <a href="/privacy" style={{ color: '#b45309' }}>Privacy Policy</a> and{' '}
+                <a href="/terms" style={{ color: '#b45309' }}>Terms of Service</a> describe data use and the school-official role.
+                Contact <a href="mailto:privacy@school-pilot.net" style={{ color: '#b45309' }}>privacy@school-pilot.net</a>{' '}
+                to review the applicable data privacy agreement, retention requirements, and return or deletion process for your school.
               </p>
             </div>
 
@@ -929,8 +1052,10 @@ export default function ClassPilotLanding() {
                 Can I get a HECVAT, DPA, or WISP for our procurement review?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                Yes — all pre-completed. Email <a href="mailto:privacy@school-pilot.net?subject=HECVAT%20Request" style={{ color: '#b45309' }}>privacy@school-pilot.net</a>.
-                Our full security posture is published at <a href="/security" style={{ color: '#b45309' }}>school-pilot.net/security</a>.
+                The <a href="/security/hecvat-lite" style={{ color: '#b45309' }}>HECVAT Lite self-assessment</a>{' '}
+                and <a href="/security" style={{ color: '#b45309' }}>security overview</a> are published for review.
+                Email <a href="mailto:privacy@school-pilot.net?subject=Procurement%20Documents%20Request" style={{ color: '#b45309' }}>privacy@school-pilot.net</a>{' '}
+                for data privacy agreements and the Written Information Security Program, which is available under NDA.
               </p>
             </div>
 
@@ -951,7 +1076,7 @@ export default function ClassPilotLanding() {
           letterSpacing: '-1px',
           color: '#0f172a',
         }}>
-          Ready to see every screen?
+          Ready for a clearer classroom view?
         </h2>
         <p style={{
           fontSize: '18px',
@@ -993,7 +1118,7 @@ export default function ClassPilotLanding() {
           </div>
 
           <p style={{ fontSize: '14px', color: '#9ca3af', marginBottom: '24px' }}>
-            Real-time classroom monitoring for K-12 schools.
+            Chromebook classroom visibility and controls for K-12 schools.
           </p>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '14px', marginBottom: '24px', flexWrap: 'wrap' }}>
