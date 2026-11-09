@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../../../lib/queryClient';
 import { mergeDeliveryStatus } from '../lib/chatThreads';
-import { privateChatLifecycleToken, privateChatLifecycleCanAdvance, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
+import { privateChatLifecycleToken, privateChatLifecycleCanAdvance, samePrivateChatLifecycle, privateChatReadiness, privateChatReadinessNote } from '../lib/privateChatLifecycle';
 
 let nextGeneration = 0;
 const DENIED_STATUSES = new Set([401, 403, 404]);
@@ -46,7 +46,8 @@ function applyPrivateLifecycles(scope, data, request) {
     present.add(row.studentId);
     const token = privateChatLifecycleToken(row.privateChatLifecycle);
     const previous = scope.lifecycles.get(row.studentId);
-    if (privateChatLifecycleCanAdvance(previous?.token, token)) scope.lifecycles.set(row.studentId, { token, supported: row.supported === true });
+    const readiness = privateChatReadiness(row);
+    if (privateChatLifecycleCanAdvance(previous?.token, token)) scope.lifecycles.set(row.studentId, { token, supported: readiness === 'ready', readiness });
     else if (!token) scope.lifecycles.delete(row.studentId);
   }
   for (const studentId of scope.lifecycles.keys()) if (!present.has(studentId)) scope.lifecycles.delete(studentId);
@@ -402,8 +403,8 @@ export function useClasspilotSessionChat({
     && (!scope.privateChatLifecycleRequired || Boolean(scope.lifecycles.get(studentId)?.token && scope.lifecycles.get(studentId)?.supported));
   const replyUnavailableReason = studentId => scope.endingThreads.has(studentId) ? 'Ending this chat…'
     : !scope.privateMessagingEnabled ? ''
-    : scope.privateChatLifecycleRequired && scope.lifecycles.get(studentId)?.supported === false
-      ? "Update ClassPilot on this student's Chromebook to use private chat."
+    : scope.privateChatLifecycleRequired && !canReplyTo(studentId)
+      ? privateChatReadinessNote(scope.lifecycles.get(studentId)?.readiness)
       : !canReplyTo(studentId) ? 'Private chat is syncing. Refresh messages before replying.' : '';
   const canEndChat = studentId => available && !scope.endingThreads.has(studentId)
     && (!scope.privateChatLifecycleRequired || Boolean(scope.lifecycles.get(studentId)?.token));

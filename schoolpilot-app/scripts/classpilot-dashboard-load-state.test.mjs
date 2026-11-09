@@ -7783,12 +7783,16 @@ test('private lifecycle: a stale Send refreshes tokens without replaying the wri
   assert.deepEqual(mutations.filter(row => row.pathname.endsWith('/reply'))[1].body.expectedPrivateChatLifecycle, next); assert.deepEqual(harness.pageErrors, []);
 });
 
-test('private lifecycle: an unsupported offline student keeps cleanup and history but receives no new private write', { timeout: 60_000 }, async context => {
+test('private lifecycle: offline legacy readiness keeps cleanup and history but blocks new private writes', { timeout: 60_000 }, async context => {
+  // An older server's negative boolean also covered stale or absent telemetry;
+  // without explicit readiness it cannot establish that an update is needed.
   const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true, lifecycleSupported: false,
     students: [student({ status: 'offline', isLoggedIn: false, loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null })] });
   const { page, harness, mutations } = fixture;
   fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
-  await page.getByTestId('chat-private-lifecycle-note').getByText("Update ClassPilot on this student's Chromebook to use private chat.", { exact: true }).waitFor();
+  const readinessNote = page.getByTestId('chat-private-lifecycle-note');
+  await readinessNote.getByText('Private chat is syncing. Refresh messages before replying.', { exact: true }).waitFor();
+  assert.doesNotMatch(await readinessNote.textContent(), /update|outdated/i);
   assert.equal(await replyInput(page).isDisabled(), true); assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0);
   await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
   await threadText(page, storedChatMessage().content).waitFor();

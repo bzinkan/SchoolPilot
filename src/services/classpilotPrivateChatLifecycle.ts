@@ -137,22 +137,57 @@ export async function lockPrivateChatLifecycle(scope: PrivateChatScope, database
     enabled: school.enabled !== false && activity.chatEnabled !== false };
 }
 
-export async function privateChatBindingSupported(scope: Pick<PrivateChatScope,"schoolId"|"studentId">, database: typeof db = db): Promise<boolean> {
+export type PrivateChatBindingReadiness = "ready" | "update_required" | "reconnecting" | "signed_out" | "unavailable";
+
+async function readPrivateChatBindingReadiness(
+  scope: Pick<PrivateChatScope,"schoolId"|"studentId">,
+  database: typeof db,
+  requireFreshWindows: boolean,
+): Promise<PrivateChatBindingReadiness> {
   const { windowsBrowserEnabled } = await import("./classpilotWindowsProtocol.js");
   if (windowsBrowserEnabled(scope.schoolId)) {
     const { listClasspilotWindowsBrowsers } = await import("./storage.js");
     const windows = await listClasspilotWindowsBrowsers(scope.schoolId, [scope.studentId], database);
-    if (windows.length) return windows.every(row => row.browser.acceptedCapabilities.includes("privateChatLifecycleV1"));
+    if (windows.length) {
+      if (requireFreshWindows) {
+        const { CLASSPILOT_REALTIME_STALE_AFTER_MS } = await import("./classpilotRealtimeStatus.js");
+        const now = Date.now();
+        if (windows.some(({ browser }) => {
+          const observedAt = browser.lastSeenAt?.getTime();
+          return typeof observedAt !== "number" || !Number.isFinite(observedAt) || observedAt <= 0
+            || observedAt > now + CLASSPILOT_REALTIME_STALE_AFTER_MS
+            || now - observedAt >= CLASSPILOT_REALTIME_STALE_AFTER_MS;
+        })) return "reconnecting";
+      }
+      return windows.every(row => row.browser.acceptedCapabilities.includes("privateChatLifecycleV1")) ? "ready" : "update_required";
+    }
   }
   const [binding] = await database.select({id:studentSessions.id,deviceId:studentSessions.deviceId}).from(studentSessions)
     .innerJoin(devices,and(eq(devices.deviceId,studentSessions.deviceId),eq(devices.schoolId,scope.schoolId)))
     .where(and(eq(studentSessions.studentId,scope.studentId),eq(studentSessions.isActive,true),isNull(studentSessions.endedAt),
       sql`(${studentSessions.authKind} <> 'manual_shared' OR ${studentSessions.manualLeaseExpiresAt} > clock_timestamp())`)).limit(1);
-  if (!binding) return false;
+  if (!binding) return "signed_out";
   const {readClasspilotRealtimeStatusBatch,classpilotRealtimeFresh} = await import("./classpilotRealtimeStatus.js");
   const snapshots = await readClasspilotRealtimeStatusBatch(scope.schoolId,[{studentId:scope.studentId,studentSessionId:binding.id,deviceId:binding.deviceId}]);
   const hit = snapshots.get(scope.studentId);
-  return hit?.status === "hit" && classpilotRealtimeFresh(hit.snapshot) && hit.snapshot.acceptedCapabilities?.includes("privateChatLifecycleV1") === true;
+  if (!hit || hit.status === "unavailable") return "unavailable";
+  if (hit.status !== "hit") return "reconnecting";
+  if (hit.snapshot.state === "signed_out") return "signed_out";
+  if (!classpilotRealtimeFresh(hit.snapshot)) return "reconnecting";
+  if (!Array.isArray(hit.snapshot.acceptedCapabilities)) {
+    return hit.snapshot.acceptedCapabilitiesEmpty === true ? "update_required" : "unavailable";
+  }
+  return hit.snapshot.acceptedCapabilities.includes("privateChatLifecycleV1") ? "ready" : "update_required";
+}
+
+export function privateChatBindingReadiness(scope: Pick<PrivateChatScope,"schoolId"|"studentId">, database: typeof db = db) {
+  return readPrivateChatBindingReadiness(scope, database, true);
+}
+
+// Durable delivery already owns its exact binding and guard/capability checks.
+// Keep its existing Windows semantics separate from new-send readiness.
+export async function privateChatBindingSupported(scope: Pick<PrivateChatScope,"schoolId"|"studentId">, database: typeof db = db): Promise<boolean> {
+  return await readPrivateChatBindingReadiness(scope, database, false) === "ready";
 }
 
 export async function preparePrivateChatMessage(scope: PrivateChatScope, expected: unknown, database: typeof db) {
@@ -167,7 +202,11 @@ export async function preparePrivateChatMessage(scope: PrivateChatScope, expecte
   if (state.required) {
     if (!isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId})) throw lifecycleError("PRIVATE_CHAT_DISABLED", "New private messages are disabled");
     if (!samePrivateChatLifecycle(parsePrivateChatLifecycle(expected),state.token)) throw lifecycleError("PRIVATE_CHAT_LIFECYCLE_STALE", "Chat changed; refresh before sending again");
-    if (!(await privateChatBindingSupported(scope,database))) throw lifecycleError("PRIVATE_CHAT_UPDATE_REQUIRED", "The student's extension needs an update");
+    const readiness = await privateChatBindingReadiness(scope,database);
+    if (readiness === "update_required") throw lifecycleError("PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED", "The student's extension needs an update");
+    if (readiness === "signed_out") throw lifecycleError("PRIVATE_CHAT_SIGN_IN_REQUIRED", "Private chat is available after the student signs in");
+    if (readiness === "reconnecting") throw lifecycleError("PRIVATE_CHAT_RECONNECT_REQUIRED", "Private chat is available when the student reconnects");
+    if (readiness !== "ready") throw lifecycleError("PRIVATE_CHAT_READINESS_UNAVAILABLE", "Private chat readiness is temporarily unavailable");
   } else if (expected !== undefined && !samePrivateChatLifecycle(parsePrivateChatLifecycle(expected),state.token)) {
     throw lifecycleError("PRIVATE_CHAT_LIFECYCLE_STALE", "Chat changed; refresh before sending again");
   }
@@ -243,8 +282,10 @@ export async function teacherPrivateChatLifecycles(scope: Omit<PrivateChatScope,
   for (const {studentId} of roster) {
     const snapshot = await readPrivateChatLifecycleState({...scope,studentId});
     const {teachingSessionId,supervisionContextId,...privateChatLifecycle} = snapshot!.threads[0]!;
+    const readiness = isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId})
+      ? await privateChatBindingReadiness({...scope,studentId}) : "disabled";
     result.push({studentId,teachingSessionId,supervisionContextId,privateChatLifecycle,
-      supported:isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId}) && await privateChatBindingSupported({...scope,studentId})});
+      supported:readiness === "ready",readiness});
   }
   return {privateChatLifecycleRequired:true,privateChatLifecycles:result};
 }
