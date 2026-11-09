@@ -49,7 +49,7 @@ export function ChatMessageBubble({ item, waitingFor = null }) {
 
 /**
  * One student's conversation. Selecting it, and any message that arrives while
- * it is open on a visible tab, marks the student's messages read. Only this
+ * it is open on a visible, focused tab, marks the student's messages read. Only this
  * thread auto-scrolls. A thread with no messages on this dashboard is one the
  * teacher is starting, so it has nothing to clear or end. `waitingFor` names a
  * signed-out student whose undelivered messages wait for them to sign in. Once
@@ -74,11 +74,15 @@ function ChatThread({ visible = true, onOpenStudentDetails, conversation, monito
 
   useEffect(() => {
     const markVisible = () => {
-      if (visible && unreadCount > 0 && document.visibilityState === 'visible') onMarkThreadRead(studentId);
+      if (visible && unreadCount > 0 && document.visibilityState === 'visible' && document.hasFocus()) onMarkThreadRead(studentId);
     };
     markVisible();
     document.addEventListener('visibilitychange', markVisible);
-    return () => document.removeEventListener('visibilitychange', markVisible);
+    window.addEventListener('focus', markVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', markVisible);
+      window.removeEventListener('focus', markVisible);
+    };
   }, [visible, studentId, unreadCount, lastItemId, onMarkThreadRead]);
 
   return (

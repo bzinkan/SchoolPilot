@@ -267,6 +267,10 @@ export default function ChatWorkspace({
     [answerable],
   );
   const needReplyStudentId = useMemo(() => longestWaitingUnreadId(answerable), [answerable]);
+  // Reading is independent of reply permission: off-roster and messaging-off
+  // conversations must not get stranded in the unread queue.
+  const nextUnreadStudentId = longestWaitingUnreadId(conversations);
+  const unreadConversationCount = conversations.filter((conversation) => conversation.unreadCount > 0).length;
   const showList = !singlePane || !selected;
   const showThread = !singlePane || Boolean(selected);
   const selectedMonitoring = selected ? monitoringByStudent.get(selected.studentId) || null : null;
@@ -328,6 +332,16 @@ export default function ChatWorkspace({
               </DropdownMenu>
             )}
           </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs border-b border-gray-200 dark:border-gray-700 shrink-0">
+          <span role="status" className="text-gray-600 dark:text-gray-400">
+            {unreadConversationCount} unread conversation{unreadConversationCount === 1 ? '' : 's'}
+          </span>
+          <button type="button" data-testid="chat-next-unread" disabled={!nextUnreadStudentId}
+            onClick={() => { if (nextUnreadStudentId) onSelectConversation(nextUnreadStudentId); }}
+            className="rounded px-2 py-1 font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950 disabled:text-gray-500 disabled:hover:bg-transparent">
+            {nextUnreadStudentId ? 'Next unread' : 'All caught up'}
+          </button>
         </div>
         {pause && messagingEnabled && (
           <div className="px-4 py-2 text-xs bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 border-b border-amber-100 dark:border-amber-900 flex items-start gap-2 shrink-0" data-testid="chat-pause-banner" data-pause-reason={pause.reason}>
