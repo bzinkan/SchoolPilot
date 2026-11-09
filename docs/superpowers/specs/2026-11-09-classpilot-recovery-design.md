@@ -1,0 +1,9 @@
+# ClassPilot class-transition recovery and chat readiness
+
+The November 9 investigation reproduced a circular wait between a running FAB lifecycle update, heartbeat-triggered exact-bound storage cleanup and overlay clearing in ClassPilot 3.0.3. Both reported students stopped reporting during a scheduled class transition. A separate SchoolPilot defect classifies stale or unavailable telemetry as an extension update requirement.
+
+The authorized repair preserves exact student/session/school/authentication-generation and classroom authority checks. Ordinary heartbeat adoption and concurrent classroom updates must finish without a promise dependency cycle. Cleanup must still prevent retired identities from restoring private state. Tests must reproduce the original overlap, exercise real worker functions and cover identity changes and stale callbacks.
+
+SchoolPilot will distinguish ready, genuinely unsupported, disconnected/signed-out and temporarily unavailable chat readiness. Only fresh authoritative capability evidence may produce an update-required diagnosis; stale/missing evidence must use connection/synchronization copy. The API must continue to reject unsafe sends, keep lifecycle revision checks and expose no device/session identifiers to teachers. Existing clients retain a conservative supported boolean, with an additive reason/readiness field for the updated UI.
+
+Approach: repair the queue lifecycle rather than masking the wait with a timeout or bypassing authorization. Return explicit chat readiness instead of weakening send authorization or guessing compatibility from an absent snapshot. No unrelated login/network timeout changes, Store upload or production deployment are included. Browser tests establish disposable-browser behavior; physical managed Chromebook acceptance remains distinct.

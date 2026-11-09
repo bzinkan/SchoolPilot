@@ -1,6 +1,6 @@
 import { after, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
@@ -152,6 +152,7 @@ let unobserved: StudentFixture;
 let limiterProbe: StudentFixture;
 let takeover: StudentFixture;
 let thrownProbe: StudentFixture;
+let manualLeaseProbe: StudentFixture;
 
 function inSchool<T>(fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -256,7 +257,7 @@ async function waitForOrderedPublish(
   return false;
 }
 
-async function createStudentFixture(label: string): Promise<StudentFixture> {
+async function createStudentFixture(label: string, authKind: "managed_profile" | "manual_shared" = "managed_profile"): Promise<StudentFixture> {
   const deviceId = `${tag}-${label}`;
   const email = `${tag}-${label}@${domain}`;
   const fixture = await inSchool(async () => {
@@ -283,7 +284,11 @@ async function createStudentFixture(label: string): Promise<StudentFixture> {
       .values({
         studentId: student.id,
         deviceId,
-        authKind: "managed_profile",
+        authKind,
+        ...(authKind === "manual_shared" ? {
+          manualLeaseExpiresAt: sql`clock_timestamp() + interval '5 minutes'`,
+          sessionRecoveryTokenHash: randomBytes(32).toString("hex"),
+        } : {}),
         isActive: true,
       })
       .returning({ id: studentSessions.id });
@@ -387,6 +392,7 @@ before(async () => {
   limiterProbe = await createStudentFixture("limiter");
   takeover = await createStudentFixture("takeover");
   thrownProbe = await createStudentFixture("thrown");
+  manualLeaseProbe = await createStudentFixture("manual-lease", "manual_shared");
 
   const teachingSession = await inSchool(async () => {
     const group = await storage.createGroup({
@@ -398,7 +404,7 @@ before(async () => {
       });
     assert.ok(group?.id);
     await db.insert(groupStudents).values(
-      [observed, unobserved, limiterProbe, takeover, thrownProbe].map((fixture) => ({
+      [observed, unobserved, limiterProbe, takeover, thrownProbe, manualLeaseProbe].map((fixture) => ({
         groupId: group.id,
         studentId: fixture.studentId,
       }))
@@ -412,7 +418,7 @@ before(async () => {
   teachingSessionId = teachingSession.id;
   assert.ok(teachingSession.rosterSnapshotCompletedAt);
 
-  for (const fixture of [observed, unobserved, limiterProbe, takeover, thrownProbe]) {
+  for (const fixture of [observed, unobserved, limiterProbe, takeover, thrownProbe, manualLeaseProbe]) {
     await bindClassAuthority(fixture);
   }
 
@@ -692,18 +698,20 @@ describe("ClassPilot screenshot upload realtime publish gate", () => {
       { ...binding, expectedControlRevision: controlState.revision + 1 }, send)), undefined);
     assert.equal(calls, 0, "retired bindings and stale control revisions must never reach synchronous delivery");
 
-    try {
-      await inSchool(() => db.update(studentSessions).set({ authKind: "manual_shared",
-        manualLeaseExpiresAt: sql`clock_timestamp() - interval '1 second'`,
-        sessionRecoveryTokenHash: randomUUID().replaceAll("-", "").padEnd(64, "a"),
-      }).where(drizzle.eq(studentSessions.id, observed.studentSessionId)));
-      assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(binding, send)), undefined);
-      assert.equal(calls, 0, "an expired manual lease must never authorize safety delivery");
-    } finally {
-      await inSchool(() => db.update(studentSessions).set({ authKind: "managed_profile",
-        manualLeaseExpiresAt: null, sessionRecoveryTokenHash: null,
-      }).where(drizzle.eq(studentSessions.id, observed.studentSessionId)));
-    }
+    // Authentication kind is immutable. Exercise a separately inserted manual
+    // session, then change only its lease to isolate expiry from identity.
+    const manualControl = await inSchool(() => storage.getClasspilotStudentControlState(schoolId, manualLeaseProbe.studentId));
+    assert.ok(manualControl);
+    const manualBinding = { ...binding, studentId: manualLeaseProbe.studentId,
+      studentSessionId: manualLeaseProbe.studentSessionId, deviceId: manualLeaseProbe.deviceId,
+      expectedControlRevision: manualControl.revision, deliveredControlRevision: manualControl.revision + 100 };
+    assert.ok(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(manualBinding, send)));
+    assert.equal(calls, 1, "the current exact manual binding must authorize delivery while its lease is valid");
+    await inSchool(() => db.update(studentSessions).set({
+      manualLeaseExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+    }).where(drizzle.eq(studentSessions.id, manualLeaseProbe.studentSessionId)));
+    assert.equal(await inSchool(() => storage.revalidateClasspilotSafetyExactBinding(manualBinding, send)), undefined);
+    assert.equal(calls, 1, "an expired manual lease must never authorize another safety delivery");
   });
 
   it("retains the control lock through the safety callback and preserves a deferred delivered revision", async () => {

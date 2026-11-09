@@ -1,3 +1,5 @@
+import { privateChatReadinessNote } from './privateChatLifecycle.js';
+
 export const CHAT_REPLY_MAX_CHARS = 500;
 
 /**
@@ -100,8 +102,15 @@ export function describeChatReplyError(error, studentName) {
       return 'This class has ended.';
     case 'PRIVATE_CHAT_LIFECYCLE_STALE':
       return 'This conversation changed. Messages were refreshed; review the chat and send again.';
-    case 'PRIVATE_CHAT_UPDATE_REQUIRED':
-      return "Update ClassPilot on this student's Chromebook to use private chat.";
+    case 'PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED':
+      return privateChatReadinessNote('update_required');
+    case 'PRIVATE_CHAT_RECONNECT_REQUIRED':
+      return privateChatReadinessNote('reconnecting');
+    case 'PRIVATE_CHAT_SIGN_IN_REQUIRED':
+      return privateChatReadinessNote('signed_out');
+    case 'PRIVATE_CHAT_UPDATE_REQUIRED': // Legacy servers also used this for missing or stale telemetry.
+    case 'PRIVATE_CHAT_READINESS_UNAVAILABLE':
+      return privateChatReadinessNote('unavailable');
     case 'PRIVATE_CHAT_DISABLED':
     case 'FAB_FEATURE_DISABLED':
       return 'Messaging is turned off for this class or your school.';

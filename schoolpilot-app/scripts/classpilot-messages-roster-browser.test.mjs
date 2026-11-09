@@ -126,7 +126,7 @@ async function waitUntil(predicate, message, timeoutMs = 30_000) {
 // the roster. Every chat message arrives over the class WebSocket, and
 // `harness.setSettings` changes the dashboard settings (the school-wide
 // messaging switch among them) as another tab or an administrator would.
-async function messagesPage({ students, absentIds = [], openPanel = true } = {}) {
+async function messagesPage({ students, absentIds = [], openPanel = true, privateChatState = {} } = {}) {
   const page = await browser.newPage();
   await page.clock.install({ time: new Date(ROSTER_CLOCK) });
   const pageErrors = [];
@@ -204,7 +204,7 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
       case '/api/teacher/raised-hands': return json({ raisedHands: [] });
       case '/api/teacher/messages':
         reads.push(pathname);
-        return json({ messages: [...canonicalMessages.values()] });
+        return json({ messages: [...canonicalMessages.values()], ...privateChatState });
       case '/api/admin/attendance': return json({ records: absentIds.map((studentId) => ({ studentId, status: 'absent' })) });
       case '/api/classpilot/tiles/screenshots':
       case '/api/classpilot/tiles/history': return json({ tiles: [] });
@@ -219,6 +219,13 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
   const harness = {
     pageErrors,
     commandPosts,
+    async setPrivateChatState(state, { refresh = true } = {}) {
+      privateChatState = state;
+      if (refresh) await page.evaluate(async () => {
+        const { queryClient } = await import('/src/lib/queryClient.js');
+        await queryClient.invalidateQueries({ queryKey: ['/api/teacher/messages'] });
+      });
+    },
     async sendWebSocketMessage(message) {
       await waitUntil(() => Boolean(socket), 'The Dashboard WebSocket must authenticate');
       // A live notification follows durable history. Hard-off now re-reads that
@@ -298,6 +305,50 @@ async function expectRowUnread(page, count, studentId = STUDENT_ID) {
 function threadText(page, text) {
   return page.getByTestId('chat-thread').getByText(text, { exact: true });
 }
+
+test('private chat shows connection readiness and recovers only the exact current student after polling', async () => {
+  const lifecycle = { threadId: 'private-thread-a', schoolEpoch: 1, activityEpoch: 1, threadGeneration: 1 };
+  const state = (readiness, supported = false, extra = []) => ({ privateChatLifecycleRequired: true,
+    privateChatLifecycles: [{ studentId: STUDENT_ID, teachingSessionId: SESSION_ID, supervisionContextId: null,
+      privateChatLifecycle: lifecycle, supported, ...(readiness === undefined ? {} : { readiness }) }, ...extra] });
+  const { page, harness, mutations, reads } = await messagesPage({ students: rosterClass(), privateChatState: state('reconnecting') });
+  try {
+    await selectConversation(page);
+    const note = page.getByTestId('chat-private-lifecycle-note');
+    await note.filter({ hasText: /reconnect/i }).waitFor();
+    assert.equal(await page.getByTestId('chat-composer-input').isDisabled(), true);
+    for (const [readiness, pattern] of [['signed_out', /signs in/i], ['unavailable', /syncing/i], [undefined, /syncing/i], ['future_unknown', /syncing/i]]) {
+      await harness.setPrivateChatState(state(readiness));
+      await note.filter({ hasText: pattern }).waitFor();
+      assert.doesNotMatch(await note.textContent(), /update/i);
+      assert.equal(await page.getByTestId('chat-composer-input').isDisabled(), true);
+    }
+    await harness.setPrivateChatState(state('update_required'));
+    await note.filter({ hasText: /Update ClassPilot/ }).waitFor();
+    assert.equal(await page.getByTestId('chat-composer-input').isDisabled(), true);
+    // Capability evidence for another student or classroom cannot enable Ada.
+    await harness.setPrivateChatState({ privateChatLifecycleRequired: true, privateChatLifecycles: [
+      { studentId: SECOND_STUDENT_ID, teachingSessionId: SESSION_ID, privateChatLifecycle: lifecycle, readiness: 'ready', supported: true },
+      { studentId: STUDENT_ID, teachingSessionId: 'another-class', privateChatLifecycle: lifecycle, readiness: 'ready', supported: true },
+    ] });
+    await note.filter({ hasText: /syncing/i }).waitFor();
+    assert.equal(await page.getByTestId('chat-composer-input').isDisabled(), true);
+    assert.equal(mutations.filter(row => row.pathname === '/api/teacher/reply').length, 0);
+    const priorReads = reads.length;
+    await harness.setPrivateChatState(state('ready', true), { refresh: false });
+    await page.clock.runFor(15_100);
+    await waitUntil(() => reads.length > priorReads, 'Readiness must recover on the existing history poll');
+    await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+    await page.getByTestId('chat-composer-input').fill('Only Ada after reconnect');
+    await page.getByTestId('chat-composer-send').click();
+    await waitUntil(() => mutations.some(row => row.pathname === '/api/teacher/reply'), 'The recovered exact conversation must send');
+    const sent = mutations.find(row => row.pathname === '/api/teacher/reply').body;
+    assert.equal(sent.studentId, STUDENT_ID);
+    assert.equal(sent.sessionId, SESSION_ID);
+    assert.deepEqual(sent.expectedPrivateChatLifecycle, lifecycle);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); }
+});
 
 function replyInput(page) {
   return page.getByTestId('chat-composer-input');

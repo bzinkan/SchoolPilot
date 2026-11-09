@@ -45,6 +45,8 @@ let live: import("../src/schema/classpilot.js").TeachingSession;
 let context: import("../src/schema/classpilot.js").ClasspilotSupervisionContext;
 const bindings: string[] = [];
 const recoveryHashes = [0, 1, 2].map(() => randomBytes(32).toString("hex"));
+let readinessFault: "stale" | "missing" | "unavailable" | "mismatch" | "signed_out" | "unknown_capabilities"
+  | "false_empty_marker" | "string_empty_marker" | "malformed_capabilities" | null = null;
 const inSchool = <T>(fn: () => Promise<T>) => tenant({ schoolId: ids.school }, fn);
 const scope = (index = 0): PrivateChatScope => ({ schoolId: ids.school, studentId: ids.students[index]!,
   ...(index === 0 ? { teachingSessionId: live.id } : { supervisionContextId: context.id }) });
@@ -262,13 +264,35 @@ before(async () => {
   });
   const cache = new Map<string, string>();
   realtime.setClasspilotRealtimeStatusCommandForTests(async args => {
-    if (args[0] === "MGET") return args.slice(1).map(key => cache.get(key) ?? null);
+    if (args[0] === "MGET") {
+      if (readinessFault === "unavailable") throw new Error("Synthetic shared-cache outage");
+      return args.slice(1).map(key => {
+        const raw = cache.get(key);
+        if (key !== realtime.classpilotRealtimeStatusKey(ids.school, ids.devices[0]!) || !readinessFault) return raw ?? null;
+        if (readinessFault === "missing" || !raw) return null;
+        const snapshot = JSON.parse(raw);
+        if (readinessFault === "stale") snapshot.observedAt = Date.now() - 120_000;
+        if (readinessFault === "mismatch") snapshot.studentSessionId = randomUUID();
+        if (readinessFault === "signed_out") snapshot.state = "signed_out";
+        if (readinessFault === "unknown_capabilities") delete snapshot.acceptedCapabilities;
+        if (readinessFault === "false_empty_marker" || readinessFault === "string_empty_marker") {
+          delete snapshot.acceptedCapabilities;
+          snapshot.acceptedCapabilitiesEmpty = readinessFault === "false_empty_marker" ? false : "true";
+        }
+        if (readinessFault === "malformed_capabilities") {
+          snapshot.acceptedCapabilities = {};
+          snapshot.acceptedCapabilitiesEmpty = true;
+        }
+        return JSON.stringify(snapshot);
+      });
+    }
     if (args[0] === "EVAL" && args[3] && args[5]?.startsWith("{")) { cache.set(args[3], args[5]); return args[5]; }
     return undefined;
   });
 });
 
 beforeEach(async () => {
+  readinessFault = null;
   process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
   await admin.query("UPDATE settings SET student_messaging_enabled=true WHERE school_id=$1", [ids.school]);
   await admin.query("UPDATE session_settings SET chat_enabled=true,chat_paused=false WHERE school_id=$1", [ids.school]);
@@ -687,14 +711,73 @@ test("the sticky fence survives capability off while cleanup remains available t
   const initial = await token();
   process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
   try {
+    const disabled = await inSchool(() => lifecycle.teacherPrivateChatLifecycles(scope()));
+    const row = disabled.privateChatLifecycles.find(item => item.studentId === ids.students[0]);
+    assert.deepEqual([row?.readiness, row?.supported], ["disabled", false]);
     await assert.rejects(reply("Disabled issuance", initial), hasCode("PRIVATE_CHAT_DISABLED"));
     await assert.rejects(admin.query("INSERT INTO chat_messages(school_id,session_id,student_id,sender_id,sender_type,content) VALUES($1,$2,$3,$4,'teacher','Old rollback writer')",
       [ids.school, live.id, ids.students[0], ids.teacher]), hasCode("23514"));
     assert.equal((await close(initial)).privateChatLifecycle.threadGeneration, initial.threadGeneration + 1);
   } finally { process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true"; }
   await refresh(0, ["scopedAuthorityChecksV1", "studentChatIdempotencyV1"]);
-  const unsupported = await token(); await assert.rejects(reply("Advertised is not negotiated", unsupported), hasCode("PRIVATE_CHAT_UPDATE_REQUIRED"));
+  const unsupported = await token(); await assert.rejects(reply("Advertised is not negotiated", unsupported), hasCode("PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED"));
   assert.equal((await close(unsupported)).privateChatLifecycle.threadGeneration, unsupported.threadGeneration + 1);
+});
+
+test("private chat distinguishes disconnected telemetry from a confirmed unsupported client and recovers the exact recipient", async () => {
+  const expected = await token();
+  const read = async () => {
+    const state = await inSchool(() => lifecycle.teacherPrivateChatLifecycles(scope()));
+    const row = state.privateChatLifecycles.find(item => item.studentId === ids.students[0]);
+    assert.ok(row);
+    return row;
+  };
+  assert.equal((await read()).readiness, "ready");
+  const countReplies = async () => Number((await admin.query("SELECT count(*) AS count FROM chat_messages WHERE school_id=$1 AND student_id=$2", [ids.school, ids.students[0]])).rows[0].count);
+  const before = await countReplies();
+  for (const [fault, readiness, code] of [
+    ["unknown_capabilities", "unavailable", "PRIVATE_CHAT_READINESS_UNAVAILABLE"],
+    ["false_empty_marker", "unavailable", "PRIVATE_CHAT_READINESS_UNAVAILABLE"],
+    ["string_empty_marker", "unavailable", "PRIVATE_CHAT_READINESS_UNAVAILABLE"],
+    ["malformed_capabilities", "unavailable", "PRIVATE_CHAT_READINESS_UNAVAILABLE"],
+    ["stale", "reconnecting", "PRIVATE_CHAT_RECONNECT_REQUIRED"],
+    ["missing", "reconnecting", "PRIVATE_CHAT_RECONNECT_REQUIRED"],
+    ["mismatch", "reconnecting", "PRIVATE_CHAT_RECONNECT_REQUIRED"],
+    ["unavailable", "unavailable", "PRIVATE_CHAT_READINESS_UNAVAILABLE"],
+    ["signed_out", "signed_out", "PRIVATE_CHAT_SIGN_IN_REQUIRED"],
+  ] as const) {
+    readinessFault = fault;
+    const row = await read();
+    assert.equal(row.readiness, readiness, fault);
+    assert.equal(row.supported, false, fault);
+    assert.deepEqual(row.privateChatLifecycle, expected, "Connection loss must not replace classroom chat authority");
+    await assert.rejects(reply("Do not send during uncertainty", expected), hasCode(code));
+  }
+  readinessFault = null;
+  await refresh(0, capabilities.filter(name => name !== "privateChatLifecycleV1"));
+  assert.equal((await read()).readiness, "update_required");
+  await assert.rejects(reply("Unsupported fresh client", expected), hasCode("PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED"));
+  await refresh(0, []);
+  assert.equal((await read()).readiness, "update_required", "An explicit empty negotiation is confirmed unsupported, not unknown metadata");
+  await assert.rejects(reply("No accepted capabilities", expected), hasCode("PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED"));
+  for (const [fault, readiness, code] of [
+    ["stale", "reconnecting", "PRIVATE_CHAT_RECONNECT_REQUIRED"],
+    ["signed_out", "signed_out", "PRIVATE_CHAT_SIGN_IN_REQUIRED"],
+  ] as const) {
+    readinessFault = fault;
+    assert.equal((await read()).readiness, readiness, "An empty negotiation never overrides connection or sign-out state");
+    await assert.rejects(reply("Do not send from a retired empty negotiation", expected), hasCode(code));
+  }
+  readinessFault = null;
+  assert.equal(await countReplies(), before, "An uncertain or unsupported recipient must not create a queued private reply");
+  await refresh(0);
+  const recovered = await read();
+  assert.deepEqual([recovered.readiness, recovered.supported], ["ready", true]);
+  const sent = await reply("Only this recipient after reconnect", expected);
+  assert.equal(sent.message.studentId, ids.students[0]);
+  assert.equal(sent.message.sessionId, live.id);
+  assert.equal(sent.message.supervisionContextId, null);
+  await assert.rejects(reply("Another context cannot reuse the token", expected, 1), hasCode("PRIVATE_CHAT_LIFECYCLE_STALE"));
 });
 
 test("an authorized signed-out recipient can still be ended using its exact token", async () => {
@@ -703,6 +786,8 @@ test("an authorized signed-out recipient can still be ended using its exact toke
   try {
     const state = await inSchool(() => lifecycle.teacherPrivateChatLifecycles(scope()));
     assert.equal(state.privateChatLifecycles.find(row => row.studentId === ids.students[0])?.supported, false);
+    assert.equal(state.privateChatLifecycles.find(row => row.studentId === ids.students[0])?.readiness, "signed_out");
+    await assert.rejects(reply("Signed out must not mean outdated", initial), hasCode("PRIVATE_CHAT_SIGN_IN_REQUIRED"));
     assert.equal((await close(initial)).privateChatLifecycle.threadGeneration, initial.threadGeneration + 1);
   } finally {
     recoveryHashes[0] = randomBytes(32).toString("hex");
