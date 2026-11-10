@@ -6873,8 +6873,12 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
       const row = rows.find(student => student.contextId === body.supervisionContextId);
       assert(row, 'A claimed preview uses its own supervision authority, never the unrelated class');
       const bindingVersion = `v3:claim-${row.studentId}`;
+      // Fixed wall time isolates notification scope below. Each fixture frame
+      // still represents a new logical capture, even with identical pixels;
+      // equal time + equal bytes intentionally preserves the prior frame.
+      const capturedAt = new Date((await page.evaluate(() => Date.now())) + requestFrame).toISOString();
       return { tiles: [{ studentId: row.studentId, bindingVersion, screenshot: {
-        screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion, timestamp: new Date(await page.evaluate(() => Date.now())).toISOString(),
+        screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion, timestamp: capturedAt,
         tabTitle: `Claimed screen ${requestFrame}`, tabUrl: 'https://lesson.example.edu/work',
       } }] };
     },
@@ -6911,9 +6915,18 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   const rejectionWindowClock = await page.evaluate(() => ({ date: Date.now(), monotonic: performance.now() }));
   await page.clock.setFixedTime(rejectionWindowClock.date);
   await page.evaluate(() => { window.__claimedPreviewPeriodicReads.paused = true; });
-  // Drain earlier authorized work through the queue's five-second start ceiling.
-  await page.clock.runFor(5100);
-  await page.waitForLoadState('networkidle');
+  // Network idle does not include a pending five-second queue callback. An
+  // authorized read can begin just after the first window, so require two
+  // consecutive complete windows with no new screenshot read before measuring.
+  let stableScreenshotWindows = 0;
+  for (let cycle = 0; cycle < 6 && stableScreenshotWindows < 2; cycle += 1) {
+    const before = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
+    await page.clock.runFor(5100);
+    await page.waitForLoadState('networkidle');
+    const after = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
+    stableScreenshotWindows = before === after ? stableScreenshotWindows + 1 : 0;
+  }
+  assert.equal(stableScreenshotWindows, 2, 'Earlier authorized screenshot work must quiesce before scope assertions');
   // Cross a complete reconciliation interval with no notifications. Its
   // callbacks must be paused rather than counted as a foreign event refresh.
   const readsBeforeQuietWindow = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
@@ -8103,7 +8116,9 @@ test('reliability: silent transport reconnects and hidden dashboards stop previe
   await page.clock.runFor(1_100);
   await waitUntil(() => harness.tileRequests.length > before, 'Visible return refreshes exact authorized previews immediately');
   await page.clock.runFor(61_000); await waitUntil(() => reports.length === 1, 'A visible dashboard reports one content-free minute');
-  assert.deepEqual(Object.keys(reports[0]).sort(), ['counters', 'freshnessBuckets', 'intervalSeconds', 'version']);
+  assert.deepEqual(Object.keys(reports[0]).sort(), ['counters', 'freshnessBuckets', 'intervalSeconds', 'previewEligibilityV1', 'version']);
+  assert.equal(reports[0].previewEligibilityV1.version, 1);
+  assert.deepEqual(Object.keys(reports[0].previewEligibilityV1.excludedCounts).sort(), ['backgroundCadence', 'monitoringNotCurrent', 'notObserved', 'readDenied']);
   assert(reports[0].freshnessBuckets.reduce((sum, value) => sum + value, 0) <= 1200);
   assert.equal(JSON.stringify(reports[0]).includes(STUDENT_ID), false);
   assert.deepEqual(harness.pageErrors, []);

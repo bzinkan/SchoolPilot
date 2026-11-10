@@ -17,7 +17,7 @@
     "test:classpilot-dashboard-theme": "node --test scripts/dashboard-theme-presets.test.mjs scripts/dashboard-theme-calendar.test.mjs scripts/dashboard-theme-isolation.test.mjs",
     "test:passpilot-kiosk-theme": "node --test scripts/kiosk-theme.test.mjs scripts/passpilot-kiosk-theme-browser.test.mjs",
     "test:classpilot-session-lifecycle": "node --test scripts/classpilot-session-monitoring-report.test.mjs && node --test scripts/classpilot-session-lifecycle.test.mjs",
-    "test:classpilot-realtime-cache": "node --test scripts/classpilot-realtime-cache.test.mjs scripts/classpilot-recovery.test.mjs",
+    "test:classpilot-realtime-cache": "node --test scripts/classpilot-realtime-cache.test.mjs scripts/classpilot-recovery.test.mjs scripts/classpilot-preview-health.test.mjs",
     "test:classpilot-dashboard-load-state": "node --test scripts/classpilot-dashboard-load-state.test.mjs",
     "test:classpilot-signal-loss": "node --test scripts/classpilot-signal-loss.test.mjs",
     "test:classpilot-command-context": "node --test scripts/classpilot-command-context.test.mjs scripts/dashboard-activity.test.mjs scripts/chat-timestamp.test.mjs scripts/chat-threads.test.mjs scripts/chat-roster.test.mjs scripts/focus-controls.test.mjs scripts/tile-lock-actions.test.mjs scripts/classroom-actions.test.mjs scripts/automatic-flight-path.test.mjs scripts/private-chat-lifecycle.test.mjs",
