@@ -85,7 +85,7 @@ test("client health rejects private payloads, emits 204 and limits the verified 
   const invalid = await report(teacherToken, { ...body, studentId: "must-not-be-logged" });
   assert.equal(invalid.status, 400);
   assert.doesNotMatch(await invalid.text(), /must-not-be-logged/);
-  const invalidQualified = await report(teacherToken, {
+  const invalidQualified = await report(officeToken, {
     ...qualifiedBody,
     previewEligibilityV1: { ...qualifiedBody.previewEligibilityV1, studentId: "must-not-be-logged" },
   });
