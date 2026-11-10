@@ -31,7 +31,11 @@ function frameRetentionExpiryMs(screenshotData, nowMs) {
     screenshotData?.timestamp ?? screenshotData?.capturedAt ?? screenshotData?.observedAt,
     nowMs,
   );
-  return observedAtMs === null ? null : observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS;
+  if (observedAtMs === null) return null;
+  const ordinaryExpiry = observedAtMs + SCREENSHOT_RECONNECT_RETAIN_MS;
+  return screenshotData?.resolution === 'detail' && Number.isFinite(screenshotData.detailExpiresAtMs)
+    ? Math.min(ordinaryExpiry, screenshotData.detailExpiresAtMs)
+    : ordinaryExpiry;
 }
 
 // Decodes each candidate screenshot off-screen and exposes a frame only once
@@ -140,6 +144,8 @@ export function useDecodedScreenshot(screenshotData, privacyKey, { crossfade = f
         privacyKey,
         src,
         screenshotData,
+        naturalWidth: candidate.naturalWidth,
+        naturalHeight: candidate.naturalHeight,
         sequence: sequenceRef.current,
         expiresAtMs,
       };

@@ -10,6 +10,7 @@ import type {
   HeartbeatTrackingSettings,
 } from "./storage.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
+import { detailPreviewBindingForProjection, detailPreviewStatus, type DetailPreviewBinding, type DetailPreviewLease } from "./classpilotDetailPreview.js";
 
 export const CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS = 90;
 export const CLASSPILOT_SCREENSHOT_CAPTURE_FUTURE_SKEW_MS = 30_000;
@@ -79,6 +80,7 @@ export type ClasspilotScreenshotPolicy =
       authority: ClasspilotScreenshotAuthorityClaim;
       diagnostic?: "unavailable";
       captureCadence?: ClasspilotScreenshotCaptureCadence;
+      detailPreview?: { mode: "selected_student"; leaseId: string; expiresInSeconds: number; intervalSeconds: 5; maxWidth: 1920; jpegQuality: 90 };
     };
 
 type ObservationStatusLoader = (options: {
@@ -103,6 +105,9 @@ export async function resolveClasspilotScreenshotPolicy(options: {
   observationStatus?: ObservationStatusLoader;
   trackingSettings?: HeartbeatTrackingSettings;
   trackingAuthority?: ClasspilotScreenshotAuthorityProjection;
+  deviceId?: string;
+  studentSessionId?: string;
+  detailPreviewStatus?: (options: { binding: DetailPreviewBinding; now?: number }) => Promise<DetailPreviewLease | null>;
 }): Promise<ClasspilotScreenshotPolicy> {
   const now = options.now ?? Date.now();
   const serverTime = new Date(now).toISOString();
@@ -175,6 +180,22 @@ export async function resolveClasspilotScreenshotPolicy(options: {
         ? "screenshotActiveCadencePolicyIssued"
         : "screenshotBackgroundCadencePolicyIssued"
     );
+    if (captureCadence.mode === "active_view" && options.acceptedCapabilities.includes("scopedAuthorityChecksV1")
+      && options.deviceId && options.studentSessionId) {
+      const binding = detailPreviewBindingForProjection({ schoolId: options.schoolId, studentId: options.studentId,
+        deviceId: options.deviceId, studentSessionId: options.studentSessionId }, options.trackingAuthority);
+      if (binding) {
+        try {
+          const lease = await (options.detailPreviewStatus ?? detailPreviewStatus)({ binding, now });
+          const remaining = lease ? Math.min(20, policy.expiresInSeconds, captureCadence.expiresInSeconds,
+            Math.floor((lease.expiresAt - Math.max(now, Date.now())) / 1000)) : 0;
+          if (lease && remaining > 0) return { ...policy, captureCadence, detailPreview: {
+            mode: "selected_student", leaseId: lease.leaseId, expiresInSeconds: remaining,
+            intervalSeconds: 5, maxWidth: 1920, jpegQuality: 90,
+          } };
+        } catch { /* Detail demand fails closed; ordinary thumbnails keep their policy. */ }
+      }
+    }
     return { ...policy, captureCadence };
   }
   if (!options.acceptedCapabilities.includes("screenshotObservationLeaseV1")) {
