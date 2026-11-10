@@ -73,6 +73,13 @@ candidates/key; use a patch only if it saves at least 25% and 512 bytes. Base,
 target and patch inputs are bounded by 256 KiB, and decode has at most 8,192
 operations. Existing exact-image references win for identical captures.
 
+The final encoder samples at most 16,384 words directly across eight bit
+alignments, with a 65,536-head table and about 448 KiB of index arrays plus
+inputs/output. It does not allocate seven shifted base images. Genuine Chrome
+worksheet captures with this encoder produced about 91–92% smaller patches in
+3.8/5.2/3.9 ms for the three measured edits. The earlier prototype's memory and
+timing figures above describe the spike rather than this production codec.
+
 The canonical TypeScript codec is generated verbatim to the frontend and separate
 extension, with parity/golden/malformed-input tests. The extension sends a JSON
 `screenshotDelta` instead of `screenshot` only under a new default-off capability

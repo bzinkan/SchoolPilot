@@ -261,9 +261,17 @@ creating the paid synthetic environment the operator rejected.
 The existing `realtime_hot_path_summary` log now includes fixed-size
 `screenshotImages` counters: `fullUploads`, `fullUploadBytes`, `referenceUploads`,
 `referenceMisses` and `metadataOnlyReads`. Use full bytes/full uploads to estimate
-actual full-image size and references/(full uploads+references) for the observed
+actual full-image size and references/(full uploads+delta uploads+references) for the observed
 reuse rate. These logs contain no image IDs, hashes or student labels and do not
 create additional CloudWatch custom metric streams.
+The second pass adds `deltaUploads`, `deltaUploadBytes`,
+`deltaMaterializedBytes`, `deltaBaseReadBytes`, `deltaMisses`, `deltaReads` and
+`deltaReadBytes`. Byte counters use Base64/data-URL string bytes, not full wire
+envelopes. Compare patch bytes with materialized target bytes without treating
+the full target write or base read as saved Redis traffic. Accepted delta
+uploads/(full uploads+delta uploads) estimates changed-capture eligibility only
+within the admitted cache-write population; it excludes denied/discarded and
+failed uploads. Use delta misses and actual edge measurements as well.
 These new counters describe accepted image-cache writes and reads. Uploads
 discarded before that cache, legacy clients and denied requests are outside
 their denominator. Correlate them with existing total upload, discarded upload
@@ -295,6 +303,17 @@ reused. These checks establish local correctness rather than AWS fleet capacity.
 Use [the guarded rollout and rollback runbook](CLASSPILOT_DEVICE_TELEMETRY_ROLLOUT.md)
 for any separately reviewed release. No source version or local ZIP establishes
 Chrome Web Store publication or managed-device adoption.
+
+Second-pass backend source checkpoint `fb6ea3a3` passed Node 22 check/build with
+`--preserveSymlinks`, the unchanged test-type/cast ratchets, 85 focused
+screenshot/classification/Redis tests, 94 database unit/contract tests, 13 native
+index checks, and 87 fresh-database telemetry/publication/history checks. Both
+owned temporary databases were removed. The 1,446 runtime deployment assertions,
+registry check and 32+45 Schema 12/13 assertions passed and are included in the
+existing CI job. Frontend lint has zero errors and 37 existing warnings; build,
+tile batching, realtime cache, signal loss and command-context checks passed.
+These are local correctness checks; no new whole-backend-suite or AWS capacity
+acceptance is claimed.
 
 ## Rate sources
 

@@ -91,3 +91,27 @@ tests that import it. Do not repeat the broad Node 24 backend run.
   or rejects. New scopedScreenshotDeltasV1 stays off. Root owns frontend/client/
   capability tooling; screenshot owner owns scoped cache/server integration;
   codec owner owns canonical/generator/parity files; DB owner owns index retirement.
+- Task 5 implemented: canonical/generated codec parity, exact-scope CP upload
+  bases/integrity/full recovery, atomic server materialization and one-patch
+  storage, teacher query-cache decode/digest/full recovery. Deltas remain off;
+  Schema 13 has parent/source-scope gates and independent review. Completed
+  frontend/Schema 13 and server/client reviews found no important remaining issue.
+- Task 3 implemented in fb6ea3a3: strict catalog-verified fixed concurrent drops
+  and immutable ledger migration. Review found and fixed nontransactional
+  cleanup-session reuse; failed apply destroys the session and preserves its
+  original error. Independent review and 77 focused checks passed. Root native
+  proof passed 13 checks on an owned empty database; cleanup completed.
+- Root verification at fb6ea3a3: Node 22 backend check/build, unchanged test-type
+  and cast ratchets; 85 focused screenshot/classifier/Redis checks, 94 database
+  unit/contracts and 87 fresh-database transport/publication/history checks
+  passed with zero skips. Both owned local databases were removed. Frontend
+  lint/build and tile/realtime/signal/command gates passed. Runtime 1,446 plus
+  registry/32+45 checks passed and now run in the existing CI job.
+- Economics separate exact reuse, changed-image eligibility, teacher base hits,
+  origin gzip and actual cache work. Lost WS receipts add retransmit bytes and
+  conservative full recovery; other misses and database growth remain unknown.
+  PAYG six/eight-hour zero-reuse cases remain over target. Favorable scenarios
+  are not fleet acceptance. No paid AWS tests/resources or production changes.
+- Remaining final checks: extension full Chrome completion/package checks and
+  teacher native decoder/session/Radix checks. Record their exact results before
+  completion; no source version alone proves Store publication or adoption.
