@@ -105,6 +105,7 @@ async function raw(server: Server, body: object) {
       response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
       response.on("error", reject);
     });
+    req.setTimeout(5000, () => req.destroy(new Error("Local screenshot authority response deadline exceeded")));
     req.on("error", reject); req.end(JSON.stringify(body));
   });
 }

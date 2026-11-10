@@ -38,6 +38,7 @@ async function raw(server: Server, acceptEncoding?: string) {
       response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
       response.on("error", reject);
     });
+    req.setTimeout(5000, () => req.destroy(new Error("Local screenshot response deadline exceeded")));
     req.on("error", reject); req.end();
   });
 }
@@ -103,7 +104,7 @@ test("saturation never queues another compression or blocks an identity response
   const server = await fixture(encoder);
   try {
     const first = raw(server, "gzip");
-    await ready;
+    assert.equal(await Promise.race([ready.then(() => true), first.then(() => false)]), true, "compression must actually start");
     const second = await raw(server, "gzip");
     assert.equal(calls, 1);
     assert.equal(second.headers["content-encoding"], undefined);
