@@ -343,6 +343,16 @@ function cacheClassification(cacheKey: string, result: AiClassification): AiClas
   return result;
 }
 
+function freshCachedClassification(cacheKey: string): AiClassification | undefined {
+  const cached = classificationCache.get(cacheKey);
+  return cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS ? cached : undefined;
+}
+
+function pageClassificationCacheKey(cacheKey: string, url: string, title?: string): string {
+  const inputFingerprint = createHash("sha256").update(JSON.stringify([url, title])).digest("hex");
+  return `page|${cacheKey}|model:${GEMINI_URL_CLASSIFICATION_MODEL}|input-policy:${CLASSPILOT_AI_REQUEST_INPUT_POLICY_VERSION}|${inputFingerprint}`;
+}
+
 function withBrowserClassificationExplanation(result: AiClassification): AiClassification {
   const contentCategory = reviewedContentCategoryForDomain(result.domain) ?? normalizeContentCategory(result.contentCategory);
   const deterministic = result.source !== "ai" && result.source !== "unknown";
@@ -594,14 +604,16 @@ function resolveImmediateUrlClassification(url: string, options: AiClassificatio
   const domain = extractDomain(url);
   const schoolDomain = normalizeDomainValue(options.schoolDomain);
   const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${options.useAiFallback === false ? "off" : "on"}`;
+  let cacheHit = false;
   const classify = (): AiClassification | null | undefined => {
     // Unsafe searches are query-specific and must run before the domain cache,
     // otherwise cached google.com = educational could hide a later risky search.
     const unsafeSearch = classifyUnsafeSearch(url, domain);
     if (unsafeSearch) return withBrowserClassificationExplanation(unsafeSearch);
 
-    const cached = classificationCache.get(cacheKey);
-    if (cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS) {
+    const cached = freshCachedClassification(cacheKey);
+    if (cached) {
+      cacheHit = true;
       return cached;
     }
 
@@ -686,7 +698,7 @@ function resolveImmediateUrlClassification(url: string, options: AiClassificatio
     }
     return undefined;
   };
-  return { domain, cacheKey, classification: classify() };
+  return { domain, cacheKey, classification: classify(), cacheHit };
 }
 
 /** The same canonical rules as classifyUrl, restricted to safe deterministic
@@ -699,6 +711,31 @@ export function classifyImmediateEducationalUrl(
   return classification?.category === "educational" && classification.safetyAlert === null
     && (classification.source === "known-list" || classification.source === "school-domain")
     ? classification : null;
+}
+
+/** Final safe classifications already available to the canonical classifier.
+ * No provider work is started and no in-flight decision is consumed. Unknown
+ * results require a completed cache entry; non-educational/safety results keep
+ * the asynchronous path that resolves current teacher intent and safety rules. */
+export function classifyImmediateHeartbeatUrl(
+  url: string,
+  title?: string,
+  options: AiClassificationOptions = {}
+): AiClassification | null {
+  const { cacheKey, classification, cacheHit } = resolveImmediateUrlClassification(url, options);
+  if (classification !== undefined) {
+    if (!classification || classification.safetyAlert !== null) return null;
+    if (classification.category === "educational") return classification;
+    return cacheHit && classification.category === "unknown" ? classification : null;
+  }
+  // Match classifyUrl's provider/input ordering before consulting its exact
+  // page cache. In particular, a current input-policy denial cannot reuse an
+  // otherwise valid older model decision.
+  if (!GEMINI_API_KEY || options.useAiFallback === false
+    || prepareClasspilotAiRequestInput(url, title).kind === "unavailable") return null;
+  const cached = freshCachedClassification(pageClassificationCacheKey(cacheKey, url, title));
+  return cached?.safetyAlert === null
+    && (cached.category === "educational" || cached.category === "unknown") ? cached : null;
 }
 
 export async function classifyUrl(
@@ -728,10 +765,9 @@ export async function classifyUrl(
   // Hash the exact original observation, even when redaction makes two provider
   // inputs identical. Never reuse another resource's model decision or pending
   // work. Version the policy independently of classification semantics.
-  const inputFingerprint = createHash("sha256").update(JSON.stringify([url, title])).digest("hex");
-  const pageCacheKey = `page|${cacheKey}|model:${GEMINI_URL_CLASSIFICATION_MODEL}|input-policy:${CLASSPILOT_AI_REQUEST_INPUT_POLICY_VERSION}|${inputFingerprint}`;
-  const cachedPage = classificationCache.get(pageCacheKey);
-  if (cachedPage && Date.now() - cachedPage.classifiedAt < CACHE_TTL_MS) return cachedPage;
+  const pageCacheKey = pageClassificationCacheKey(cacheKey, url, title);
+  const cachedPage = freshCachedClassification(pageCacheKey);
+  if (cachedPage) return cachedPage;
   const existingClassification = inFlightUrlClassifications.get(pageCacheKey);
   if (existingClassification) return existingClassification;
   const classification = (async (): Promise<AiClassification> => {
