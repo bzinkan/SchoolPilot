@@ -3980,7 +3980,10 @@ export default function Dashboard() {
       const read = (ids, boundedSignal) => {
         if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
         const current = tileRequestWithoutDeniedStudents({ ...allowed, body: { ...allowed.body, studentIds: ids } }, tileReadDenialsRef.current, authorities);
-        return current.body.studentIds.length ? fetchTileBatch(current, requestActivityApi, boundedSignal) : Promise.resolve({ tiles: [] });
+        return current.body.studentIds.length ? fetchTileBatch(current, requestActivityApi, boundedSignal, {
+          getCachedData: () => queryClient.getQueryData(current.queryKey),
+          isCurrent: screenshotReadCurrent,
+        }) : Promise.resolve({ tiles: [] });
       };
       const response = request.kind === 'screenshots'
         ? await screenshotQueueRef.current.read({ key: JSON.stringify(request.queryKey), studentIds: allowed.body.studentIds, read, signal,
@@ -4003,7 +4006,7 @@ export default function Dashboard() {
       }
       throw error;
     }
-  }, [requestActivityApi]);
+  }, [queryClient, requestActivityApi]);
   useLayoutEffect(() => {
     setTileGlobalAuthorizationDenied(false);
     setUpdatingPreviewStudentIds((current) => (

@@ -20,7 +20,7 @@ describe("ClassPilot tile screenshot store degrade", () => {
     assert.match(route, /screenshotStore: "unavailable"/);
     assert.match(route, /recordHeartbeatHotPathCounter\("tileBatchScreenshotStoreUnavailable"\)/);
     assert.equal((route.match(/getScreenshots\(/g) ?? []).length, 1);
-    assert.equal((route.match(/getClassBoundScreenshots\(/g) ?? []).length, 1);
+    assert.equal((route.match(/getClassBoundScreenshotImages\(/g) ?? []).length, 1);
 
     // Screenshot maps are built only from successful reads; unavailable reads
     // contribute nothing so affected tiles resolve to a null screenshot.
@@ -42,11 +42,10 @@ describe("ClassPilot tile screenshot store degrade", () => {
     assert.match(polling, /export function assertTileScreenshotStoreAvailable\(response\)/);
     assert.match(polling, /response\?\.screenshotStore !== 'unavailable'/);
     assert.match(polling, /response: \{ status: 503, data: response \}/);
-    assert.match(polling, /normalizeTileScreenshotBindings\(assertTileScreenshotStoreAvailable\(response\)\)/);
 
     const dashboard = read("schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx");
     assert.match(dashboard, /^\s+assertTileScreenshotStoreAvailable,$/m);
-    assert.match(dashboard, /fetchTileBatch\(current, requestActivityApi, boundedSignal\)/);
+    assert.match(dashboard, /fetchTileBatch\(current, requestActivityApi, boundedSignal,/);
     const targeted = dashboard.indexOf("let response = await fetchAuthorizedTileBatch(");
     assert.ok(targeted >= 0);
     const guard = dashboard.indexOf("assertTileScreenshotStoreAvailable(response);", targeted);

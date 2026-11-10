@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test:router-reachability": "node --test scripts/check-router-reachability.test.mjs",
     "test:api-routing": "node scripts/assert-api-routing.mjs",
-    "test:classpilot-tile-batching": "node scripts/assert-classpilot-tile-batching.mjs && npm run test:classpilot-dashboard-isolation",
+    "test:classpilot-tile-batching": "node scripts/assert-classpilot-tile-batching.mjs && node --test scripts/screenshot-image-references.test.mjs && npm run test:classpilot-dashboard-isolation",
     "test:classpilot-student-tile": "node scripts/classpilot-student-tile-browser.mjs",
     "test:classpilot-native-desktop": "node --test --test-concurrency=1 scripts/native-desktop-browser.test.mjs scripts/native-desktop-diagnostics.test.mjs && node --test --test-name-pattern=\"native desktop:\" scripts/classpilot-dashboard-load-state.test.mjs",
     "test:classpilot-windows-browsers": "node --test --test-concurrency=1 scripts/windows-browsers.test.mjs scripts/windows-browsers-browser.test.mjs && node --test --test-name-pattern=\"Windows browsers:\" scripts/classpilot-dashboard-load-state.test.mjs",
