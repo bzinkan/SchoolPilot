@@ -63,12 +63,12 @@ test("heartbeat, websocket auth, and screenshot upload share cadence policy reso
     source("src/realtime/websocket.ts"),
   ]);
   const heartbeat = devices.slice(
-    devices.indexOf('router.post("/device/heartbeat"'),
-    devices.indexOf('router.post("/device/screenshot"')
+    devices.indexOf("export async function executeCanonicalHeartbeat("),
+    devices.indexOf("export async function executeCanonicalScreenshot(")
   );
   const upload = devices.slice(
-    devices.indexOf('router.post("/device/screenshot"'),
-    devices.indexOf('router.post("/tiles/screenshots"')
+    devices.indexOf("export async function executeCanonicalScreenshot("),
+    devices.indexOf("async function runWebSocketDeviceOperation(")
   );
   assert.match(heartbeat, /resolveClasspilotScreenshotPolicy\([\s\S]*acceptedCapabilities: protocol\.acceptedCapabilities/);
   assert.match(upload, /activeCadenceRolloutActive = isClasspilotCapabilityActive\([\s\S]*"screenshotActiveObservationCadenceV1"/);
@@ -89,7 +89,7 @@ test("heartbeat, websocket auth, and screenshot upload share cadence policy reso
   assert.match(authority, /withClasspilotScreenshotUploadAuthority\([\s\S]*?async \(\{ current, trackingSettings \}\) =>/);
   assert.match(
     authority,
-    /const stored = await setClassBoundScreenshot\(classBinding, data\)[\s\S]*?if \(outcome !== "unavailable"\)[\s\S]*?if \(screenshotRealtimeSnapshot\)[\s\S]*?const observation = cadenceObservationFor\(classBinding\.teachingSessionId\)/
+    /const stored = imageProtocol \? imageWrite\?\.status === "stored" : await setClassBoundScreenshot\(classBinding, data\)[\s\S]*?if \(outcome !== "unavailable"\)[\s\S]*?if \(screenshotRealtimeSnapshot\)[\s\S]*?const observation = cadenceObservationFor\(classBinding\.teachingSessionId\)/
   );
   assert.match(
     authority,

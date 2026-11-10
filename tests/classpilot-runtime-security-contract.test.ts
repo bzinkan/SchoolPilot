@@ -69,10 +69,10 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
   it("returns FAB state only for an explicit heartbeat recovery request", async () => {
     const devices = await source("src/routes/classpilot/devices.ts");
     const heartbeat = devices.slice(
-      devices.indexOf('router.post("/device/heartbeat"'),
-      devices.indexOf('router.post("/device/screenshot"')
+      devices.indexOf("export async function executeCanonicalHeartbeat("),
+      devices.indexOf("export async function executeCanonicalScreenshot(")
     );
-    assert.match(heartbeat, /req\.body\?\.requestFabState === true/);
+    assert.match(heartbeat, /context\.payload\?\.requestFabState === true/);
     assert.match(
       heartbeat,
       /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
@@ -85,10 +85,10 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.equal(heartbeat.match(/buildStudentFabState\(/g)?.length, 1);
     // A device flagged because the class-start push found no socket gets the
     // FAB state on its next regular heartbeat through the same single call.
-    assert.match(heartbeat, /req\.body\?\.requestFabState === true \|\| fabSyncPending/);
+    assert.match(heartbeat, /context\.payload\?\.requestFabState === true \|\| fabSyncPending/);
     assert.match(heartbeat, /takeClasspilotFabSyncPending\(\{ schoolId, studentId, studentSessionId, deviceId \}\)/);
     assert.match(heartbeat, /await Promise\.all\(\[\s*heartbeatTileCacheWrite,\s*realtimeStatusWrite,\s*screenshotPolicyPromise,\s*fabSyncPendingTake,\s*\]\)/);
-    const beforeShortCircuit = heartbeat.slice(0, heartbeat.indexOf("return res.status(204).send();"));
+    const beforeShortCircuit = heartbeat.slice(0, heartbeat.indexOf("return context.reply(204);"));
     assert.doesNotMatch(beforeShortCircuit, /takeClasspilotFabSyncPending\(/);
     assert.match(heartbeat, /fabSyncPending: fabSyncPending === true,/);
   });
@@ -131,8 +131,8 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(bindingAuthority, /ne\(studentSessions\.id, options\.studentSessionId\)/);
     assert.match(lifecycle, /allowEndedBinding: true/);
     const heartbeat = devices.slice(
-      devices.indexOf('router.post("/device/heartbeat"'),
-      devices.indexOf('router.post("/device/screenshot"')
+      devices.indexOf("export async function executeCanonicalHeartbeat("),
+      devices.indexOf("export async function executeCanonicalScreenshot(")
     );
     assert.match(heartbeat, /const telemetryAuthority = realtimeControlAuthority\(controlState\)/);
     assert.match(heartbeat, /publishRevisionedRealtimeUpdate\(realtimeSnapshot, update, telemetryAuthority\)/);
@@ -169,8 +169,8 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       source("src/services/storage.ts"),
     ]);
     const heartbeat = devices.slice(
-      devices.indexOf('router.post("/device/heartbeat"'),
-      devices.indexOf('router.post("/device/screenshot"')
+      devices.indexOf("export async function executeCanonicalHeartbeat("),
+      devices.indexOf("export async function executeCanonicalScreenshot(")
     );
     assert.match(
       heartbeat,
@@ -212,7 +212,7 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       source("src/services/storage.ts"),
     ]);
     const upload = devices.slice(
-      devices.indexOf('router.post("/device/screenshot"'),
+      devices.indexOf("export async function executeCanonicalScreenshot("),
       devices.indexOf('router.post("/tiles/screenshots"')
     );
     assert.match(upload, /parseClasspilotScreenshotAuthority\(screenshotAuthority\)/);
@@ -247,7 +247,7 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       devices.indexOf('router.post("/tiles/history"')
     );
     assert.match(tileRoute, /access\.controlRevision/);
-    assert.match(tileRoute, /getClassBoundScreenshots\(classBindings\)/);
+    assert.match(tileRoute, /getClassBoundScreenshotImages\(classBindings, \{ knownImageIds: classBindings\.map\(binding =>[\s\S]*?knownScreenshotImageForBinding\(knownImages, binding\.studentId, classBoundScreenshotBindingVersion\(binding\)\)/);
     assert.match(tileRoute, /classpilotRealtimeFresh\(realtime\.snapshot\)/);
     assert.match(tileRoute, /freshCapabilities === null[\s\S]*classBindings\.push\(classBinding\)[\s\S]*continue/);
     assert.match(tileRoute, /freshCapabilities\.includes\("screenshotTrackingWindowLeaseV1"\)[\s\S]*classBindings\.push\(classBinding\)[\s\S]*else[\s\S]*legacyBindings\.push\(exactBinding\)/);
@@ -270,9 +270,13 @@ describe("ClassPilot tracking-window screenshot authority", () => {
     );
     assert.match(redis, /class-bound:/);
     const classWriter = redis.slice(
-      redis.indexOf("export async function setClassBoundScreenshot"),
-      redis.indexOf("export async function getScreenshot")
+      redis.indexOf("export async function setClassBoundScreenshot("),
+      redis.indexOf("export async function setSupervisionBoundScreenshot(")
     );
+    const classImageScope = redis.slice(redis.indexOf("function classImageScope("), redis.indexOf("function supervisionImageScope("));
+    assert.match(classWriter, /classBoundScreenshotMatchesBinding\(data, binding\)[\s\S]*screenshotImageCache\.storeLegacy\(classImageScope\(binding\), data\)/);
+    assert.match(classImageScope, /bindingVersion: classBoundScreenshotBindingVersion\(binding\)[\s\S]*legacyKey: classBoundScreenshotBindingCacheKey\(binding\)/);
+    assert.doesNotMatch(classImageScope, /screenshotBindingCacheKey|allowLegacy/);
     const classReader = redis.slice(
       redis.indexOf("export async function getClassBoundScreenshots"),
       redis.indexOf("// Flight path status storage")
@@ -891,10 +895,10 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     assert.match(legacy, /studentId: prepared\.studentId/);
     assert.match(legacy, /studentSessionId: prepared\.studentSessionId/);
     const heartbeat = devices.slice(
-      devices.indexOf('router.post("/device/heartbeat"'),
-      devices.indexOf('router.post("/device/screenshot"')
+      devices.indexOf("export async function executeCanonicalHeartbeat("),
+      devices.indexOf("export async function executeCanonicalScreenshot(")
     );
-    assert.match(heartbeat, /return res\.json\(\{[\s\S]*?ok: true,[\s\S]*?schoolId,/);
+    assert.match(heartbeat, /return context\.reply\(200, \{[\s\S]*?ok: true,[\s\S]*?schoolId,/);
     assert.match(
       heartbeat,
       /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision:/

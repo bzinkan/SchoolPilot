@@ -129,7 +129,8 @@ test("actual heartbeat owner uses finally outside all post-response work and mid
   const route = source.slice(source.indexOf('router.post("/device/heartbeat"'), source.indexOf('router.post("/device/screenshot"'));
   assert.match(route, /startUsageCapacityOperation\("heartbeat_handler"\);\s*let finishForegroundTelemetry: \(\) => void = \(\) => \{\};\s*try \{/);
   assert.match(route, /await Promise\.all\(teacherReplyPublications\);[\s\S]*return finalDelivery\.value;[\s\S]*finally \{[\s\S]*endHeartbeatHandler\(\);/);
-  assert.match(route, /catch \(err\) \{\s*recordUsageCapacityCounter\("heartbeatHandlerFailures", "heartbeat_handler"\);\s*next\(err\);/);
+  assert.match(route, /catch \(err\) \{\s*recordUsageCapacityCounter\("heartbeatHandlerFailures", "heartbeat_handler"\);\s*throw err;/);
+  assert.match(route, /await executeCanonicalHeartbeat\(deviceTelemetryHttpContext\(req, res\)\); \} catch \(error\) \{ next\(error\); \}/);
   for (const middleware of ["requireCryptographicDeviceAuth", "deviceHeartbeatLimiter"]) {
     assert.ok(route.includes(`trackUsageCapacityMiddleware("heartbeat_middleware", ${middleware})`));
   }
