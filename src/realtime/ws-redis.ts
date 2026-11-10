@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
+import { executeRedisScriptCommand } from "./redisScriptCommand.js";
 import {
   dispatchCacheInvalidation,
   registerCacheInvalidationPublisher,
@@ -437,7 +438,10 @@ export async function executeRealtimeRedisCommandOutcome<T = unknown>(
 ): Promise<RedisPublicationOutcome<T>> {
   if (!redisUrl) return { status: "not_admitted", reason: "not_configured" };
   const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
-  const outcome = await coordinationRuntime.publish(client => client.sendCommand<T>(command), { budgetMs: timeoutMs });
+  const deadlineAt = performance.now() + timeoutMs;
+  const outcome = await coordinationRuntime.publish(client => executeRedisScriptCommand(
+    args => client.sendCommand<T>(args), command, { deadlineAt, isReady: () => client.isReady },
+  ), { budgetMs: timeoutMs });
   // Advisory presence/refresh claims fail closed. An uncertain SET is not
   // retried; its frozen timestamps/NX lease remain bounded if it executes late.
   return outcome;
@@ -448,9 +452,13 @@ export async function executeRealtimeRedisCommandOutcome<T = unknown>(
 export async function realtimeRedisCommandOutcome(
   args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
 ): Promise<RedisPublicationOutcome<unknown>> {
+  const deadlineAt = performance.now() + 250;
   const outcome: RedisPublicationOutcome<unknown> = !redisUrl
     ? { status: "not_admitted", reason: "not_configured" }
-    : await coordinationRuntime.publish(client => client.sendCommand(args), {
+    : await coordinationRuntime.publish(client => executeRedisScriptCommand(
+      command => client.sendCommand(command), args,
+      { deadlineAt, signal: options.signal, isReady: () => client.isReady },
+    ), {
       budgetMs: 250, signal: options.signal,
     });
   if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { test } from "node:test";
 import ts from "typescript";
+import { createHash } from "node:crypto";
+import { executeRedisScriptCommand } from "../src/realtime/redisScriptCommand.ts";
 const boundedContext = vm.createContext({ performance,
     setTimeout: (...args) => setTimeout(...args), clearTimeout: (...args) => clearTimeout(...args) });
 vm.runInContext(ts.transpileModule(readFileSync(new URL("../src/realtime/boundedRedisPublication.ts", import.meta.url), "utf8")
@@ -31,6 +33,7 @@ const compile = (source) => ts.transpileModule(source, {
 function fixture(runtime, configured = true) {
     const activity = { observationStatusOutcomes: {} };
     const context = vm.createContext({ redisUrl: configured ? "synthetic-configured" : "", coordinationRuntime: runtime,
+        performance, executeRedisScriptCommand,
         hotPathActivity: activity });
     vm.runInContext(compile(`${diagnosticSource}\n${recorderSource}\n${wrapperSource}`), context);
     const invoke = context.realtimeRedisCommand;
@@ -74,7 +77,7 @@ test("accepted means only transport accepted, preserves opaque replies and ignor
         } });
     const args = ["EVAL", "private-script", "1", "private-key"];
     assert.equal(await f.invoke(args, { diagnosticOperation: "observation_status" }), raw);
-    assert.equal(commands[0], args);
+    assert.deepEqual(commands[0], ["EVALSHA", createHash("sha1").update("private-script").digest("hex"), ...args.slice(2)]);
     assert.deepEqual(f.activity.observationStatusOutcomes, { accepted: 1 });
     for (const diagnosticOperation of [undefined, "tile_write", "status_write", "fab_getdel", "renew", "release", "constructor"]) {
         assert.equal(await f.invoke(args, { diagnosticOperation }), raw);
