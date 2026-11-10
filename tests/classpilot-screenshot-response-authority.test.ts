@@ -43,7 +43,7 @@ const routeProgram = javascript(`${bindingSource}\n${declarations("src/routes/cl
   "classpilotScreenshotStoreRequired", "screenshotForAuthorizedStudent", "classBoundScreenshotForAuthorizedStudent",
 ])}\n(${route[0]!.getText(routeFile)});`);
 
-async function fixture(reporting = false, metadataOnly = false) {
+async function fixture(reporting = false, metadataOnly = false, options: { delta?: boolean; deltaEnabled?: boolean } = {}) {
   const initial: { schoolId: string; staffId: string; studentId: string; deviceId: string; studentSessionId: string;
     controlRevision: number; teachingSessionId?: string; supervisionContextId?: string; reportingObservation?: boolean } = {
     schoolId: "synthetic-school", staffId: "synthetic-teacher", studentId: "synthetic-student",
@@ -60,10 +60,19 @@ async function fixture(reporting = false, metadataOnly = false) {
     order.push("compress"); started(); await gate; order.push("compressed"); return gzipSync(input);
   } });
   const version = reporting ? bindingHelpers.classBoundScreenshotBindingVersion(initial) : bindingHelpers.supervisionBoundScreenshotBindingVersion(initial);
+  const delta = { codec: "cp-bit-copy-v1", baseImageId: "12345678-1234-4234-8234-123456789abc",
+    data: Buffer.alloc(21).toString("base64"), targetBytes: 1024, integrityTag: "a".repeat(64) };
+  const pixels = `data:image/jpeg;base64,${"synthetic-private-pixels".repeat(400)}`;
   const image = { ...initial, timestamp: 1794290000000, capturedAt: new Date(1794290000000).toISOString(),
     bindingVersion: version, imageId: "00000000-0000-4000-8000-000000000001",
-    ...(metadataOnly ? { unchanged: true } : { screenshot: `data:image/jpeg;base64,${"synthetic-private-pixels".repeat(400)}` }),
+    ...(options.delta ? { delta } : metadataOnly ? { unchanged: true } : { screenshot: pixels }),
     tabTitle: "Synthetic lesson", tabUrl: "https://example.invalid/lesson", contentHash: "private-content-hash" };
+  const reads: { knownImageIds?: readonly (string | undefined)[]; allowDeltas?: readonly boolean[] }[] = [];
+  function readImage(readOptions: (typeof reads)[number]) {
+    reads.push(readOptions);
+    return options.delta && (!readOptions.allowDeltas?.[0] || readOptions.knownImageIds?.[0] !== delta.baseImageId)
+      ? { ...image, delta: undefined, screenshot: pixels } : image;
+  }
   const globals = {
     createHash, process: { env: { NODE_ENV: "production" } },
     screenshotResponseEncoder: encoder, parseKnownScreenshotImages, knownScreenshotImageForBinding, publicScreenshotImageData,
@@ -75,9 +84,14 @@ async function fixture(reporting = false, metadataOnly = false) {
     async runWithTenantContext(_scope: unknown, operation: () => Promise<unknown>) { return operation(); },
     releaseClassPilotTileAdmission() {}, recordHeartbeatHotPathCounter() {}, recordHeartbeatHotPathTiming() {},
     async readClasspilotRealtimeStatusBatch() { return new Map(); },
-    classpilotRealtimeFresh() { return false; }, isClasspilotCapabilityActive() { return true; },
-    async getClassBoundScreenshotImages() { order.push("redis"); return { status: "ok", screenshots: reporting ? [image] : [] }; },
-    async getSupervisionBoundScreenshotImages() { order.push("redis"); return { status: "ok", screenshots: reporting ? [] : [image] }; },
+    classpilotRealtimeFresh() { return false; },
+    isClasspilotCapabilityActive(capability: string) { return capability !== "scopedScreenshotDeltasV1" || options.deltaEnabled !== false; },
+    async getClassBoundScreenshotImages(_bindings: unknown, readOptions: (typeof reads)[number]) {
+      order.push("redis"); return { status: "ok", screenshots: reporting ? [readImage(readOptions)] : [] };
+    },
+    async getSupervisionBoundScreenshotImages(_bindings: unknown, readOptions: (typeof reads)[number]) {
+      order.push("redis"); return { status: "ok", screenshots: reporting ? [] : [readImage(readOptions)] };
+    },
     async getScreenshots() { return { status: "ok", screenshots: [] }; },
     classpilotScreenshotFallback: { getClassBound() { throw new Error("No local pixels may replace a required store read"); },
       getSupervisionBound() { throw new Error("No local pixels may replace a required store read"); }, get() { throw new Error("Unexpected legacy fallback"); } },
@@ -91,10 +105,12 @@ async function fixture(reporting = false, metadataOnly = false) {
   });
   const server = createServer(app);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { server, ready, release, initial, image, order, calls: () => calls,
+  return { server, ready, release, initial, image, order, reads, calls: () => calls,
     replace(value: typeof initial | undefined) { current = value ? new Map([[initial.studentId, value]]) : new Map(); },
     requestBody: { studentIds: [initial.studentId], ...(reporting ? { teachingSessionId: initial.teachingSessionId } : { supervisionContextId: initial.supervisionContextId }),
-      ...(metadataOnly ? { knownImageIds: { [initial.studentId]: { imageId: image.imageId, bindingVersion: version } } } : {}) } };
+      ...(options.delta ? { imageDeltaProtocolVersion: 1, knownImageIds: {
+        [initial.studentId]: { imageId: delta.baseImageId, bindingVersion: version } } }
+        : metadataOnly ? { knownImageIds: { [initial.studentId]: { imageId: image.imageId, bindingVersion: version } } } : {}) } };
 }
 async function raw(server: Server, body: object) {
   const address = server.address(); assert.ok(address && typeof address !== "string");
@@ -184,3 +200,41 @@ test("actual unchanged screenshot authority publishes the exact original public 
     assert.ok(f.order.lastIndexOf("authority") > f.order.indexOf("compressed"));
   } finally { f.release(); await close(f.server); }
 });
+
+for (const reporting of [false, true]) {
+  test(`actual ${reporting ? "reporting Observe" : "supervision"} route serves deltas only with body opt-in, known base and live rollout`, async () => {
+    for (const scenario of ["delta", "old-reader", "disabled", "foreign-base"] as const) {
+      const f = await fixture(reporting, false, { delta: true, deltaEnabled: scenario !== "disabled" });
+      try {
+        const body = { ...f.requestBody, ...(scenario === "old-reader" ? { imageDeltaProtocolVersion: undefined } : {}),
+          ...(scenario === "foreign-base" ? { knownImageIds: {} } : {}) };
+        const pending = raw(f.server, body);
+        assert.equal(await Promise.race([f.ready.then(() => true), pending.then(() => false)]), true);
+        f.release(); const response = await pending;
+        assert.equal(response.status, 200);
+        const json = (response.headers["content-encoding"] === "gzip" ? gunzipSync(response.body) : response.body).toString();
+        const dto = JSON.parse(json).tiles[0].screenshot;
+        assert.equal(f.reads[0]?.allowDeltas?.[0], scenario !== "old-reader" && scenario !== "disabled");
+        if (scenario === "delta") {
+          assert.equal(dto.delta.baseImageId, "12345678-1234-4234-8234-123456789abc");
+          assert.equal(dto.screenshot, undefined); assert.equal(dto.unchanged, undefined);
+          assert.equal(dto.delta.integrityTag, "a".repeat(64));
+        } else { assert.equal(dto.delta, undefined); assert.ok(dto.screenshot.startsWith("data:image/jpeg;base64,")); }
+        assert.ok(!json.includes("private-content-hash")); assert.ok(!json.includes("synthetic-device"));
+        assert.ok(!json.includes("synthetic-login")); assert.equal(f.calls(), 2);
+      } finally { f.release(); await close(f.server); }
+    }
+  });
+
+  test(`actual ${reporting ? "reporting Observe" : "supervision"} route discards a delta prepared before an authority change`, async () => {
+    const f = await fixture(reporting, false, { delta: true });
+    try {
+      const pending = raw(f.server, f.requestBody);
+      assert.equal(await Promise.race([f.ready.then(() => true), pending.then(() => false)]), true);
+      f.replace({ ...f.initial, controlRevision: 2 }); f.release(); const response = await pending;
+      assert.equal(response.status, 200); assert.equal(response.headers["content-encoding"], undefined);
+      assert.deepEqual(JSON.parse(response.body.toString()), { tiles: [{ studentId: f.initial.studentId, screenshot: null }] });
+      assert.equal(f.calls(), 2);
+    } finally { f.release(); await close(f.server); }
+  });
+}

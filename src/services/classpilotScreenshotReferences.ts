@@ -1,3 +1,5 @@
+import { parseScreenshotDisplayDelta } from "./classpilotScreenshotDelta.js";
+
 const IMAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type KnownImage = { imageId: string; bindingVersion: string };
 export type KnownScreenshotImages = ReadonlyMap<string, KnownImage>;
@@ -28,12 +30,15 @@ export function knownScreenshotImageForBinding(images: KnownScreenshotImages, st
 
 export type ScreenshotPublicInput = {
   screenshot?: string; timestamp: number; bindingVersion?: string; imageId?: string; unchanged?: boolean;
-  tabTitle?: string; tabUrl?: string; tabFavicon?: string;
+  tabTitle?: string; tabUrl?: string; tabFavicon?: string; delta?: unknown;
 };
 /** Explicit allowlist: student/session/device identities and image hashes never leave storage. */
 export function publicScreenshotImageData(data: ScreenshotPublicInput & Record<string, unknown>) {
   const imageId = typeof data.imageId === 'string' && IMAGE_ID.test(data.imageId) ? data.imageId : undefined;
   if (data.unchanged === true && (!imageId || !Number.isFinite(data.timestamp) || data.timestamp <= 0)) return null;
+  const delta = data.delta === undefined ? undefined : parseScreenshotDisplayDelta(data.delta);
+  if (data.delta !== undefined && (!delta || !imageId || data.screenshot !== undefined || data.unchanged === true
+    || !Number.isFinite(data.timestamp) || data.timestamp <= 0)) return null;
   return {
     ...(typeof data.screenshot === 'string' ? { screenshot: data.screenshot } : {}),
     timestamp: data.timestamp,
@@ -43,5 +48,6 @@ export function publicScreenshotImageData(data: ScreenshotPublicInput & Record<s
     ...(/^v[23]:/.test(data.bindingVersion || '') ? { bindingVersion: data.bindingVersion } : {}),
     ...(imageId ? { imageId } : {}),
     ...(data.unchanged === true ? { unchanged: true } : {}),
+    ...(delta ? { delta } : {}),
   };
 }

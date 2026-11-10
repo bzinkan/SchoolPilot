@@ -1,6 +1,9 @@
+import { parseScreenshotUploadDelta, type ScreenshotUploadDelta } from "./classpilotScreenshotDelta.js";
+
 export type ScreenshotImageRequest =
   | { mode: "full"; screenshot: string; referenceProtocol: boolean }
   | { mode: "reference"; imageId: string }
+  | { mode: "delta"; delta: ScreenshotUploadDelta }
   | { mode: "need_full_frame" }
   | { mode: "invalid" };
 
@@ -9,7 +12,13 @@ export function uploadedScreenshotPixelBytes(screenshot: unknown): number {
 }
 
 /** Selection only: canonical authority and capture-time checks still precede storage. */
-export function parseScreenshotImageRequest(payload: Record<string, unknown>, negotiated: boolean): ScreenshotImageRequest {
+export function parseScreenshotImageRequest(payload: Record<string, unknown>, negotiated: boolean, deltaNegotiated = false): ScreenshotImageRequest {
+  if (payload.screenshotDelta !== undefined) {
+    if (payload.captureKind === "safety_evidence" || payload.screenshot !== undefined || payload.screenshotReferenceId !== undefined) return { mode: "invalid" };
+    if (!negotiated || !deltaNegotiated || payload.screenshotImageProtocolVersion !== 1) return { mode: "need_full_frame" };
+    const delta = parseScreenshotUploadDelta(payload.screenshotDelta);
+    return delta ? { mode: "delta", delta } : { mode: "need_full_frame" };
+  }
   const reference = payload.screenshotReferenceId;
   if (reference !== undefined) {
     if (payload.captureKind === "safety_evidence" || payload.screenshot !== undefined

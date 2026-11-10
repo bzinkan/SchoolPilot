@@ -5,6 +5,7 @@ import { createScopedScreenshotImageCache, type ScreenshotImageScope,
   type ScreenshotImageReadResult, type ScreenshotImageWriteResult,
 } from "./scopedScreenshotImageCache.js";
 import { ScreenshotImageActivity } from "./screenshotImageActivity.js";
+import { SCREENSHOT_JPEG_DATA_URI, type ScreenshotUploadDelta } from "../services/classpilotScreenshotDelta.js";
 export type { ScreenshotImageReadData as ScreenshotImageData, ScreenshotImageWriteResult } from "./scopedScreenshotImageCache.js";
 import {
   dispatchCacheInvalidation,
@@ -1051,7 +1052,8 @@ export async function setSupervisionBoundScreenshot(binding: SupervisionBoundScr
 // Reference storage is separate from the legacy JSON key. Each write/read still
 // carries the exact authority; ordinary heartbeats never invoke a refresh.
 const screenshotImageCache = createScopedScreenshotImageCache(
-  args => realtimeRedisCommand(args), { prefix: SCREENSHOT_KEY_PREFIX },
+  args => realtimeRedisCommand(args), { prefix: SCREENSHOT_KEY_PREFIX,
+    onDeltaBaseRead: bytes => screenshotImageActivity.record('delta_base_read', bytes) },
 );
 function classImageScope(binding: ClassBoundScreenshotBinding): ScreenshotImageScope {
   return { binding, bindingVersion: classBoundScreenshotBindingVersion(binding),
@@ -1069,6 +1071,16 @@ export async function setSupervisionBoundScreenshotImage(binding: SupervisionBou
   if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
   return recordScreenshotImageWrite(screenshotImageCache.storeFull(supervisionImageScope(binding), data), 'full', Buffer.byteLength(data.screenshot, 'utf8'));
 }
+export async function setClassBoundScreenshotDelta(binding: ClassBoundScreenshotBinding, data: Omit<ClassBoundScreenshotData, "screenshot">,
+  delta: ScreenshotUploadDelta, maxTargetBytes: number): Promise<ScreenshotImageWriteResult> {
+  if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotDeltaWrite(screenshotImageCache.storeDelta(classImageScope(binding), data, delta, maxTargetBytes), delta);
+}
+export async function setSupervisionBoundScreenshotDelta(binding: SupervisionBoundScreenshotBinding, data: Omit<SupervisionBoundScreenshotData, "screenshot">,
+  delta: ScreenshotUploadDelta, maxTargetBytes: number): Promise<ScreenshotImageWriteResult> {
+  if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotDeltaWrite(screenshotImageCache.storeDelta(supervisionImageScope(binding), data, delta, maxTargetBytes), delta);
+}
 export async function refreshClassBoundScreenshotImage(binding: ClassBoundScreenshotBinding, data: Omit<ClassBoundScreenshotData, "screenshot"> & { imageId: string }): Promise<ScreenshotImageWriteResult> {
   if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
   return recordScreenshotImageWrite(screenshotImageCache.refresh(classImageScope(binding), data), 'reference');
@@ -1084,13 +1096,23 @@ async function recordScreenshotImageWrite(work: Promise<ScreenshotImageWriteResu
   else if (kind === 'reference' && result.status === 'need_full_frame') screenshotImageActivity.record('miss');
   return result;
 }
-type ScreenshotImageReadOptions = { knownImageIds?: readonly (string | null | undefined)[] };
+async function recordScreenshotDeltaWrite(work: Promise<ScreenshotImageWriteResult>, delta: ScreenshotUploadDelta): Promise<ScreenshotImageWriteResult> {
+  const result = await work;
+  if (result.status === "stored") screenshotImageActivity.record('delta_upload', Buffer.byteLength(delta.data),
+    SCREENSHOT_JPEG_DATA_URI.length + Math.ceil(delta.targetBytes / 3) * 4);
+  else if (result.status === "need_full_frame") screenshotImageActivity.record('delta_miss');
+  return result;
+}
+type ScreenshotImageReadOptions = { knownImageIds?: readonly (string | null | undefined)[]; allowDeltas?: readonly boolean[] };
 async function readScreenshotImages(scopes: readonly ScreenshotImageScope[], options: ScreenshotImageReadOptions): Promise<ScreenshotImageReadResult> {
   if (!scopes.length) return { status: "ok", screenshots: [] };
   if (!redisUrl) return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
     ? { status: "unavailable" } : { status: "ok", screenshots: scopes.map(() => null) };
-  const result = await screenshotImageCache.read(scopes, options.knownImageIds);
+  const result = await screenshotImageCache.read(scopes, options.knownImageIds, options.allowDeltas);
   if (result.status === 'ok') screenshotImageActivity.record('metadata_read', result.screenshots.filter(data => data?.unchanged === true).length);
+  if (result.status === 'ok') for (const data of result.screenshots) {
+    if (data?.delta) screenshotImageActivity.record('delta_read', Buffer.byteLength(data.delta.data));
+  }
   return result;
 }
 export async function getClassBoundScreenshotImages(bindings: readonly ClassBoundScreenshotBinding[], options: ScreenshotImageReadOptions = {}): Promise<ScreenshotImageReadResult> {

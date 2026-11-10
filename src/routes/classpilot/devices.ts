@@ -3,6 +3,7 @@ import { DeviceTelemetryDelivery, heartbeatTelemetryIdentity, validTelemetryOper
   registerClasspilotDeviceTelemetryOperations, type DeviceTelemetryContext, type DeviceTelemetryOutcome,
 } from "../../services/classpilotDeviceTelemetry.js";
 import { parseScreenshotImageRequest, uploadedScreenshotPixelBytes } from "../../services/classpilotScreenshotImageRequest.js";
+import { screenshotDeltaTargetByteLimit } from "../../services/classpilotScreenshotDelta.js";
 import { privateChatMessageLifecycle } from "../../services/classpilotPrivateChatLifecycle.js";
 import { parseKnownScreenshotImages, knownScreenshotImageForBinding, publicScreenshotImageData } from "../../services/classpilotScreenshotReferences.js";
 import { screenshotResponseEncoder } from "../../services/classpilotScreenshotResponseEncoding.js";
@@ -128,6 +129,7 @@ import {
   setScreenshot,
   setClassBoundScreenshot,
   setClassBoundScreenshotImage,
+  setClassBoundScreenshotDelta,
   refreshClassBoundScreenshotImage,
   getScreenshot,
   getClassBoundScreenshot,
@@ -146,6 +148,7 @@ import {
   getSupervisionBoundScreenshots,
   setSupervisionBoundScreenshot,
   setSupervisionBoundScreenshotImage,
+  setSupervisionBoundScreenshotDelta,
   refreshSupervisionBoundScreenshotImage,
   supervisionBoundScreenshotBindingVersion,
   supervisionBoundScreenshotMatchesBinding,
@@ -5134,14 +5137,18 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
     );
     const safetyCaptureNegotiated = safetyCaptureRolloutActive
       && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
-    const imageRequest = parseScreenshotImageRequest(context.payload, trackingLeaseNegotiated
+    const imageReferencesNegotiated = trackingLeaseNegotiated
       && acceptedHeartbeatCapabilities.has("scopedScreenshotReferencesV1")
-      && isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding));
+      && isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding);
+    const imageRequest = parseScreenshotImageRequest(context.payload, imageReferencesNegotiated,
+      imageReferencesNegotiated && acceptedHeartbeatCapabilities.has("scopedScreenshotDeltasV1")
+        && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding));
     if (imageRequest.mode === "need_full_frame") return context.reply(409, { ok: false, code: "SCREENSHOT_IMAGE_REQUIRED" });
     if (imageRequest.mode === "invalid") {
       return context.reply(400, { error: "screenshot data required" });
     }
-    const imageProtocol = imageRequest.mode === "reference" || imageRequest.referenceProtocol;
+    const imageProtocol = imageRequest.mode !== "full" || imageRequest.referenceProtocol;
+    const availableImageBytes = imageRequest.mode === "delta" ? screenshotDeltaTargetByteLimit(context.payload) : 0;
 
     if (captureKind === "safety_evidence") {
       const capturedAtDate = typeof capturedAt === "string" ? new Date(capturedAt) : null;
@@ -5308,13 +5315,15 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
             const { screenshot: _pixels, ...metadata } = data;
             const imageWrite = imageProtocol ? imageRequest.mode === "reference"
               ? await refreshSupervisionBoundScreenshotImage(supervisionBinding, { ...metadata, imageId: imageRequest.imageId })
-              : await setSupervisionBoundScreenshotImage(supervisionBinding, data) : undefined;
+              : imageRequest.mode === "delta"
+                ? await setSupervisionBoundScreenshotDelta(supervisionBinding, metadata, imageRequest.delta, availableImageBytes)
+                : await setSupervisionBoundScreenshotImage(supervisionBinding, data) : undefined;
             if (imageWrite?.status === "need_full_frame") return { outcome: "image_required" as const, screenshotPolicy };
             if (imageWrite?.status === "invalid") return { outcome: "image_invalid" as const, screenshotPolicy };
             if (imageWrite?.status === "superseded") return { outcome: "image_superseded" as const, screenshotPolicy };
             const stored = imageProtocol ? imageWrite?.status === "stored" : await setSupervisionBoundScreenshot(supervisionBinding, data);
             const required = classpilotScreenshotStoreRequired();
-            if (!stored && !required && imageRequest.mode === "reference") return { outcome: "image_required" as const, screenshotPolicy };
+            if (!stored && !required && imageRequest.mode !== "full") return { outcome: "image_required" as const, screenshotPolicy };
             if (!stored && !required) classpilotScreenshotFallback.setSupervisionBound(supervisionBinding, data);
             const outcome = stored ? "redis" as const : required ? "unavailable" as const : "local_fallback" as const;
             if (outcome !== "unavailable" && current.supervisionRetention?.assignedStaffId) {
@@ -5345,14 +5354,16 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
           const { screenshot: _pixels, ...metadata } = data;
           const imageWrite = imageProtocol ? imageRequest.mode === "reference"
             ? await refreshClassBoundScreenshotImage(classBinding, { ...metadata, imageId: imageRequest.imageId })
-            : await setClassBoundScreenshotImage(classBinding, data) : undefined;
+            : imageRequest.mode === "delta"
+              ? await setClassBoundScreenshotDelta(classBinding, metadata, imageRequest.delta, availableImageBytes)
+              : await setClassBoundScreenshotImage(classBinding, data) : undefined;
           if (imageWrite?.status === "need_full_frame") return { outcome: "image_required" as const, screenshotPolicy };
           if (imageWrite?.status === "invalid") return { outcome: "image_invalid" as const, screenshotPolicy };
           if (imageWrite?.status === "superseded") return { outcome: "image_superseded" as const, screenshotPolicy };
           const stored = imageProtocol ? imageWrite?.status === "stored" : await setClassBoundScreenshot(classBinding, data);
           recordHeartbeatHotPathTiming("screenshotStoreMs", Date.now() - screenshotStoreStartedAt);
           const screenshotStoreRequired = classpilotScreenshotStoreRequired();
-          if (!stored && !screenshotStoreRequired && imageRequest.mode === "reference") return { outcome: "image_required" as const, screenshotPolicy };
+          if (!stored && !screenshotStoreRequired && imageRequest.mode !== "full") return { outcome: "image_required" as const, screenshotPolicy };
           if (!stored && !screenshotStoreRequired) {
             classpilotScreenshotFallback.setClassBound(classBinding, data);
           }
@@ -5667,6 +5678,9 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
       });
     }
     const knownImages = parseKnownScreenshotImages(req.body?.knownImageIds, parsed.studentIds);
+    // Older APIs ignore this body hint; pixels still require the exact known
+    // base binding and the school's live capability on every read below.
+    const allowImageDeltas = req.body?.imageDeltaProtocolVersion === 1;
     if (knownImages === null) {
       releaseClassPilotTileAdmission(res);
       return res.status(400).json({ error: "knownImageIds must name only requested students and their exact image bindings" });
@@ -5789,12 +5803,14 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
       getClassBoundScreenshotImages(classBindings, { knownImageIds: classBindings.map(binding =>
         isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding)
           ? knownScreenshotImageForBinding(knownImages, binding.studentId, classBoundScreenshotBindingVersion(binding))
-          : undefined) }),
+          : undefined), allowDeltas: classBindings.map(binding => allowImageDeltas
+            && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding)) }),
       getScreenshots(legacyBindings),
       getSupervisionBoundScreenshotImages(supervisionBindings, { knownImageIds: supervisionBindings.map(binding =>
         isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding)
           ? knownScreenshotImageForBinding(knownImages, binding.studentId, supervisionBoundScreenshotBindingVersion(binding))
-          : undefined) }),
+          : undefined), allowDeltas: supervisionBindings.map(binding => allowImageDeltas
+            && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding)) }),
     ]);
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",

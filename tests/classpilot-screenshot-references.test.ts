@@ -30,3 +30,15 @@ test('metadata-only images require a valid opaque identity and real capture time
   assert.equal(publicScreenshotImageData({ timestamp: 2000, unchanged: true }), null);
   assert.equal(publicScreenshotImageData({ timestamp: NaN, imageId, unchanged: true }), null);
 });
+
+test('delta DTOs expose only scoped display integrity and cannot mix full or unchanged pixels', () => {
+  const delta = { codec: 'cp-bit-copy-v1', baseImageId: '12345678-1234-4234-8234-123456789abc',
+    data: 'Q1BEMQAABAAAAAQAAQAAAAAAAAH0AAAAAAHpAQAAD6gAAAIL', targetBytes: 1024, integrityTag: '8'.repeat(64) };
+  const input = { timestamp: 2000, imageId, bindingVersion: 'v2:class-a', delta,
+    deviceId: 'private-device', studentSessionId: 'private-session', contentHash: 'private-global-hash' };
+  assert.deepEqual(publicScreenshotImageData(input), { timestamp: 2000, imageId, bindingVersion: 'v2:class-a', delta });
+  assert.equal(publicScreenshotImageData({ ...input, screenshot: 'pixels' }), null);
+  assert.equal(publicScreenshotImageData({ ...input, unchanged: true }), null);
+  assert.equal(publicScreenshotImageData({ ...input, imageId: 'invalid' }), null);
+  assert.equal(publicScreenshotImageData({ ...input, delta: { ...delta, uploadIntegrity: 'private-upload-hash' } }), null);
+});
