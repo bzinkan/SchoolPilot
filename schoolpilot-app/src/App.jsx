@@ -73,7 +73,6 @@ const TermsOfService = lazy(() => import('./pages/legal/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'));
 const DeleteAccount = lazy(() => import('./pages/legal/DeleteAccount'));
 const AITransparency = lazy(() => import('./pages/legal/AITransparency'));
-const Subprocessors = lazy(() => import('./pages/legal/Subprocessors'));
 const Security = lazy(() => import('./pages/legal/Security'));
 const SecuritySummary = lazy(() => import('./pages/legal/SecuritySummary'));
 const HecvatLite = lazy(() => import('./pages/legal/HecvatLite'));
@@ -260,7 +259,7 @@ function AppRoutes() {
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/delete-account" element={<DeleteAccount />} />
             <Route path="/ai-transparency" element={<AITransparency />} />
-            <Route path="/subprocessors" element={<Subprocessors />} />
+            <Route path="/subprocessors" element={<Navigate to="/privacy#service-providers" replace />} />
             <Route path="/security" element={<Security />} />
             <Route path="/security/summary" element={<SecuritySummary />} />
             <Route path="/security/hecvat-lite" element={<HecvatLite />} />

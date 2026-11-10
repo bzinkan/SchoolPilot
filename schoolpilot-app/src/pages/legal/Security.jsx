@@ -43,9 +43,9 @@ export default function Security() {
           <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
             <p className="font-semibold text-slate-900 mb-2">For procurement teams</p>
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <a href="/security/summary" className={linkClass}>One-page summary (PDF)</a>
+              <a href="/security/summary" className={linkClass}>Print-ready summary</a>
               <a href="/security/hecvat-lite" className={linkClass}>HECVAT Lite self-assessment</a>
-              <a href="/subprocessors" className={linkClass}>Subprocessors</a>
+              <a href="/privacy#service-providers" className={linkClass}>Service providers in Privacy</a>
               <a href="/privacy" className={linkClass}>Privacy Policy</a>
             </div>
           </section>
@@ -114,7 +114,7 @@ export default function Security() {
                 pre-completed and <a href="/security/hecvat-lite" className={linkClass}>published for your review</a>
               </li>
               <li>
-                <strong>Subprocessor list and vendor review/DPA status</strong> — see <a href="/subprocessors" className={linkClass}>public Subprocessors page</a>
+                <strong>Service providers and data processed</strong> — see the <a href="/privacy#service-providers" className={linkClass}>Privacy Policy</a>. Vendor reviews and agreement confirmations remain in progress; current review status and executed agreements may be requested where available.
               </li>
             </ul>
             <p className="text-slate-700 leading-relaxed mb-4">Available on request:</p>
@@ -163,7 +163,6 @@ export default function Security() {
             <a href="/privacy" className="hover:text-amber-400 transition-colors">Privacy Policy</a>
             <a href="/terms" className="hover:text-amber-400 transition-colors">Terms of Service</a>
             <a href="/security" className="hover:text-amber-400 transition-colors">Security</a>
-            <a href="/subprocessors" className="hover:text-amber-400 transition-colors">Subprocessors</a>
             <a href="/" className="hover:text-amber-400 transition-colors">Home</a>
           </div>
         </div>
