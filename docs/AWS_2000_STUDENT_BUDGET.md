@@ -203,6 +203,32 @@ their denominator. Correlate them with existing total upload, discarded upload
 and screenshot-payload-byte counters and edge/ALB billing measurements; an
 accepted-cache reuse percentage is not an all-traffic savings percentage.
 
+## Local verification record
+
+At SchoolPilot code checkpoint `0f172062` and ClassPilot `659838f`, the new
+capabilities remain off. Backend check/build passed with the dependency-junction
+`--preserveSymlinks` setting. Node 22 functional proof includes 23 fresh-database
+checks for actual registered HTTP/WS recovery, durable retries, screenshot
+authority and Office integration; 44 feature/native Redis checks; six health
+checks and 25 Windows fixture-tool checks. Frontend lint/build, session lifecycle,
+realtime cache, signal loss, command context, tile batching and Radix browser
+checks passed. ClassPilot check/build, 209 tests and its full real-Chrome gate
+passed, including actual captures and reference/full-image recovery. Independent
+reviews found no remaining critical or important issue.
+
+The broad backend run reported 4,521 passed, 122 failed, one cancelled and ten
+skipped out of 4,654 tests. All 21 failed files later passed targeted reruns after
+normal CI database setup, Node 22 sandbox compatibility, Windows LF/timeout
+handling or narrowly reviewed test-fixture repairs. **The original whole-suite
+report remains failed; a fresh clean whole-suite run is not claimed.** Detailed
+reconciliation and sanitized local logs are in the worktree's Git validation
+metadata. Four temporary databases were removed; the existing service was
+reused. These checks establish local correctness rather than AWS fleet capacity.
+
+Use [the guarded rollout and rollback runbook](CLASSPILOT_DEVICE_TELEMETRY_ROLLOUT.md)
+for any separately reviewed release. No source version or local ZIP establishes
+Chrome Web Store publication or managed-device adoption.
+
 ## Rate sources
 
 - [CloudFront PAYG](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)

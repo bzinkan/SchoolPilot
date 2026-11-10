@@ -2,7 +2,7 @@
 
 Status: operator approved both repositories and implementation without further
 design approvals on November 9, 2026. Implementation is complete in isolated
-branches; final regression verification is in progress. Production capacity and
+branches, with local regression verification complete. Production capacity and
 the monthly budget have not been accepted.
 
 ## Intent
