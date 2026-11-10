@@ -15,6 +15,7 @@ async function fixture(t: TestContext) {
   await client.connect();
   const prefix = `schoolpilot:test:image:${randomUUID()}:`;
   const clock = Date.now();
+  let serverNow = clock;
   const scope: ScreenshotImageScope = { binding: { schoolId: "school-a", studentId: randomUUID(),
     studentSessionId: randomUUID(), deviceId: randomUUID(), teachingSessionId: randomUUID(), controlRevision: 1 },
     bindingVersion: "v2:synthetic-exact-authority", legacyKey: `${prefix}legacy` };
@@ -22,13 +23,14 @@ async function fixture(t: TestContext) {
   const cache = createScopedScreenshotImageCache(async args => {
     commands.push(args);
     return client.sendCommand(args);
-  }, { prefix, now: () => clock });
+  }, { prefix, now: () => serverNow });
   const keys = new Set([scope.legacyKey, scopedScreenshotImageKey(prefix, scope)]);
   t.after(async () => { for (const key of keys) await client.del(key); await client.quit(); });
   const data = { ...scope.binding, bindingVersion: scope.bindingVersion, capturedAt: new Date(clock).toISOString(),
     timestamp: clock, tabTitle: "First title", tabUrl: "https://example.invalid/one", screenshot: "data:image/jpeg;base64,cGl4ZWxz" };
   const later = (delta: number) => ({ ...data, capturedAt: new Date(clock + delta).toISOString(), timestamp: clock + delta });
-  return { client, prefix, scope, clock, data, later, cache, keys, commands };
+  return { client, prefix, scope, clock, data, later, cache, keys, commands,
+    advanceClock(delta: number) { serverNow += delta; } };
 }
 
 test("a full frame stores one pixel field, acknowledges an opaque ID and removes the same-scope legacy blob", options, async t => {
@@ -92,6 +94,26 @@ test("references cannot create, cross an authority, refresh a missing image or r
   assert.equal(await f.client.exists(scopedScreenshotImageKey(f.prefix, other)), 0);
   await f.client.del(scopedScreenshotImageKey(f.prefix, f.scope));
   assert.deepEqual(await f.cache.refresh(f.scope, { ...metadata, imageId: stored.imageId }), { status: "need_full_frame" });
+});
+
+test("a retained Redis key cannot refresh pixels whose previous capture has reached semantic expiry", options, async t => {
+  for (const age of [120_000, 121_000]) {
+    const f = await fixture(t);
+    const stored = await f.cache.storeFull(f.scope, f.later(-89_000));
+    assert.ok(stored.status === "stored");
+    const key = scopedScreenshotImageKey(f.prefix, f.scope);
+    const originalMetadata = await f.client.hGet(key, "metadata");
+    const ttlBefore = await f.client.pTTL(key);
+    assert.ok(ttlBefore > 0);
+    const advance = age - 89_000;
+    f.advanceClock(advance);
+    if (age > 120_000) assert.deepEqual(await f.cache.read([f.scope]), { status: "ok", screenshots: [null] });
+    const { screenshot: _, ...metadata } = f.later(advance);
+    assert.deepEqual(await f.cache.refresh(f.scope, { ...metadata, imageId: stored.imageId }), { status: "need_full_frame" });
+    assert.equal(await f.client.hGet(key, "metadata"), originalMetadata, "failed references cannot renew capture freshness");
+    assert.ok(await f.client.pTTL(key) <= ttlBefore, "failed references cannot renew retention");
+    assert.equal((await f.cache.storeFull(f.scope, f.later(advance))).status, "stored", "the genuine new capture can recover using full bytes");
+  }
 });
 
 test("same bytes retain their scope's ID while changed bytes and supervision scopes get independent IDs", options, async t => {

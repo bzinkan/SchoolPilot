@@ -60,6 +60,9 @@ return {1, id}
 export const REFRESH_SCREENSHOT_IMAGE_SCRIPT = `${COMMON_LUA}
 local current = redis.call('HMGET', KEYS[1], 'imageId', 'metadata', 'timestamp')
 if not current[1] or current[1] ~= ARGV[3] or not current[2] or redis.call('HSTRLEN', KEYS[1], 'pixels') == 0 then return {0} end
+local currentTimestamp = tonumber(current[3])
+local checkedAt = tonumber(ARGV[5])
+if not currentTimestamp or not checkedAt or checkedAt - currentTimestamp >= tonumber(ARGV[4]) * 1000 then return {0} end
 local ok, previous = pcall(cjson.decode, current[2])
 local valid, incoming = pcall(cjson.decode, ARGV[1])
 if not ok or not valid or type(previous) ~= 'table' or type(incoming) ~= 'table' then return {0} end
@@ -155,11 +158,12 @@ export function createScopedScreenshotImageCache(command: (args: string[]) => Pr
     catch { return { status: "unavailable" }; }
   }
   async function refresh(scope: ScreenshotImageScope, value: object): Promise<ScreenshotImageWriteResult> {
-    const prepared = metadata(scope, value, now());
+    const checkedAt = now();
+    const prepared = metadata(scope, value, checkedAt);
     const id = (value as { imageId?: unknown }).imageId;
     if (!prepared || !opaqueId(id) || (value as { screenshot?: unknown }).screenshot !== undefined) return { status: "invalid" };
     try { return writeResult(await command(["EVAL", REFRESH_SCREENSHOT_IMAGE_SCRIPT, "2", scopedScreenshotImageKey(options.prefix, scope),
-      scope.legacyKey, JSON.stringify(prepared), String(prepared.timestamp), id, String(TTL_SECONDS)])); }
+      scope.legacyKey, JSON.stringify(prepared), String(prepared.timestamp), id, String(TTL_SECONDS), String(checkedAt)])); }
     catch { return { status: "unavailable" }; }
   }
   async function storeLegacy(scope: ScreenshotImageScope, value: object): Promise<boolean> {
