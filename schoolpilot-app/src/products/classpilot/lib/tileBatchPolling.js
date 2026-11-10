@@ -8,6 +8,7 @@ import {
 } from './studentMonitoringDisplay.js';
 import { withClasspilotReadDeadline } from './classpilotRecovery.js';
 import { knownScreenshotImageIds, resolveScreenshotImageReferences } from './screenshotImageReferences.js';
+import { canDecodeScreenshotDeltas, resolveScreenshotImageDeltas } from './screenshotImageDeltas.js';
 
 export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
@@ -635,16 +636,29 @@ export async function fetchTileBatch(request, requestApi, signal, { getCachedDat
     const known = request.kind === 'screenshots'
       ? knownScreenshotImageIds(getCachedData?.(), request.body.studentIds)
       : {};
-    let response = await read(Object.keys(known).length ? { ...request.body, knownImageIds: known } : request.body);
+    const offered = Object.keys(known).length ? { ...request.body, knownImageIds: known,
+      ...(canDecodeScreenshotDeltas() ? { imageDeltaProtocolVersion: 1 } : {}) } : request.body;
+    const resolveImages = async (response) => {
+      const deltas = await resolveScreenshotImageDeltas(assertTileScreenshotStoreAvailable(response), getCachedData?.(), {
+        signal: boundedSignal, isCurrent, getCachedData,
+      });
+      assertCurrent();
+      const references = resolveScreenshotImageReferences(deltas.data, getCachedData?.());
+      return { data: references.data, missingStudentIds: [...new Set([...deltas.missingStudentIds, ...references.missingStudentIds])] };
+    };
+    let response = await read(offered);
     assertCurrent();
     if (request.kind !== 'screenshots') return response;
-    let resolved = resolveScreenshotImageReferences(assertTileScreenshotStoreAvailable(response), getCachedData?.());
+    let resolved = await resolveImages(response);
     if (resolved.missingStudentIds.length) {
       // The query may have been scrubbed while this read was in flight. Recover
       // once through the same fresh authority, without offering cached IDs.
-      response = await read(request.body);
+      const fullBody = { ...request.body };
+      delete fullBody.knownImageIds;
+      delete fullBody.imageDeltaProtocolVersion;
+      response = await read(fullBody);
       assertCurrent();
-      resolved = resolveScreenshotImageReferences(assertTileScreenshotStoreAvailable(response), getCachedData?.());
+      resolved = await resolveImages(response);
       if (resolved.missingStudentIds.length) throw Object.assign(new Error('SCREENSHOT_IMAGE_UNAVAILABLE'), {
         code: 'SCREENSHOT_IMAGE_UNAVAILABLE', response: { status: 503 },
       });
