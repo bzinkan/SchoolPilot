@@ -112,6 +112,18 @@ tests that import it. Do not repeat the broad Node 24 backend run.
   conservative full recovery; other misses and database growth remain unknown.
   PAYG six/eight-hour zero-reuse cases remain over target. Favorable scenarios
   are not fleet acceptance. No paid AWS tests/resources or production changes.
-- Remaining final checks: extension full Chrome completion/package checks and
-  teacher native decoder/session/Radix checks. Record their exact results before
-  completion; no source version alone proves Store publication or adoption.
+- Final browser checks passed: native teacher decoder reconstructed all 30
+  genuine-capture tiles exactly over 25 iterations (warm p95 27.5 ms), frontend
+  session lifecycle 5/5 and Radix browser regression passed. Extension source
+  full Chrome rerun exited zero, including 20/20 immutable expected-red cases.
+  The initial ACK diagnostics capture flaked once without a production ACK
+  change; four isolated reruns and the full rerun passed.
+- Final extension checkpoint 77c88465e337b5fb922658f714ba76674365b943 passed
+  check, 209 unit tests, build, 48 focused source/packaged checks, real packaged
+  capture/ref/delta/full/HTTP recovery, Windows 13 tests and both browser package
+  inventories/native worker parity. The last UUID-bound reservation patch was
+  covered by the focused/packaged paths after the broad source-browser gate.
+  Candidate ZIP has 30 exact files and SHA-256
+  84bc7740d0a5747e37e6915ac510165e31d5efaecf77f7dd3eeb4c80549fc7b2.
+  It was not uploaded; live Store identity, pending submissions and managed-device
+  adoption remain unverified. No new capability was enabled or AWS fleet accepted.

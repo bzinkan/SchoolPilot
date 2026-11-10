@@ -314,6 +314,20 @@ existing CI job. Frontend lint has zero errors and 37 existing warnings; build,
 tile batching, realtime cache, signal loss and command-context checks passed.
 These are local correctness checks; no new whole-backend-suite or AWS capacity
 acceptance is claimed.
+The complete teacher decoder was also checked in native Chrome 151 using the
+genuine differing JPEG captures: all 30 tiles reconstructed the exact data URLs
+over 25 iterations, with warm p50 26.1 ms and p95 27.5 ms for the entire cohort.
+This includes Base64 handling and WebCrypto integrity, and describes one local
+Windows machine rather than every teacher device or server capacity.
+Frontend session lifecycle (5/5) and the Radix browser regression passed.
+ClassPilot final source `77c88465e337b5fb922658f714ba76674365b943` passed check,
+209 unit tests and build. The broad Chrome rerun passed current-source suites
+and all 20 immutable expected-red cases; the final UUID metadata reservation
+was additionally covered by 48 focused and packaged tests, genuine packaged
+captures/deltas/full/HTTP recovery, and Windows Chrome/Edge parity. One initial
+unchanged ACK diagnostic harness capture failed; four isolated reruns and the
+complete broad rerun passed without an ACK code workaround. The new package
+was not published and no feature flag or production resource was changed.
 
 ## Rate sources
 
