@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { isClasspilotTodayScheduleEnabled, CLASSPILOT_TODAY_SCHEDULE_RLS_TABLES } from "../src/config/classpilotTodaySchedule.js";
 import { classpilotTodayScheduleMigration, CLASSPILOT_TODAY_SCHEDULE_SQL } from "../src/db/classpilotTodayScheduleMigration.js";
 import { classpilotTodayScheduleContractMigration } from "../src/db/classpilotTodayScheduleContractMigration.js";
+import { classpilotManualTodayMigration } from "../src/db/classpilotManualTodayMigration.js";
 import { assertTodayScheduleContractExecution, parseTodayScheduleContractArgs } from "../src/cli/contractClasspilotTodaySchedule.js";
 import { selectSchoolPilot27MigrationPlan } from "../src/db/migrations27.js";
 
@@ -25,9 +26,10 @@ test("today-schedule new writes require exact on and the complete tenant admissi
 test("today-schedule immutable migration is wired into the ledger and local bootstrap", () => {
   assert.equal(classpilotTodayScheduleMigration.mode, "transactional");
   assert.equal(classpilotTodayScheduleMigration.checksum, createHash("sha256").update(CLASSPILOT_TODAY_SCHEDULE_SQL).digest("hex"));
-  const ledger = readFileSync(new URL("../src/db/migrations27.ts", import.meta.url), "utf8");
+  const plan = selectSchoolPilot27MigrationPlan({ contractRolloutRequested: false, contractPreviouslyApplied: false });
   const bootstrap = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-  assert.match(ledger, /classpilotManualTodayMigration,\s+classpilotTodayScheduleMigration,\s*\]/);
+  assert.ok(plan.indexOf(classpilotManualTodayMigration) >= 0);
+  assert.equal(plan.indexOf(classpilotTodayScheduleMigration), plan.indexOf(classpilotManualTodayMigration) + 1);
   assert.match(bootstrap, /await pool\.query\(CLASSPILOT_TODAY_SCHEDULE_SQL\)/);
 });
 
