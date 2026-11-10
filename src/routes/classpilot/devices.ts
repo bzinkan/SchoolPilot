@@ -7,6 +7,11 @@ import { screenshotDeltaTargetByteLimit } from "../../services/classpilotScreens
 import { privateChatMessageLifecycle } from "../../services/classpilotPrivateChatLifecycle.js";
 import { parseKnownScreenshotImages, knownScreenshotImageForBinding, publicScreenshotImageData } from "../../services/classpilotScreenshotReferences.js";
 import { screenshotResponseEncoder } from "../../services/classpilotScreenshotResponseEncoding.js";
+import { loadVerifiedSchoolIdentities } from "../../services/schoolIdentity.js";
+import { classpilotSupervisionObservationStatus } from "../../services/classpilotObservationLease.js";
+import { nudgeClasspilotScreenshotPolicyRefresh } from "../../services/classpilotScreenshotPolicyRefresh.js";
+import { detailPreviewBindingForProjection, detailPreviewBindingVersion, detailPreviewStatus, renewDetailPreview,
+  releaseDetailPreview, readDetailPreview, writeDetailPreview, type DetailPreviewBinding } from "../../services/classpilotDetailPreview.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import crypto from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
@@ -682,11 +687,26 @@ const deviceScreenshotLimiter = rateLimit({
   legacyHeaders: false,
   store: deviceScreenshotRateStore,
   passOnStoreError: true,
+  // Selected detail has its own small allowance and cannot starve ordinary
+  // thumbnails, navigation captures, or safety-evidence requests.
+  skip: (req) => req.body?.captureKind === "detail_preview",
   keyGenerator: authenticatedDeviceKey,
   handler: (_req, res, _next, options) => {
     recordHeartbeatHotPathCounter("deviceScreenshotRateLimited");
     res.status(options.statusCode).send(options.message);
   },
+});
+
+const deviceDetailScreenshotLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  message: { error: "Too many detail screenshot uploads, please wait", code: "SCREENSHOT_DETAIL_RATE_LIMITED" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisStore("rl:device:detail-screenshot:"),
+  passOnStoreError: true,
+  skip: (req) => req.body?.captureKind !== "detail_preview",
+  keyGenerator: authenticatedDeviceKey,
 });
 
 const extensionTelemetryLimiter = rateLimit({
@@ -4927,6 +4947,7 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
           const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated
             ? await resolveClasspilotScreenshotPolicy({
                 schoolId,
+                deviceId, studentSessionId,
                 teachingSessionId: finalControlState?.teachingSessionId,
                 studentId,
                 acceptedCapabilities: protocol.acceptedCapabilities,
@@ -5060,7 +5081,7 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
 // ============================================================================
 
 // POST /api/classpilot/device/screenshot - Upload screenshot
-router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, requireClasspilotFullMonitoring, async (req, res, next) => {
+router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, deviceDetailScreenshotLimiter, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
   try { await executeCanonicalScreenshot(deviceTelemetryHttpContext(req, res)); } catch (error) { next(error); }
 });
@@ -5149,6 +5170,12 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
     }
     const imageProtocol = imageRequest.mode !== "full" || imageRequest.referenceProtocol;
     const availableImageBytes = imageRequest.mode === "delta" ? screenshotDeltaTargetByteLimit(context.payload) : 0;
+    if (captureKind === "detail_preview" && (!trackingLeaseNegotiated || !activeCadenceNegotiated
+      || !acceptedHeartbeatCapabilities.has("scopedAuthorityChecksV1")
+      || typeof context.payload.detailPreviewLeaseId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(context.payload.detailPreviewLeaseId)
+      || typeof screenshot !== "string" || screenshot.length > 800_000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(screenshot))) {
+      return context.reply(400, { ok: false, code: "SCREENSHOT_DETAIL_INVALID" });
+    }
 
     if (captureKind === "safety_evidence") {
       const capturedAtDate = typeof capturedAt === "string" ? new Date(capturedAt) : null;
@@ -5256,6 +5283,7 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
           const checkedAt = Date.now();
           const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
             schoolId,
+            deviceId, studentSessionId,
             teachingSessionId: current.authority.kind === "teaching_session"
               ? current.authority.teachingSessionId
               : null,
@@ -5304,6 +5332,24 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
             || capturedAtDate < current.reportingObservation.startsAt
             || capturedAtDate >= current.reportingObservation.expiresAt)) {
             return { outcome: "discarded" as const, screenshotPolicy };
+          }
+
+          if (captureKind === "detail_preview") {
+            const detailBinding = detailPreviewBindingForProjection(binding, current);
+            if (!detailBinding || screenshotPolicy.captureCadence?.mode !== "active_view"
+              || !screenshotPolicy.detailPreview || screenshotPolicy.detailPreview.leaseId !== context.payload.detailPreviewLeaseId) {
+              return { outcome: "detail_stale" as const, screenshotPolicy };
+            }
+            try {
+              const outcome = await writeDetailPreview({ binding: detailBinding,
+                leaseId: screenshotPolicy.detailPreview.leaseId, image: {
+                  screenshot, timestamp: capturedAtDate.getTime(), capturedAt: capturedAtDate.toISOString(),
+                  bindingVersion: detailPreviewBindingVersion(detailBinding), resolution: "detail", captureCadenceMode: "active_view",
+                  ...(typeof tabTitle === "string" ? { tabTitle: tabTitle.slice(0, 500) } : {}),
+                  ...(typeof tabUrl === "string" ? { tabUrl: tabUrl.slice(0, 4096) } : {}),
+                } });
+              return { outcome: outcome === "stored" ? "detail_stored" as const : "detail_stale" as const, screenshotPolicy };
+            } catch { return { outcome: "detail_unavailable" as const, screenshotPolicy }; }
           }
 
           if (current.authority.kind === "supervision_context") {
@@ -5429,6 +5475,9 @@ export async function executeCanonicalScreenshot(context: DeviceTelemetryContext
       }
 
       const strictValue = strictResult.value;
+      if (strictValue.outcome === "detail_stale") return context.reply(409, { ok: false, code: "SCREENSHOT_DETAIL_LEASE_STALE", screenshotPolicy: strictValue.screenshotPolicy });
+      if (strictValue.outcome === "detail_unavailable") return context.reply(503, { ok: false, code: "SCREENSHOT_DETAIL_STORE_UNAVAILABLE" });
+      if (strictValue.outcome === "detail_stored") return context.reply(200, { ok: true, retained: true, screenshotPolicy: strictValue.screenshotPolicy });
       if (strictValue.outcome === "image_required") return context.reply(409, { ok: false, code: "SCREENSHOT_IMAGE_REQUIRED" });
       if (strictValue.outcome === "image_invalid") return context.reply(400, { ok: false, code: "SCREENSHOT_IMAGE_INVALID" });
       if (strictValue.outcome === "image_superseded") return context.reply(200, { ok: true, retained: false, screenshotPolicy: strictValue.screenshotPolicy });
@@ -5632,6 +5681,10 @@ async function runWebSocketDeviceOperation(kind: "heartbeat" | "screenshot", con
     if (!entitlement.entitled) return context.reply(403, { error: "school_not_entitled", code: "CLASSPILOT_NOT_ENTITLED",
       reason: entitlement.reason, schoolActive: false, planStatus: "inactive" });
     if (context.signal?.aborted || context.delivery.closed) return context.reply(503, { code: "DEVICE_TELEMETRY_UNAVAILABLE" });
+    // Detail is HTTP-only and cannot spend the ordinary transport's allowance.
+    if (kind === "screenshot" && context.payload.captureKind === "detail_preview") {
+      return context.reply(400, { code: "SCREENSHOT_DETAIL_HTTP_REQUIRED" });
+    }
     // These are the identical shared per-device stores used by the HTTP
     // middleware, so alternating transports never resets a device's allowance.
     const store = kind === "heartbeat" ? deviceHeartbeatRateStore : deviceScreenshotRateStore;
@@ -5662,6 +5715,110 @@ async function runWebSocketDeviceOperation(kind: "heartbeat" | "screenshot", con
 registerClasspilotDeviceTelemetryOperations({
   heartbeat: context => runWebSocketDeviceOperation("heartbeat", context),
   screenshot: context => runWebSocketDeviceOperation("screenshot", context),
+});
+
+// A visible drawer owns one selected student. These pixels and leases never
+// participate in the tile cohort, its references/deltas, or safety evidence.
+router.post("/tiles/detail-preview/release", ...tileReadAuth, async (req, res, next) => {
+  setClassPilotNoStore(res);
+  releaseClassPilotTileAdmission(res);
+  try {
+    const { viewerInstanceId, leaseId } = req.body ?? {};
+    if (typeof viewerInstanceId !== "string" || !viewerInstanceId.trim() || viewerInstanceId.length > 128
+      || typeof leaseId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(leaseId)) {
+      return res.status(400).json({ error: "Invalid detail preview lease" });
+    }
+    const released = await releaseDetailPreview({ schoolId: res.locals.schoolId!, viewerUserId: req.authUser!.id,
+      viewerInstanceId, leaseId, onReleased: target => {
+        void nudgeClasspilotScreenshotPolicyRefresh({ schoolId: res.locals.schoolId!, studentIds: [target.studentId],
+          teachingSessionId: target.teachingSessionId, supervisionContextId: target.supervisionContextId }).catch(() => {});
+      } });
+    return res.json({ released });
+  } catch { return res.status(503).json({ code: "SCREENSHOT_DETAIL_STORE_UNAVAILABLE" }); }
+});
+
+router.post("/tiles/detail-preview", ...tileReadAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
+  setClassPilotNoStore(res);
+  try {
+    const { studentId, viewerInstanceId } = req.body ?? {};
+    const parent = parseTileTeachingSessionId(req.body);
+    if (typeof studentId !== "string" || !studentId.trim() || studentId.length > 200
+      || typeof viewerInstanceId !== "string" || !viewerInstanceId.trim() || viewerInstanceId.length > 128
+      || !parent.ok || (!parent.teachingSessionId && !parent.supervisionContextId)
+      || Object.keys(req.body).some(key => !["studentId", "viewerInstanceId", "teachingSessionId", "supervisionContextId"].includes(key))) {
+      releaseClassPilotTileAdmission(res);
+      return res.status(400).json({ error: "One student, viewer instance and exact classroom context are required" });
+    }
+    const scope = tileStaffScope(req, res, parent.teachingSessionId, parent.supervisionContextId);
+    const access = (await runWithTenantContext({ schoolId: scope.schoolId },
+      () => revisionedTileAccess(scope, [studentId], res, "live"))).get(studentId);
+    const binding: DetailPreviewBinding | null = access?.studentSessionId && Number.isSafeInteger(access.controlRevision)
+      && access.controlRevision! >= 0 && (access.teachingSessionId || access.supervisionContextId)
+      ? { schoolId: access.schoolId, studentId: access.studentId, deviceId: access.deviceId,
+        studentSessionId: access.studentSessionId, controlRevision: access.controlRevision!,
+        ...(access.teachingSessionId ? { teachingSessionId: access.teachingSessionId } : {}),
+        ...(access.supervisionContextId ? { supervisionContextId: access.supervisionContextId } : {}) } : null;
+    if (!binding) { releaseClassPilotTileAdmission(res); return res.status(404).json({ code: "CLASSPILOT_NO_ACCESSIBLE_TILES" }); }
+    const bindingVersion = detailPreviewBindingVersion(binding);
+    const realtime = (await readClasspilotRealtimeStatusBatch(scope.schoolId, [binding])).get(studentId);
+    const freshRealtime = realtime?.status === "hit" && classpilotRealtimeFresh(realtime.snapshot);
+    const supported = freshRealtime && realtime?.status === "hit"
+      && ["scopedAuthorityChecksV1", "screenshotTrackingWindowLeaseV1", "screenshotActiveObservationCadenceV1"].every(capability =>
+        realtime.snapshot.acceptedCapabilities?.includes(capability))
+      && !access?.reportingObservation
+      && isClasspilotCapabilityActive("screenshotTrackingWindowLeaseV1", binding)
+      && isClasspilotCapabilityActive("screenshotActiveObservationCadenceV1", binding);
+    const observed = supported ? binding.supervisionContextId
+      ? await classpilotSupervisionObservationStatus({ schoolId: binding.schoolId, supervisionContextId: binding.supervisionContextId, studentId })
+      : await classpilotObservationStatus({ schoolId: binding.schoolId, teachingSessionId: binding.teachingSessionId, studentId }) : null;
+    if (!supported || observed?.status !== "observed" || observed.expiresInSeconds <= 0) {
+      releaseClassPilotTileAdmission(res);
+      return res.json({ studentId, bindingVersion, detailPreview: null, screenshot: null,
+        detailPreviewStatus: !access?.reportingObservation && (!freshRealtime || supported) ? "unavailable" : "unsupported" });
+    }
+    const viewer = { schoolId: scope.schoolId, viewerUserId: req.authUser!.id, viewerInstanceId };
+    const previous = await detailPreviewStatus({ binding });
+    const lease = await renewDetailPreview({ ...viewer, binding });
+    const screenshot = await readDetailPreview({ ...viewer, binding });
+    // Never return prepared bytes after a handoff, ended occurrence, or replaced
+    // login. Detail uses this final authority read for teaching and Observe too.
+    const current = await runWithTenantContext({ schoolId: scope.schoolId }, async () => {
+      if (!(await resolveClasspilotEntitlement(scope.schoolId)).entitled) return undefined;
+      if (!scope.isSuperAdmin) {
+        const [identity] = await loadVerifiedSchoolIdentities(scope.staffId, scope.schoolId);
+        if (!identity?.roles.includes(scope.role)) return undefined;
+      }
+      return (await revisionedTileAccess(scope, [studentId], res, "live")).get(studentId);
+    });
+    releaseClassPilotTileAdmission(res);
+    if (!current || current.schoolId !== binding.schoolId || current.studentId !== binding.studentId
+      || current.deviceId !== binding.deviceId || current.studentSessionId !== binding.studentSessionId
+      || current.controlRevision !== binding.controlRevision || current.teachingSessionId !== access!.teachingSessionId
+      || current.supervisionContextId !== access!.supervisionContextId) {
+      await releaseDetailPreview({ ...viewer, leaseId: lease.leaseId });
+      return res.status(404).json({ code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
+    }
+    // A close/replacement can win while the final database fence is pending.
+    // Re-read the actor's lease and bytes, rather than publishing the old image.
+    const finalLease = await detailPreviewStatus({ binding });
+    const finalScreenshot = await readDetailPreview({ ...viewer, binding });
+    const expiresInSeconds = finalLease?.leaseId === lease.leaseId
+      ? Math.max(0, Math.min(20, Math.floor((Math.min(finalLease.expiresAt, lease.expiresAt) - Date.now()) / 1000))) : 0;
+    if (!previous || previous.leaseId !== lease.leaseId) {
+      void nudgeClasspilotScreenshotPolicyRefresh({ schoolId: binding.schoolId, teachingSessionId: binding.teachingSessionId,
+        supervisionContextId: binding.supervisionContextId, studentIds: [studentId] }).catch(() => {});
+    }
+    return res.json({ studentId, bindingVersion, detailPreview: expiresInSeconds > 0
+      ? { leaseId: lease.leaseId, expiresInSeconds, renewAfterSeconds: 10 } : null,
+      ...(expiresInSeconds > 0 ? {} : { detailPreviewStatus: "unavailable" }),
+      screenshot: expiresInSeconds > 0 && screenshot?.timestamp === finalScreenshot?.timestamp ? finalScreenshot : null });
+  } catch (error) {
+    releaseClassPilotTileAdmission(res);
+    if (error instanceof Error && error.message === "Detail preview storage unavailable") {
+      return res.status(503).json({ code: "SCREENSHOT_DETAIL_STORE_UNAVAILABLE" });
+    }
+    next(error);
+  }
 });
 
 // POST /api/classpilot/tiles/screenshots - Get one authorized screenshot cohort

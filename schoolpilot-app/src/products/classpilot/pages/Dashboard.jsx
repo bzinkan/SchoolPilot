@@ -10,6 +10,7 @@ import StudentTile from '../components/StudentTile';
 import StudentTileSkeleton from '../components/StudentTileSkeleton';
 import VideoPortal from '../components/VideoPortal';
 import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
+import { useExpandedScreenshotDetail } from '../hooks/useExpandedScreenshotDetail';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import WindowsBrowserHistoryDrawer from '../components/WindowsBrowserHistoryDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
@@ -4643,12 +4644,33 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     expandedScreenshotDisplay.fresh || expandedScreenshotDisplay.retained
   )
     && expandedScreenshotMonitoringDisplay?.kind !== 'signal_lost';
-  const expandedScreenshotSelection = expandedScreenshot && !expandedScreenshotHardRevoked
+  const expandedScreenshotPrivacyKey = expandedScreenshot && !expandedScreenshotHardRevoked
+    ? `${expandedScreenshotContextKey}:${expandedScreenshotStudent.realtimeBinding || ''}:${normalizedTileControlRevision(expandedScreenshotStudent)}:${expandedScreenshotData?.bindingVersion || ''}`
+    : null;
+  const expandedScreenshotTileRequest = expandedScreenshotPrivacyKey && eligibleScreenshotStudentIds.has(expandedScreenshotStudent.studentId)
+    ? screenshotTileRequests.find(request => request.body.studentIds.includes(expandedScreenshotStudent.studentId))
+    : null;
+  const expandedScreenshotDetail = useExpandedScreenshotDetail({
+    privacyKey: expandedScreenshotPrivacyKey,
+    schoolId: activeSchoolId,
+    request: expandedScreenshotTileRequest ? { body: {
+      studentId: expandedScreenshotStudent.studentId,
+      ...activityAuthority(expandedScreenshotTileRequest.body),
+    }, contextAuthorityRevision: expandedScreenshotTileRequest.contextAuthorityRevision } : null,
+  });
+  const expandedScreenshotDetailDenied = expandedScreenshotDetail.status === 'denied';
+  const expandedDetailDisplay = deriveScreenshotDisplay(expandedScreenshotDetail.screenshot, freshnessNowMs);
+  const expandedDetailAvailable = (expandedDetailDisplay.fresh || expandedDetailDisplay.retained)
+    && expandedScreenshotMonitoringDisplay?.kind !== 'signal_lost';
+  const expandedScreenshotSelection = expandedScreenshot && !expandedScreenshotHardRevoked && !expandedScreenshotDetailDenied
     ? {
         student: expandedScreenshotStudent,
-        screenshotData: expandedScreenshotPixelsAvailable ? expandedScreenshotData : null,
-        refreshUnavailable: expandedScreenshotRefreshState?.transientUnavailable === true,
-        privacyKey: `${expandedScreenshotContextKey}:${expandedScreenshotStudent.realtimeBinding || ''}:${normalizedTileControlRevision(expandedScreenshotStudent)}:${expandedScreenshotData?.bindingVersion || ''}`,
+        screenshotData: expandedDetailAvailable ? expandedScreenshotDetail.screenshot
+          : expandedScreenshotPixelsAvailable ? expandedScreenshotData : null,
+        detailStatus: expandedScreenshotDetail.status,
+        refreshUnavailable: expandedScreenshotRefreshState?.transientUnavailable === true
+          || expandedScreenshotDetail.status === 'unavailable',
+        privacyKey: expandedScreenshotPrivacyKey,
         unavailableMessage: expandedScreenshotMonitoringDisplay?.kind === 'signal_lost'
           ? 'Monitoring signal lost. A current screen preview is unavailable.'
           : expandedScreenshotMonitoringDisplay?.kind === 'updates_unavailable'
@@ -4657,12 +4679,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       }
     : null;
   useEffect(() => {
-    if (!expandedScreenshot || !expandedScreenshotHardRevoked) return undefined;
+    if (!expandedScreenshot || !expandedScreenshotHardRevoked && !expandedScreenshotDetailDenied) return undefined;
     expandedScreenshotOpenerRef.current = null;
     restoreExpandedScreenshotFocusRef.current = false;
     const frame = requestAnimationFrame(() => setExpandedScreenshot(null));
     return () => cancelAnimationFrame(frame);
-  }, [expandedScreenshot, expandedScreenshotHardRevoked]);
+  }, [expandedScreenshot, expandedScreenshotHardRevoked, expandedScreenshotDetailDenied]);
   const openExpandedScreenshot = useCallback((studentId, opener) => {
     expandedScreenshotOpenerRef.current = opener || null;
     restoreExpandedScreenshotFocusRef.current = false;
@@ -8090,6 +8112,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           freshnessNowMs={freshnessNowMs}
           privacyKey={expandedScreenshotSelection.privacyKey}
           refreshUnavailable={expandedScreenshotSelection.refreshUnavailable}
+          detailStatus={expandedScreenshotSelection.detailStatus}
           unavailableMessage={expandedScreenshotSelection.unavailableMessage}
           sourceControls={desktopByStudent.has(expandedScreenshotSelection.student.studentId) ? (
             <div className="flex gap-2" role="group" aria-label="Enlarged preview source">

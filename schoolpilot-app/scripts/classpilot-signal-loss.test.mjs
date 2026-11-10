@@ -406,7 +406,7 @@ test('a decoded frame carries its own display bounds and expires itself on the r
   assert.match(decoderSource, /observedAtMs \+ SCREENSHOT_RECONNECT_RETAIN_MS/);
   assert.match(
     decoderSource,
-    /return observedAtMs === null \? null : observedAtMs \+ SCREENSHOT_RECONNECT_RETAIN_MS/,
+    /if \(observedAtMs === null\) return null;/,
     'a frame whose capture time cannot be read carries no bound, so it is never displayed',
   );
   assert.match(
