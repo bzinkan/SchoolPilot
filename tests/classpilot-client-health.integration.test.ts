@@ -27,6 +27,13 @@ const body = {
   version: 1, intervalSeconds: 60, freshnessBuckets: [100, 10, 0, 0, 0, 1],
   counters: { readTimeouts: 0, reconnects: 1, recoveries: 1, eventGapRecoveries: 0 },
 };
+const qualifiedBody = {
+  ...body,
+  previewEligibilityV1: {
+    version: 1, freshnessBuckets: [70, 5, 0, 0, 4, 1],
+    excludedCounts: { readDenied: 0, notObserved: 10, backgroundCadence: 10, monitoringNotCurrent: 11 },
+  },
+};
 
 before(async () => {
   const school = await storage.createSchool({ name: `Client health ${tag}`, domain: `${tag}.example.test`, status: "active", isActive: true, planStatus: "active" });
@@ -71,13 +78,19 @@ test("client health uses actual authentication, school membership and staff-role
   assert.equal((await report(teacherToken, body, otherSchoolId)).status, 403);
   assert.equal((await report(parentToken)).status, 403);
   assert.equal((await report(operatorToken)).status, 403, "Global operator privileges do not replace actual dashboard membership");
-  assert.equal((await report(officeToken)).status, 204, "Office staff can report the health of an authorized supervision dashboard");
+  assert.equal((await report(officeToken, qualifiedBody)).status, 204, "Office staff can report optional qualified diagnostics for an authorized supervision dashboard");
 });
 
 test("client health rejects private payloads, emits 204 and limits the verified actor", async () => {
   const invalid = await report(teacherToken, { ...body, studentId: "must-not-be-logged" });
   assert.equal(invalid.status, 400);
   assert.doesNotMatch(await invalid.text(), /must-not-be-logged/);
+  const invalidQualified = await report(teacherToken, {
+    ...qualifiedBody,
+    previewEligibilityV1: { ...qualifiedBody.previewEligibilityV1, studentId: "must-not-be-logged" },
+  });
+  assert.equal(invalidQualified.status, 400);
+  assert.doesNotMatch(await invalidQualified.text(), /must-not-be-logged/);
   const valid = await report(teacherToken);
   assert.equal(valid.status, 204);
   assert.equal(valid.headers.get("cache-control"), "no-store");
