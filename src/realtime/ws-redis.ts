@@ -4,6 +4,7 @@ import { executeRedisScriptCommand } from "./redisScriptCommand.js";
 import { createScopedScreenshotImageCache, type ScreenshotImageScope,
   type ScreenshotImageReadResult, type ScreenshotImageWriteResult,
 } from "./scopedScreenshotImageCache.js";
+import { ScreenshotImageActivity } from "./screenshotImageActivity.js";
 export type { ScreenshotImageReadData as ScreenshotImageData, ScreenshotImageWriteResult } from "./scopedScreenshotImageCache.js";
 import {
   dispatchCacheInvalidation,
@@ -204,10 +205,12 @@ function emptyHotPathActivity(): HotPathActivity {
 }
 
 let hotPathActivity = emptyHotPathActivity();
+const screenshotImageActivity = new ScreenshotImageActivity();
 
 function flushHotPathActivity(): void {
   const activity = hotPathActivity;
   hotPathActivity = emptyHotPathActivity();
+  const screenshotImages = screenshotImageActivity.flush();
   if (
     activity.redisMessagesPublished === 0 &&
     activity.redisMessagesReceived === 0 &&
@@ -216,6 +219,7 @@ function flushHotPathActivity(): void {
     Object.keys(activity.coordinationOutcomes).length === 0 &&
     Object.keys(activity.observationStatusOutcomes).length === 0 &&
     Object.keys(activity.commandPhases).length === 0
+    && Object.values(screenshotImages).every(value => value === 0)
   ) {
     return;
   }
@@ -226,6 +230,7 @@ function flushHotPathActivity(): void {
     event: "realtime_hot_path_summary",
     intervalSeconds: HOT_PATH_LOG_INTERVAL_MS / 1_000,
     publicationLatencyBoundsMs: PUBLICATION_LATENCY_BUCKETS_MS,
+    screenshotImages,
     ...activity,
   }));
 }
@@ -1058,26 +1063,35 @@ function supervisionImageScope(binding: SupervisionBoundScreenshotBinding): Scre
 }
 export async function setClassBoundScreenshotImage(binding: ClassBoundScreenshotBinding, data: ClassBoundScreenshotData): Promise<ScreenshotImageWriteResult> {
   if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
-  return screenshotImageCache.storeFull(classImageScope(binding), data);
+  return recordScreenshotImageWrite(screenshotImageCache.storeFull(classImageScope(binding), data), 'full', Buffer.byteLength(data.screenshot, 'utf8'));
 }
 export async function setSupervisionBoundScreenshotImage(binding: SupervisionBoundScreenshotBinding, data: SupervisionBoundScreenshotData): Promise<ScreenshotImageWriteResult> {
   if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
-  return screenshotImageCache.storeFull(supervisionImageScope(binding), data);
+  return recordScreenshotImageWrite(screenshotImageCache.storeFull(supervisionImageScope(binding), data), 'full', Buffer.byteLength(data.screenshot, 'utf8'));
 }
 export async function refreshClassBoundScreenshotImage(binding: ClassBoundScreenshotBinding, data: Omit<ClassBoundScreenshotData, "screenshot"> & { imageId: string }): Promise<ScreenshotImageWriteResult> {
   if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
-  return screenshotImageCache.refresh(classImageScope(binding), data);
+  return recordScreenshotImageWrite(screenshotImageCache.refresh(classImageScope(binding), data), 'reference');
 }
 export async function refreshSupervisionBoundScreenshotImage(binding: SupervisionBoundScreenshotBinding, data: Omit<SupervisionBoundScreenshotData, "screenshot"> & { imageId: string }): Promise<ScreenshotImageWriteResult> {
   if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
-  return screenshotImageCache.refresh(supervisionImageScope(binding), data);
+  return recordScreenshotImageWrite(screenshotImageCache.refresh(supervisionImageScope(binding), data), 'reference');
+}
+
+async function recordScreenshotImageWrite(work: Promise<ScreenshotImageWriteResult>, kind: 'full' | 'reference', bytes = 0): Promise<ScreenshotImageWriteResult> {
+  const result = await work;
+  if (result.status === 'stored') screenshotImageActivity.record(kind, bytes);
+  else if (kind === 'reference' && result.status === 'need_full_frame') screenshotImageActivity.record('miss');
+  return result;
 }
 type ScreenshotImageReadOptions = { knownImageIds?: readonly (string | null | undefined)[] };
 async function readScreenshotImages(scopes: readonly ScreenshotImageScope[], options: ScreenshotImageReadOptions): Promise<ScreenshotImageReadResult> {
   if (!scopes.length) return { status: "ok", screenshots: [] };
   if (!redisUrl) return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
     ? { status: "unavailable" } : { status: "ok", screenshots: scopes.map(() => null) };
-  return screenshotImageCache.read(scopes, options.knownImageIds);
+  const result = await screenshotImageCache.read(scopes, options.knownImageIds);
+  if (result.status === 'ok') screenshotImageActivity.record('metadata_read', result.screenshots.filter(data => data?.unchanged === true).length);
+  return result;
 }
 export async function getClassBoundScreenshotImages(bindings: readonly ClassBoundScreenshotBinding[], options: ScreenshotImageReadOptions = {}): Promise<ScreenshotImageReadResult> {
   return readScreenshotImages(bindings.map(classImageScope), options);
