@@ -4430,7 +4430,10 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
       // can end this request; current-page effects remain separately fenced.
       // --- AI content classification (item #8) — async, non-blocking ---
       function registerHeartbeatClassificationWork(): void {
-        if (persistedImmediateClassification) return;
+        // Only the initial accepted observation owns this work. A retry still
+        // rebuilds current policy below, but current classroom intent must never
+        // reclassify or overwrite the already persisted historical observation.
+        if (heartbeat.replayed || persistedImmediateClassification) return;
         if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
           const classificationProducer = classifyUrl(
             activeTabUrl,

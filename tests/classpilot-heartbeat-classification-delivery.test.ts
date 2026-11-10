@@ -19,7 +19,7 @@ type SafetyClose = {
   schoolId: string; studentId: string; studentSessionId: string; deviceId: string;
   expectedControlRevision: number; deliveredControlRevision: number;
 };
-function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean; observedUrl?: string; suppressed?: boolean; timelineCreated?: boolean; timelineFailure?: boolean; closeFailure?: boolean; classificationResult?: Awaited<ReturnType<typeof import("../src/services/aiClassification.js").classifyUrl>> } = {}) {
+function fixture(options: { replayed?: boolean; staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean; observedUrl?: string; suppressed?: boolean; timelineCreated?: boolean; timelineFailure?: boolean; closeFailure?: boolean; classificationResult?: Awaited<ReturnType<typeof import("../src/services/aiClassification.js").classifyUrl>> } = {}) {
   const order: string[] = [], historical: Fields[] = [], published: Fields[] = [], tracked: Promise<unknown>[] = [], safetyTimeline: Fields[] = [];
   const safetyCloses: SafetyClose[] = [];
   let releaseClassification!: () => void;
@@ -35,7 +35,7 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
   const classification = options.classificationResult ?? { category: "educational", contentCategory: "education", safetyAlert: options.safety ? "violence" : null, domain: "www.ixl.com" };
   const context = {
     Promise, Date, trackingWindowScreenshotLeaseNegotiated: false, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
-    school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat" }, controlState: { revision: 3 },
+    school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat", replayed: options.replayed }, controlState: { revision: 3 },
     persistedImmediateClassification: options.persistedImmediate ? classification : null, heartbeatTileCacheWritten: true, fabSyncPending: true, protocol: { acceptedCapabilities: [] },
     realtimeStatusMutation: options.staleAtWrite ? { status: "stale", snapshot: null } : { status: "updated", snapshot },
     activeTabUrl: snapshot.activeTabUrl, activeTabTitle: "Synthetic lesson", favicon: undefined, allOpenTabs: [], screenshotHealth: undefined,
@@ -240,6 +240,18 @@ test("a confirmed initial classification needs no producer, historical UPDATE or
   assert.equal(f.order.includes("classification-start"), false);
   assert.equal(f.order.includes("realtime-classification"), false);
   assert.deepEqual(f.published.map(frame => frame.type), ["student-update"]);
+});
+
+test("a durable replay cannot reclassify history using current classroom intent", async () => {
+  const f = fixture({ replayed: true, classificationResult: {
+    category: "non-educational", contentCategory: "Gaming", safetyAlert: null, domain: "www.ixl.com",
+  } });
+  await f.run(); await f.drain();
+  assert.equal(f.tracked.length, 0, "the initial accepted operation owns its historical producer");
+  assert.equal(f.order.includes("classification-start"), false);
+  assert.equal(f.historical.length, 0, "a new classroom intent must not rewrite the original heartbeat");
+  assert.equal(f.published.length, 0);
+  assert.equal(f.safetyCloses.length, 0);
 });
 
 test("null-classification completion also waits for foreground metadata and drains after failure", async () => {
