@@ -13,6 +13,11 @@ export function uploadedScreenshotPixelBytes(screenshot: unknown): number {
 
 /** Selection only: canonical authority and capture-time checks still precede storage. */
 export function parseScreenshotImageRequest(payload: Record<string, unknown>, negotiated: boolean, deltaNegotiated = false): ScreenshotImageRequest {
+  if (payload.captureKind === "detail_preview") {
+    if (payload.screenshotDelta !== undefined || payload.screenshotReferenceId !== undefined) return { mode: "invalid" };
+    return typeof payload.screenshot === "string" && payload.screenshot
+      ? { mode: "full", screenshot: payload.screenshot, referenceProtocol: false } : { mode: "invalid" };
+  }
   if (payload.screenshotDelta !== undefined) {
     if (payload.captureKind === "safety_evidence" || payload.screenshot !== undefined || payload.screenshotReferenceId !== undefined) return { mode: "invalid" };
     if (!negotiated || !deltaNegotiated || payload.screenshotImageProtocolVersion !== 1) return { mode: "need_full_frame" };

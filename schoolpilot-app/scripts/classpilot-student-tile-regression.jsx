@@ -363,6 +363,7 @@ function TileRegressionHarness() {
   const [frameSwapped, setFrameSwapped] = useState(false);
   const [memoDetailsEnabled, setMemoDetailsEnabled] = useState(true);
   const [dialogVisible, setDialogVisible] = useState(false);
+  const [dialogDetail, setDialogDetail] = useState(false);
   const [ticks, setTicks] = useState(0);
   // Frozen at creation so the diverged tile's only changing prop is the clock.
   const [divergedPaintedFrame] = useState(() => Object.freeze({
@@ -1053,8 +1054,11 @@ function TileRegressionHarness() {
           studentName="Dialog Student"
           privacyKey={'dialog-student\nv2:dialog-binding'}
           freshnessNowMs={freshnessNowMs}
+          detailStatus={dialogDetail ? 'active' : 'pending'}
+          sourceControls={<Button data-testid="dialog-detail-frame" onClick={() => setDialogDetail(true)}>Receive detail frame</Button>}
           screenshotData={{
-            screenshot: SCREENSHOT_DATA_URL,
+            screenshot: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${dialogDetail ? 1280 : 640}" height="${dialogDetail ? 720 : 360}"><rect width="100%" height="100%" fill="#1d4ed8"/></svg>`)}`,
+            ...(dialogDetail ? { resolution: 'detail' } : {}),
             timestamp: freshnessNowMs - 10_000,
             bindingVersion: 'v2:dialog-binding',
             tabTitle: 'Enlarged capture',

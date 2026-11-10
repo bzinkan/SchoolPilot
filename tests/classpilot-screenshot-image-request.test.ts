@@ -22,3 +22,9 @@ test("reference-only and discarded recaptures count zero uploaded pixel bytes", 
   assert.equal(uploadedScreenshotPixelBytes(null), 0);
   assert.equal(uploadedScreenshotPixelBytes("pixels"), Buffer.byteLength("pixels"));
 });
+test("detail previews cannot use or enter ordinary image references and deltas", () => {
+  assert.deepEqual(parseScreenshotImageRequest({ captureKind: "detail_preview", screenshotImageProtocolVersion: 1,
+    screenshotReferenceId: "opaque-image-reference-123" }, true, true), { mode: "invalid" });
+  assert.deepEqual(parseScreenshotImageRequest({ captureKind: "detail_preview", screenshot: "detail pixels",
+    screenshotImageProtocolVersion: 1 }, true, true), { mode: "full", screenshot: "detail pixels", referenceProtocol: false });
+});

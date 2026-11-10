@@ -1312,6 +1312,7 @@ export function setupWebSocket(
                         protocol.acceptedCapabilities) : null;
                       const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
                         schoolId,
+                        deviceId, studentSessionId: activeSession.id,
                         studentId: payload.studentId,
                         teachingSessionId: classroomStateRow?.teachingSessionId ?? null,
                         acceptedCapabilities: protocol.acceptedCapabilities,

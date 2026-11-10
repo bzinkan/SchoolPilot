@@ -258,6 +258,7 @@ async function configureDashboard(page, {
   screenshotTiles = { tiles: [] },
   historyTiles = { tiles: [] },
   observationLeaseResponse = { renewAfterSeconds: 30 },
+  detailPreviewResponse = body => ({ studentId: body.studentId, detailPreview: null, detailPreviewStatus: 'unsupported', screenshot: null }),
   beforeParentSessionsRead = null,
   claimedStudents = [],
   availableStudents = [],
@@ -285,6 +286,7 @@ async function configureDashboard(page, {
   const coverageMutationRequests = [];
   const tileRequests = [];
   const observationLeaseRequests = [];
+  const detailPreviewRequests = [];
   const sessionRequests = [];
   const claimedRosterRequests = [];
   const availableRosterRequests = [];
@@ -517,6 +519,15 @@ async function configureDashboard(page, {
         : { json: response });
       return;
     }
+    if (pathname === '/api/classpilot/tiles/detail-preview' || pathname === '/api/classpilot/tiles/detail-preview/release') {
+      const body = request.postDataJSON();
+      detailPreviewRequests.push({ pathname, body, contextAuthorityRevision: request.headers()['x-classpilot-context-authority-revision'] });
+      const response = pathname.endsWith('/release') ? { released: true }
+        : typeof detailPreviewResponse === 'function' ? await detailPreviewResponse(body) : detailPreviewResponse;
+      await route.fulfill(Number(response?.status) >= 400 ? { status: response.status, json: response.body }
+        : { json: response }).catch(() => {});
+      return;
+    }
     if (pathname === "/api/classpilot/tiles/screenshots" || pathname === "/api/classpilot/tiles/history") {
       const body = request.postDataJSON();
       tileRequests.push({
@@ -567,6 +578,7 @@ async function configureDashboard(page, {
     scopePreviewRequests,
     coverageMutationRequests,
     observationLeaseRequests,
+    detailPreviewRequests,
     pageErrors,
     tileRequests,
     sessionRequests,
@@ -9082,6 +9094,237 @@ test('Available current pages refresh while the WebSocket remains authenticated'
   await page.waitForTimeout(10_500);
   assert.equal(availableReads, readsAfterLeaving, 'Available polling stops after leaving its view');
   assert.deepEqual(harness.commandPosts, [], 'Reviewing current pages never sends student commands');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+const sizedPreview = width => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width * 9 / 16}"><rect width="100%" height="100%" fill="#15803d"/></svg>`)}`;
+
+async function expandedDetailFixture(context, detailPreviewResponse) {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const initialTime = new Date('2026-08-25T13:01:00Z');
+  await page.clock.install({ time: initialTime });
+  const row = student({ lastSeenAt: initialTime.toISOString(), realtimeObservedAt: initialTime.toISOString() });
+  const aggregate = aggregateController({ scoped: success([row]) });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', activeSession: live,
+    allSessions: [live], acknowledgeSessionSubscriptions: true, detailPreviewResponse,
+    screenshotTiles: { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:detail-preview-binding', screenshot: {
+      screenshot: sizedPreview(640), timestamp: initialTime.toISOString(), bindingVersion: 'v2:detail-preview-binding', tabTitle: 'Standard preview',
+    } }] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  const now = new Date(await page.evaluate(() => Date.now()) + 1000);
+  await page.clock.pauseAt(now);
+  return { page, harness, aggregate, row, now };
+}
+
+test('expanded detail preview requests only while open and visible without changing grid pixels', { timeout: 60_000 }, async context => {
+  let detailReady = false;
+  const { page, harness, now } = await expandedDetailFixture(context, body => ({ studentId: body.studentId,
+    bindingVersion: 'detail-v1:detail-preview-binding', detailPreview: { leaseId: 'detail-viewer-lease', expiresInSeconds: 20, renewAfterSeconds: 10 },
+    screenshot: detailReady ? { screenshot: sizedPreview(1280), timestamp: now.toISOString(), resolution: 'detail',
+      bindingVersion: 'detail-v1:detail-preview-binding', tabTitle: 'Detailed preview' } : null,
+  }));
+  const detailReads = () => harness.detailPreviewRequests.filter(request => !request.pathname.endsWith('/release'));
+  const releases = () => harness.detailPreviewRequests.filter(request => request.pathname.endsWith('/release'));
+  assert.equal(detailReads().length, 0, 'grid-only browsing must never request a detail lease');
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  await waitUntil(() => detailReads().length > 0, 'Opening the viewer requests the selected student detail lease');
+  const first = detailReads()[0].body;
+  assert.equal(first.studentId, STUDENT_ID);
+  assert.equal(first.teachingSessionId, OWN_SESSION_ID);
+  assert.equal(typeof first.viewerInstanceId, 'string');
+  assert.equal(first.deviceId, undefined);
+  assert.equal(first.studentIds, undefined);
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640);
+  assert.match(await page.getByTestId('expanded-screenshot-quality').textContent(), /Requesting higher-resolution.*standard preview/);
+  await page.getByTestId('expanded-screenshot-zoom-100').click();
+  detailReady = true;
+  await page.clock.fastForward(5100);
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  assert.ok(detailReads().length >= 2, 'the active viewer renews and reads its detail lease');
+  assert.ok(detailReads().every(request => request.body.viewerInstanceId === first.viewerInstanceId));
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.getBoundingClientRect().width), 1280);
+  assert.equal(await page.getByTestId(`screenshot-${STUDENT_ID}`).evaluate(image => image.naturalWidth), 640,
+    'detail bytes must never enter the lightweight grid cache');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await waitUntil(() => releases().length > 0, 'A hidden viewer releases its detail lease');
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth !== 1280);
+  const beforeHidden = detailReads().length;
+  await page.clock.fastForward(11_000);
+  assert.equal(detailReads().length, beforeHidden, 'hidden viewers cannot renew or request detail');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.runFor(100);
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).waitFor();
+  if (await page.getByTestId('expanded-screenshot-dialog').count() === 0) {
+    await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  }
+  await waitUntil(() => detailReads().length > beforeHidden, 'The visible viewer starts a fresh detail lease');
+  const releasesBeforeClose = releases().length;
+  await page.keyboard.press('Escape');
+  await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'hidden' });
+  await waitUntil(() => releases().length > releasesBeforeClose, 'Closing releases the selected detail lease');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview rejects late pixels after sign-out', { timeout: 60_000 }, async context => {
+  let resolveDetail;
+  const held = new Promise(resolve => { resolveDetail = resolve; });
+  const { page, harness, aggregate, row, now } = await expandedDetailFixture(context, () => held);
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await waitUntil(() => harness.detailPreviewRequests.length > 0, 'The detail request starts before sign-out');
+  aggregate.setScopedResponse(success([student({ ...row, loginState: 'not_logged_in', isLoggedIn: false, realtimeRevision: 2 })]));
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.clock.runFor(100);
+  await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'hidden' });
+  resolveDetail({ studentId: STUDENT_ID, bindingVersion: 'detail-v1:detail-preview-binding', detailPreview: {
+    leaseId: 'late-detail-viewer-lease', expiresInSeconds: 20, renewAfterSeconds: 10,
+  }, screenshot: { screenshot: sizedPreview(1280), resolution: 'detail', timestamp: now.toISOString(), bindingVersion: 'detail-v1:detail-preview-binding' } });
+  await page.waitForTimeout(100);
+  assert.equal(await page.getByTestId('expanded-screenshot-image').count(), 0, 'a late response cannot reopen signed-out pixels');
+  await waitUntil(() => harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release') && request.body.leaseId === 'late-detail-viewer-lease'),
+    'A first grant arriving after sign-out is released with its exact old viewer ID');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview retains a standard preview for a client without detail support', { timeout: 60_000 }, async context => {
+  const { page, harness } = await expandedDetailFixture(context, body => ({ studentId: body.studentId,
+    detailPreview: null, detailPreviewStatus: 'unsupported', screenshot: null }));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-quality').filter({ hasText: 'not supported' }).waitFor();
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640);
+  const readCount = harness.detailPreviewRequests.length;
+  await page.clock.fastForward(11_000);
+  assert.equal(harness.detailPreviewRequests.length, readCount, 'a permanently unsupported client is not repeatedly requested');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview withholds mismatched bindings and expires detail during a refresh outage', { timeout: 60_000 }, async context => {
+  let mode = 'mismatch';
+  const { page, harness, now } = await expandedDetailFixture(context, body => mode === 'outage'
+    ? { status: 503, body: { code: 'SCREENSHOT_DETAIL_STORE_UNAVAILABLE' } }
+    : { studentId: body.studentId, bindingVersion: 'detail-v1:current', detailPreview: {
+      leaseId: 'detail-expiry-lease', expiresInSeconds: 20, renewAfterSeconds: 10,
+    }, screenshot: { screenshot: sizedPreview(1280), resolution: 'detail', timestamp: now.toISOString(),
+      bindingVersion: mode === 'mismatch' ? 'detail-v1:previous' : 'detail-v1:current' } });
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await waitUntil(() => harness.detailPreviewRequests.length > 0, 'Mismatched detail is requested');
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640,
+    'a dedicated detail prefix still requires the nested and outer binding versions to match');
+  mode = 'valid';
+  await page.clock.fastForward(5100);
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  mode = 'outage';
+  await page.clock.fastForward(16_000);
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 640);
+  assert.match(await page.getByTestId('expanded-screenshot-quality').textContent(), /currently unavailable/);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview treats an older API unknown route as a standard-preview fallback', { timeout: 60_000 }, async context => {
+  const { page, harness } = await expandedDetailFixture(context, () => ({ status: 404, body: { error: 'Not found' } }));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-quality').filter({ hasText: 'not supported' }).waitFor();
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640);
+  const readCount = harness.detailPreviewRequests.length;
+  await page.clock.fastForward(11_000);
+  assert.equal(harness.detailPreviewRequests.length, readCount, 'unsupported detail routes are not polled');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview releases a delayed hidden generation without revoking its visible successor', { timeout: 60_000 }, async context => {
+  let firstResolve;
+  const firstResponse = new Promise(resolve => { firstResolve = resolve; });
+  let reads = 0;
+  const responseFor = async body => ({ studentId: body.studentId, bindingVersion: 'detail-v1:shared-binding',
+    detailPreview: { leaseId: 'shared-detail-lease', expiresInSeconds: 20, renewAfterSeconds: 10 }, screenshot: {
+      screenshot: sizedPreview(1280), resolution: 'detail', timestamp: await page.evaluate(() => Date.now()), bindingVersion: 'detail-v1:shared-binding',
+    } });
+  const { page, harness } = await expandedDetailFixture(context, body => ++reads === 1 ? firstResponse : responseFor(body));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await waitUntil(() => reads === 1, 'The first visible generation starts its grant');
+  const firstViewer = harness.detailPreviewRequests[0].body.viewerInstanceId;
+  for (const state of ['hidden', 'visible']) {
+    await page.evaluate(state => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, state);
+    await page.clock.runFor(100);
+  }
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).waitFor();
+  if (await page.getByTestId('expanded-screenshot-dialog').count() === 0) {
+    await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  }
+  await waitUntil(() => reads >= 2, 'Returning starts a fresh viewer generation without waiting for the hidden grant');
+  const secondViewer = harness.detailPreviewRequests.find(request => !request.pathname.endsWith('/release')
+    && request.body.viewerInstanceId !== firstViewer)?.body.viewerInstanceId;
+  assert.ok(secondViewer);
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  firstResolve(await responseFor({ studentId: STUDENT_ID }));
+  await waitUntil(() => harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release')
+    && request.body.viewerInstanceId === firstViewer && request.body.leaseId === 'shared-detail-lease'),
+  'The late first grant is released using its own viewer identity');
+  assert.equal(harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release')
+    && request.body.viewerInstanceId === secondViewer), false, 'a delayed release must not target the current viewer');
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 1280);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview releases a renewed lease that commits after viewer close', { timeout: 60_000 }, async context => {
+  let finishRenew;
+  const renewed = new Promise(resolve => { finishRenew = resolve; });
+  let reads = 0;
+  const { page, harness, now } = await expandedDetailFixture(context, body => ++reads > 1 ? renewed : ({
+    studentId: body.studentId, bindingVersion: 'detail-v1:renew-binding',
+    detailPreview: { leaseId: 'known-detail-lease', expiresInSeconds: 20, renewAfterSeconds: 10 }, screenshot: {
+      screenshot: sizedPreview(1280), resolution: 'detail', timestamp: now.toISOString(), bindingVersion: 'detail-v1:renew-binding',
+    },
+  }));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  await page.clock.fastForward(5100);
+  await waitUntil(() => reads === 2, 'A known lease renewal is in flight before close');
+  const viewer = harness.detailPreviewRequests[0].body.viewerInstanceId;
+  await page.keyboard.press('Escape');
+  await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'hidden' });
+  await waitUntil(() => harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release')
+    && request.body.leaseId === 'known-detail-lease'), 'Close immediately releases the known lease');
+  finishRenew({ studentId: STUDENT_ID, bindingVersion: 'detail-v1:renew-binding',
+    detailPreview: { leaseId: 'post-close-renewed-lease', expiresInSeconds: 20, renewAfterSeconds: 10 }, screenshot: null });
+  await waitUntil(() => harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release')
+    && request.body.viewerInstanceId === viewer && request.body.leaseId === 'post-close-renewed-lease'),
+  'A grant that commits after close is cleaned up even if an earlier lease ID was known');
+  assert.equal(await page.getByTestId('expanded-screenshot-image').count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('expanded detail preview recovers from a temporarily unavailable observation without reopening', { timeout: 60_000 }, async context => {
+  let ready = false;
+  const { page, harness, now } = await expandedDetailFixture(context, body => !ready ? ({
+    studentId: body.studentId, detailPreview: null, detailPreviewStatus: 'unavailable', screenshot: null,
+  }) : ({ studentId: body.studentId, bindingVersion: 'detail-v1:observation-ready',
+    detailPreview: { leaseId: 'recovered-observation-detail-lease', expiresInSeconds: 20, renewAfterSeconds: 10 }, screenshot: {
+      screenshot: sizedPreview(1280), resolution: 'detail', timestamp: now.toISOString(), bindingVersion: 'detail-v1:observation-ready',
+    } }));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.waitForFunction(() => /currently unavailable|not supported/.test(
+    document.querySelector('[data-testid="expanded-screenshot-quality"]')?.textContent || ''));
+  assert.match(await page.getByTestId('expanded-screenshot-quality').textContent(), /currently unavailable/);
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640);
+  ready = true;
+  await page.clock.fastForward(5100);
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  assert.equal(await page.getByTestId('expanded-screenshot-dialog').count(), 1);
   assert.deepEqual(harness.pageErrors, []);
 });
 

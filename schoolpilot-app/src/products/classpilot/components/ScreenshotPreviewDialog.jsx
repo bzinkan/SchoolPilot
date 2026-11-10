@@ -39,6 +39,7 @@ export default function ScreenshotPreviewDialog({
   freshnessNowMs,
   privacyKey,
   refreshUnavailable = false,
+  detailStatus = 'unsupported',
   unavailableMessage = 'Current screenshot unavailable. Waiting for the next authorized capture.',
   onReturnFocus,
   onOpenChange,
@@ -49,7 +50,8 @@ export default function ScreenshotPreviewDialog({
   const candidatePixelsAvailable = candidateDisplay.fresh || candidateDisplay.retained;
   // Shared atomic double-buffer: pixels are exposed only once Image.decode()
   // has resolved, so the viewer never paints a partially loaded replacement.
-  const { frame: decodedFrame } = useDecodedScreenshot(screenshotData, privacyKey);
+  const { frame: decodedFrame } = useDecodedScreenshot(screenshotData,
+    detailStatus === 'paused' ? `${privacyKey}:detail-paused` : privacyKey);
   const decodedScreenshotData = decodedFrame?.screenshotData ?? null;
   // A replacement response is also a safe lower bound for the current clock.
   // Use it to age the last decoded frame even when the shared boundary clock
@@ -68,8 +70,9 @@ export default function ScreenshotPreviewDialog({
     && Boolean(decodedScreenshotData)
     && (display.fresh || display.retained);
   const imageStyle = zoom === 'fit'
-    ? { maxHeight: '100%', maxWidth: '100%', height: 'auto', width: 'auto' }
-    : { height: 'auto', maxWidth: 'none', width: `${zoom}%` };
+    ? { maxHeight: '100%', maxWidth: '100%', height: 'auto', width: 'auto', flexShrink: 0 }
+    : { height: 'auto', maxWidth: 'none', width: `${decodedFrame?.naturalWidth * zoom / 100}px`, flexShrink: 0 };
+  const detailDecoded = pixelsAvailable && decodedScreenshotData?.resolution === 'detail';
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -89,6 +92,18 @@ export default function ScreenshotPreviewDialog({
         </DialogHeader>
 
         {sourceControls}
+
+        <p className="text-xs text-muted-foreground" data-testid="expanded-screenshot-quality" role="status">
+          {detailDecoded
+            ? 'Higher-resolution preview'
+            : detailStatus === 'pending' || detailStatus === 'active'
+              ? `Requesting higher-resolution preview… ${pixelsAvailable ? 'Showing standard preview.' : 'Waiting for an authorized capture.'}`
+              : detailStatus === 'unsupported'
+                ? 'Standard preview · Higher resolution is not supported for this preview.'
+                : detailStatus === 'paused'
+                  ? 'Standard preview · Higher-resolution updates pause while this page is hidden.'
+                  : 'Standard preview · Higher resolution is currently unavailable.'}
+        </p>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-y py-2">
           <div className="flex min-w-0 items-center gap-2 text-sm">

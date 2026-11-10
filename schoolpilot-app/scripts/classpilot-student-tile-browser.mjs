@@ -1023,6 +1023,23 @@ try {
     0,
     'frame retention must not fail the enlarged viewer closed while its frame is in bounds',
   );
+  await page.getByTestId('expanded-screenshot-zoom-100').click();
+  assert.deepEqual(await dialogImage.evaluate(image => ({ natural: image.naturalWidth, painted: image.getBoundingClientRect().width })),
+    { natural: 640, painted: 640 }, '100% must mean decoded native pixels, independently of the viewport width');
+  assert.match(await page.getByTestId('expanded-screenshot-quality').textContent(), /Requesting higher-resolution.*standard preview/);
+  await page.getByTestId('dialog-detail-frame').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  assert.equal(await page.getByTestId('expanded-screenshot-zoom-100').getAttribute('aria-pressed'), 'true', 'a detail arrival must preserve zoom');
+  assert.equal(await dialogImage.evaluate(image => image.getBoundingClientRect().width), 1280,
+    'a1280px detail must remain1280 CSS pixels at100%, even in a narrower flex viewport');
+  assert.match(await page.getByTestId('expanded-screenshot-quality').textContent(), /Higher-resolution preview/);
+  await page.getByTestId('expanded-screenshot-zoom-125').click();
+  assert.equal(await dialogImage.evaluate(image => image.getBoundingClientRect().width), 1600);
+  await page.getByTestId('expanded-screenshot-zoom-fit').click();
+  assert.equal(await dialogImage.evaluate(image => {
+    const viewport = image.parentElement.getBoundingClientRect(), bounds = image.getBoundingClientRect();
+    return bounds.width <= viewport.width && bounds.height <= viewport.height;
+  }), true, 'Fit must fit both available dimensions');
   await page.keyboard.press('Escape');
   await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'detached' });
 
