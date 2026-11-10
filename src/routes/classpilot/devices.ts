@@ -154,7 +154,7 @@ import {
   type ScreenshotImageData,
   type WsRedisTarget,
 } from "../../realtime/ws-redis.js";
-import { classifyImmediateEducationalUrl, classifyUrl } from "../../services/aiClassification.js";
+import { classifyImmediateEducationalUrl, classifyImmediateHeartbeatUrl, classifyUrl } from "../../services/aiClassification.js";
 import { classpilotSafetyObservation, getClasspilotMonitoringPolicy, requireClasspilotFullMonitoring, resolveClasspilotMonitoringPolicy } from "../../services/classpilotMonitoringPolicy.js";
 import { processClasspilotAfterHoursSafety } from "../../services/classpilotAfterHoursSafety.js";
 import { getSchoolWebsitePolicy, recordSchoolWebsitePolicyAck } from "../../services/classpilotSchoolWebsitePolicy.js";
@@ -4017,7 +4017,9 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
       // sanitization. Store these server-derived fields with the observation so
       // known learning sites need neither a later UPDATE nor a second fan-out.
       const immediateClassification = activeTabUrl && !activeTabUrl.startsWith("chrome")
-        ? classifyImmediateEducationalUrl(activeTabUrl, { schoolDomain: school.domain })
+        ? (activeTabTitle === undefined || typeof activeTabTitle === "string"
+          ? classifyImmediateHeartbeatUrl(activeTabUrl, activeTabTitle, { schoolDomain: school.domain })
+          : classifyImmediateEducationalUrl(activeTabUrl, { schoolDomain: school.domain }))
         : null;
 
       // --- Save heartbeat and throttled presence in one DB round trip ---

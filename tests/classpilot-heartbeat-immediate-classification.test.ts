@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { classifyImmediateEducationalUrl, classifyUrl } from "../src/services/aiClassification.js";
+import { classifyImmediateEducationalUrl, classifyImmediateHeartbeatUrl, classifyUrl } from "../src/services/aiClassification.js";
 import { sanitizeClasspilotHeartbeatNavigationForSso } from "../src/services/classpilotHeartbeatSsoSanitizer.js";
 
 const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
@@ -47,11 +47,11 @@ test("a cross-transport replay does not duplicate tile history or renew realtime
   assert.equal(projection.realtime, undefined);
 });
 
-async function record(options: { url?: string; schoolDomain?: string; returnMode?: "missing" | "mismatch" | "replaced"; sso?: boolean } = {}) {
+async function record(options: { url?: string; title?: unknown; schoolDomain?: string; returnMode?: "missing" | "mismatch" | "replaced"; sso?: boolean } = {}) {
   const writes: Fields[] = [], classifiedUrls: string[] = [];
   const context = {
     Promise, schoolId: "school", studentId: "student", deviceId: "device", studentSessionId: "session",
-    activeTabUrl: options.url ?? "https://www.ixl.com/math", activeTabTitle: "Learning", favicon: undefined, allOpenTabs: [],
+    activeTabUrl: options.url ?? "https://www.ixl.com/math", activeTabTitle: "title" in options ? options.title : "Learning", favicon: undefined, allOpenTabs: [],
     screenLocked: false, flightPathActive: false, activeFlightPathName: undefined, isScreenSharing: false, isScreenRecording: false,
     cameraActive: false, extensionVersion: "2.9.7", chromeVersion: "120", screenshotHealth: undefined, restrictionAuthState: "idle",
     protocol: { acceptedCapabilities: [] }, res: { locals: { studentSessionId: "session" } },
@@ -67,6 +67,9 @@ async function record(options: { url?: string; schoolDomain?: string; returnMode
     sanitizeClasspilotHeartbeatNavigationForSso,
     classifyImmediateEducationalUrl(url: string, options: Parameters<typeof classifyImmediateEducationalUrl>[1]) {
       classifiedUrls.push(url); return classifyImmediateEducationalUrl(url, options);
+    },
+    classifyImmediateHeartbeatUrl(url: string, title?: string, options?: Parameters<typeof classifyImmediateHeartbeatUrl>[2]) {
+      classifiedUrls.push(url); return classifyImmediateHeartbeatUrl(url, title, options);
     },
     async createHeartbeatAndRefreshPresence(value: Fields, session: string) {
       assert.equal(session, "session"); writes.push(value);
@@ -97,6 +100,30 @@ test("known educational classification is server-derived and confirmed by INSERT
   assert.equal(caches.tile.classificationPending, false);
   assert.equal(caches.realtime.aiClassification, classification);
   assert.equal(caches.realtime.classificationPending, false);
+});
+
+test("a completed safe unknown cache entry is persisted once in the original INSERT", async () => {
+  const url = "https://apnews.com/synthetic-heartbeat-cache-proof";
+  const initial = await classifyUrl(url, "Learning", { schoolDomain: "school.example" });
+  assert.equal(initial?.category, "unknown", "a reviewed news domain needs no provider call");
+  const f = await record({ url });
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0]?.aiCategory, "unknown");
+  assert.equal(f.writes[0]?.safetyAlert, null);
+  assert.ok(f.result.persistedImmediateClassification);
+  const caches = cacheProjection(f.result);
+  assert.equal(caches.tile.classificationPending, false);
+  assert.equal(caches.tile.aiCategory, "unknown");
+  assert.equal(caches.realtime.classificationPending, false);
+});
+
+test("invalid title shapes retain the existing educational-only fast path", async () => {
+  const url = "https://apnews.com/synthetic-heartbeat-cache-proof";
+  await classifyUrl(url, "Learning", { schoolDomain: "school.example" });
+  const f = await record({ url, title: { title: "untrusted object" } });
+  assert.equal(f.result.persistedImmediateClassification, null);
+  const educational = await record({ title: { title: "untrusted object" } });
+  assert.equal(educational.writes[0]?.aiCategory, "educational");
 });
 
 test("missing or mismatched persisted fields keep the async classification fallback", async () => {
