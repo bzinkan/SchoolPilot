@@ -6833,6 +6833,22 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
+  await page.addInitScript(() => {
+    // Freeze only the independent 30-second reconciliation callbacks during
+    // the notification assertion. Fixed Date stops frame aging, but interval
+    // timers still fire when Playwright advances its monotonic clock.
+    const schedule = window.setInterval.bind(window);
+    window.__claimedPreviewPeriodicReads = { paused: false, skipped: 0 };
+    window.setInterval = (callback, delay, ...args) => schedule(
+      typeof callback !== 'function' ? callback : (...parameters) => {
+        if (delay === 30_000 && window.__claimedPreviewPeriodicReads.paused) {
+          window.__claimedPreviewPeriodicReads.skipped += 1;
+          return;
+        }
+        return callback(...parameters);
+      }, delay, ...args,
+    );
+  });
   const contexts = [OWN_TESTING_CONTEXT_ID, OTHER_TESTING_CONTEXT_ID];
   const rows = contexts.map((contextId, index) => ({
     ...testingStudent(index ? SIGNED_OUT_STUDENT_ID : STUDENT_ID, contextId),
@@ -6894,9 +6910,29 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   // recovery cases exercise the preview watchdog with an advancing wall clock.
   const rejectionWindowClock = await page.evaluate(() => ({ date: Date.now(), monotonic: performance.now() }));
   await page.clock.setFixedTime(rejectionWindowClock.date);
+  await page.evaluate(() => { window.__claimedPreviewPeriodicReads.paused = true; });
   // Drain earlier authorized work through the queue's five-second start ceiling.
   await page.clock.runFor(5100);
   await page.waitForLoadState('networkidle');
+  // Cross a complete reconciliation interval with no notifications. Its
+  // callbacks must be paused rather than counted as a foreign event refresh.
+  const readsBeforeQuietWindow = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
+  await page.clock.runFor(31_000);
+  await page.waitForLoadState('networkidle');
+  assert.equal(harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length, readsBeforeQuietWindow,
+    'An isolated no-event window cannot be refreshed by periodic reconciliation');
+  assert(await page.evaluate(() => window.__claimedPreviewPeriodicReads.skipped > 0),
+    'The quiet window must actually cross a paused reconciliation interval');
+  // Pausing periodic work must still leave the real targeted notification
+  // queue and its five-second start ceiling operational.
+  frame = 4;
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    studentId: SIGNED_OUT_STUDENT_ID, capturedAt: TESTING_TIME.toISOString() });
+  await page.clock.runFor(5100);
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).getByText('Claimed screen 4', { exact: true }).waitFor();
+  await page.waitForLoadState('networkidle');
+  assert.equal(harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length, readsBeforeQuietWindow + 1,
+    'An eligible claimed notification performs one targeted read while periodic work is paused');
   const authorizedReads = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SECOND_SCHOOL_ID, studentId: STUDENT_ID });
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID });
@@ -6904,6 +6940,7 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   await page.waitForTimeout(100);
   assert.equal(harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length, authorizedReads,
     'Foreign-school and unrelated teaching-session notifications cannot refresh claimed previews');
+  await page.evaluate(() => { window.__claimedPreviewPeriodicReads.paused = false; });
   const rejectionWindowElapsedMs = await page.evaluate(started => performance.now() - started, rejectionWindowClock.monotonic);
   await page.clock.setSystemTime(new Date(rejectionWindowClock.date + rejectionWindowElapsedMs));
   deniedContext = OWN_TESTING_CONTEXT_ID;

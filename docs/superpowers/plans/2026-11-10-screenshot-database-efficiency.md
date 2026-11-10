@@ -144,3 +144,17 @@ binding checks passed. Independent review also found its missing rollout_tooling
 path filter. A new filter-coverage check reproduced RED, then all seven custody
 checks passed after adding the exact helper path. The CI YAML parses cleanly.
 No production mutation occurred before resolving these release-safety findings.
+
+CI also exposed a claimed-preview fixture race: independent 30-second query
+reconciliation could increase a counter during a fixed-Date negative notification
+assertion. The same failure reproduced with no rejected events sent. Isolate
+only those periodic callbacks in that fixture, retain the targeted queue and
+strict assertions, and cross a full no-event interval plus an eligible-event
+positive control. The teacher/admin pair passed repeatedly; an eligibility-guard
+mutation still failed the rejection assertion. Root's final pair passed 2/2.
+This changes only browser-test timing, with no production UI or runtime change.
+
+The final main push is the deployment CI gate. Its full unchanged checks must be
+green before production mutation; local focused checks and reviews permit
+integrating this test-only stabilization without repeating a redundant complete
+PR run. Do not bypass the deploy tool's exact-main/CI/source/image guards.
