@@ -20,6 +20,7 @@ export interface RedisPublicationConnection {
 }
 export type PublicationDiagnostic = "accepted" | "not_admitted" | "unknown" | "late_accepted"
   | "late_rejected" | "watchdog" | "circuit_open" | "recovered";
+export type RedisPublicationContext = { canContinue(): boolean };
 type Generation<C> = { client: C; ready: Promise<boolean>; retired: boolean;
   retirementListeners: Set<() => void>; timer?: ReturnType<typeof setTimeout> };
 
@@ -106,7 +107,7 @@ export class BoundedRedisPublication<C extends RedisPublicationConnection> {
     return generation;
   }
 
-  async publish<T>(operation: (client: C) => Promise<T>, options: {
+  async publish<T>(operation: (client: C, context: RedisPublicationContext) => Promise<T>, options: {
     budgetMs?: number; signal?: AbortSignal;
   } = {}): Promise<RedisPublicationOutcome<T>> {
     const started = this.now();
@@ -145,7 +146,10 @@ export class BoundedRedisPublication<C extends RedisPublicationConnection> {
     this.active++;
     let returned = false;
     let raw: Promise<T>;
-    try { raw = operation(generation.client); }
+    // A caller timer can fire before a separately sampled script deadline.
+    // Continuations must also honor this operation's actual closed state.
+    const context = { canContinue: () => !returned && !generation.retired && !this.stopped && !options.signal?.aborted };
+    try { raw = operation(generation.client, context); }
     catch (error) { raw = Promise.reject(error); }
     const watchdog = setTimeout(() => {
       if (generation.retired) return;
@@ -200,12 +204,14 @@ export class BoundedRedisPublication<C extends RedisPublicationConnection> {
       const expire = () => {
         if (settled) return;
         settled = true;
+        returned = true;
         this.noteTimeout(); this.report("unknown", started);
         resolve({ status: "unknown", reason: "timeout" });
       };
       const abort = () => {
         if (settled) return;
         settled = true;
+        returned = true;
         this.report("unknown", started);
         resolve({ status: "unknown", reason: "aborted" });
       };

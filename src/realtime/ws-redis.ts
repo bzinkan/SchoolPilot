@@ -449,8 +449,8 @@ export async function executeRealtimeRedisCommandOutcome<T = unknown>(
   if (!redisUrl) return { status: "not_admitted", reason: "not_configured" };
   const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
   const deadlineAt = performance.now() + timeoutMs;
-  const outcome = await coordinationRuntime.publish(client => executeRedisScriptCommand(
-    args => client.sendCommand<T>(args), command, { deadlineAt, isReady: () => client.isReady },
+  const outcome = await coordinationRuntime.publish((client, { canContinue }) => executeRedisScriptCommand(
+    args => client.sendCommand<T>(args), command, { deadlineAt, isReady: () => client.isReady, canContinue },
   ), { budgetMs: timeoutMs });
   // Advisory presence/refresh claims fail closed. An uncertain SET is not
   // retried; its frozen timestamps/NX lease remain bounded if it executes late.
@@ -465,9 +465,9 @@ export async function realtimeRedisCommandOutcome(
   const deadlineAt = performance.now() + 250;
   const outcome: RedisPublicationOutcome<unknown> = !redisUrl
     ? { status: "not_admitted", reason: "not_configured" }
-    : await coordinationRuntime.publish(client => executeRedisScriptCommand(
+    : await coordinationRuntime.publish((client, { canContinue }) => executeRedisScriptCommand(
       command => client.sendCommand(command), args,
-      { deadlineAt, signal: options.signal, isReady: () => client.isReady },
+      { deadlineAt, signal: options.signal, isReady: () => client.isReady, canContinue },
     ), {
       budgetMs: 250, signal: options.signal,
     });

@@ -225,11 +225,14 @@ The latest local sensitivity run retains the adverse cases: all 2,000 students
 actively observed with unique images models approximately $634.12 for six hours
 or $797.88 for eight hours. A favorable six-hour case models $270.66 with 50%
 exact reuse, 80% patch eligibility among changed captures, 15% patch size, 90%
-teacher delta hits, 78% viewer wire size and 1% HTTP recovery. Those are unverified
-assumptions, not measured fleet percentages. Unknown storage/backup, compute and
-other growth remain excluded. Do not report the favorable subtotal as acceptance.
+teacher delta hits, 78% viewer wire size, 1% HTTP recovery and 0.1% post-send
+retries. Those are unverified assumptions, not measured fleet percentages.
+Unknown storage/backup, compute and other growth remain excluded. Do not report
+the favorable subtotal as acceptance.
 This follow-up bounds snapshot also leaves unmeasured heartbeat/teacher metadata
 bytes and Redis cross-AZ traffic at zero; those unknowns are not verified savings.
+The separately approved expanded-detail preview adds on-demand larger captures;
+its additional traffic is also unmeasured in these grid-traffic scenarios.
 
 ## Preview freshness follow-up
 
@@ -243,6 +246,17 @@ online missing/stale frames as failures. Legacy buckets, metric streams, counter
 recovery requests/timers, pixels and capture cadence remain unchanged. The event
 gap counter is not a count of distinct outages. Real qualified production
 observations are still needed; no paid AWS load testing was performed.
+
+Release CI exposed an existing Redis continuation race: a caller timer can finish
+before a separately sampled script deadline, allowing a delayed `NOSCRIPT` reply
+to start a new `EVAL` after the caller has closed. The publication now supplies a
+required continuation gate to both script adapters and closes it synchronously
+on timeout/cancellation. Deadline/readiness/abort checks, original budgets, raw
+late-reply ownership, admission slots and ordinary connection lifetime remain
+unchanged. Deterministic early-timer and diagnostic-reentry cases exercise the
+race; the original real-time regression and in-budget cold-script recovery stay
+asserted. This improves recovery correctness without claiming fleet capacity.
+See [Node 22 timer semantics](https://nodejs.org/download/release/v22.18.0/docs/api/timers.html#settimeoutcallback-delay-args).
 
 ## What local evidence establishes
 
