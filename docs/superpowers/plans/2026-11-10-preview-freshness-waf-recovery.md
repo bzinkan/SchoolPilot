@@ -10,7 +10,7 @@
 ## Global constraints and review focus
 
 - Preserve the spec's capture, feature, authorization, privacy, sizing and schedule boundaries; no paid AWS load tests.
-- Keep legacy version-1 client buckets and EMF names/dimensions identical. The separately proven once-per-stall correction intentionally fixes the recovery-episode counter without changing recovery requests. New qualified diagnostics are optional, bounded, strict and log-only; no identities or new metric streams.
+- Keep legacy version-1 client buckets/counters and EMF names/dimensions identical. New qualified diagnostics are optional, bounded, strict and log-only; no identities or new metric streams.
 - Online observed/current rows with absent, invalid or old screenshots remain failures in the qualified denominator; idle/current rows qualify. Explicit denial, missing observation, background-only cadence and non-current monitoring are disjoint exclusions.
 - Receipt of a notice is not proof that pixels refreshed. Any accounting fix must preserve missing-notice recovery, retry request times/counts, hidden pause and exact authority fences.
 - No new Terraform plan inside the school-day restriction under an expanded resource scope. Review a new complete plan after 16:00 ET; never apply or rewrite the held plan.
@@ -32,3 +32,6 @@
 - Ruling: no speculative backend or extension pixel change; authority mismatches and clock/cache reuse do not justify weakening claims or forcing full images.
 - Ruling: new user instruction authorizes resolving the known unused-template drift, but does not require stretching the earlier sole-WAF daytime exception. Prepare now; plan/apply the broader narrow scope after 16:00 ET.
 - Private WAF gate/proposal prepared; independent adversarial review pending. No new Terraform plan/apply or credential load in this continuation yet.
+- Backend optional diagnostic: four new unit cases failed against the old schema, then all seven passed; strict nested identity/amplification rejection and unchanged legacy EMF were verified. Type check and build passed on Node 22. Native HTTP checks await the final frozen source.
+- Ruling: defer the optional episode-counter cleanup. Native A/B preserved one request schedule, but independent review found successful-null and unrelated-cohort rekey lifetime defects. Keep the deployed notice, scheduler and counter byte-identical; ship only additive qualified diagnostics. This avoids changing live recovery for a nonessential aggregate interpretation.
+- WAF independent review rejected the first private reviewer for incomplete evidence, no-op unknown and pinned-version false accepts. A new live-inventory producer/reviewer is being tested and must pass fresh independent review before any new plan.
