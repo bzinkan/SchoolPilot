@@ -4,3 +4,6 @@ infra/modules/turn/relay-metrics.py text eol=lf
 infra/modules/turn/refresh-certificate.sh text eol=lf
 tests/fixtures/restriction-resource-matcher-cases.json text eol=lf
 scripts/load/*.mjs text eol=lf
+src/services/screenshotDeltaCodec.ts text eol=lf
+scripts/sync-classpilot-screenshot-codec.mjs text eol=lf
+schoolpilot-app/src/products/classpilot/lib/screenshotDeltaCodec.js text eol=lf
