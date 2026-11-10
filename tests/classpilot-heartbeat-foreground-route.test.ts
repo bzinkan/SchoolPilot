@@ -1,3 +1,4 @@
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -13,7 +14,7 @@ const deliveryEnd = source.indexOf("\n  } catch (err)", deliveryStart);
 assert.ok(foregroundStart >= 0 && foregroundEnd > foregroundStart && deliveryStart > foregroundEnd && deliveryEnd > deliveryStart);
 // Execute both actual route slices together. Only unrelated inbox discovery is
 // omitted; final tenant ownership, fallback dispatch and the barrier stay intact.
-const executable = ts.transpileModule(`async function heartbeat() {
+const executable = ts.transpileModule(`async function exerciseHeartbeat() {
   let finishForegroundTelemetry = () => {};
   try { ${source.slice(foregroundStart, foregroundEnd)}
     const pendingMessages = [];
@@ -21,7 +22,7 @@ const executable = ts.transpileModule(`async function heartbeat() {
     const commitPendingInbox = () => {};
     ${source.slice(deliveryStart, deliveryEnd)}
   } finally { finishForegroundTelemetry(); }
-}\nheartbeat;`, {
+}\nexerciseHeartbeat;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 
@@ -34,7 +35,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; holdRetirement?: boolean; failFallback?: boolean; nullClassification?: boolean } = {}) {
+function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; holdRetirement?: boolean; failFallback?: boolean; nullClassification?: boolean; replayed?: boolean } = {}) {
   const order: string[] = [], frames: Fields[] = [], historical: Fields[] = [], tracked: Promise<unknown>[] = [];
   const counters: string[] = [], phaseCounters: Array<{ name: string; operation: string }> = [];
   const release = deferred(), publication = deferred(), authorityReady = deferred();
@@ -53,9 +54,10 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
   const context = {
     Promise, Date, trackingWindowScreenshotLeaseNegotiated: true,
     schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
-    school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat" }, controlState: { revision: 3 },
+    school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat", replayed: options.replayed }, controlState: { revision: 3 },
     persistedImmediateClassification: null, heartbeatTileCacheWritten: true, fabSyncPending: true,
-    protocol: { acceptedCapabilities: ["scopedAuthorityChecksV1"] }, realtimeStatusMutation: { status: "updated", snapshot },
+    protocol: { acceptedCapabilities: ["scopedAuthorityChecksV1"] }, realtimeStatusMutation: options.replayed
+      ? { status: "stale", snapshot: undefined } : { status: "updated", snapshot },
     activeTabUrl: snapshot.activeTabUrl, activeTabTitle: "Synthetic lesson", favicon: undefined, allOpenTabs: [], screenshotHealth: undefined,
     extensionVersion: "2.9.7", chromeVersion: "120", screenLocked: false, flightPathActive: false, activeFlightPathName: undefined,
     isScreenSharing: false, isScreenRecording: false, cameraActive: false, visibilityState: "visible", trackingStatus: "active",
@@ -109,7 +111,8 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
     async withClasspilotHeartbeatDeliveryAuthority(binding: Fields, prepare: (db: object, read: () => Promise<Fields>) => Promise<Fields>,
       deliver: (rows: never[], prepared: Fields) => unknown, recovery: unknown, foreground: Foreground) {
       assert.equal(binding.freezeSsoPolicy, true); assert.equal(recovery, undefined);
-      assert.ok(foreground, "negotiated ordinary teaching must reach the owned publication path");
+      if (!options.replayed) assert.ok(foreground, "negotiated ordinary teaching must reach the owned publication path");
+      else assert.equal(foreground, undefined, "replays must not publish old current telemetry");
       const prepared = await prepare(transactionDb, async () => {
         assert.equal(held, true);
         assert.ok(order.includes("focus-retired"), "authority projection must follow retirement");
@@ -118,6 +121,7 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
       assert.equal(prepared.privateReplyControlRevision, retiredControlState.revision);
       assert.equal((prepared.deliveredFab as Fields).ownershipRevision, retiredControlState.revision);
       authorityReady.resolve();
+      if (options.replayed) return { authorized: true, value: deliver([], prepared), foreground: { status: "suppressed" } };
       if (mode === "unauthorized") return { authorized: false, foreground: { status: "suppressed" } };
       let result: { status: string; succeeded?: boolean } = { status: mode === "fallback" ? "fallback" : "suppressed" };
       if (mode === "published" || mode === "partial" || mode === "final-fence-throws") {
@@ -159,12 +163,23 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
     classpilotControlAuthorityRevisionForDelivery,
     classpilotControlStateExactBinding(value: Fields) { return value; },
   };
-  const run: () => Promise<unknown> = runInNewContext(executable, context);
+  const run: () => Promise<unknown> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { run, order, frames, historical, counters, phaseCounters, authorityReady: authorityReady.promise,
     release: release.resolve, releasePublication: publication.resolve,
     retirementStarted: retirementStarted.promise, releaseRetirement: retirement.resolve,
     snapshot: () => ({ held, fallbackCalls, foregroundAttempts }), drain: async () => { await Promise.all(tracked); } };
 }
+
+test("a durable replay rebuilds current locked classroom policy without republishing old presence", async () => {
+  const f = fixture("published", { replayed: true });
+  const result = await f.run() as Fields;
+  assert.equal((result.classroomState as Fields).revision, 4);
+  assert.ok(f.order.includes("focus-retired"));
+  assert.ok(f.order.includes("http:ok"));
+  await f.drain();
+  assert.equal(f.snapshot().foregroundAttempts, 0);
+  assert.equal(f.frames.length, 0);
+});
 
 test("reconnect retirement finishes under the same lease before projection and foreground delivery", async () => {
   const f = fixture("published", { holdRetirement: true });

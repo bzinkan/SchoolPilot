@@ -93,6 +93,11 @@ export function heartbeatAdmissionEnabled(env: NodeJS.ProcessEnv = process.env):
 // startup selection, avoiding parsing the table inventory on every heartbeat.
 const runtimeAdmissionEnabled = heartbeatAdmissionEnabled();
 
+/** Shared by the WebSocket adapter; ownership lasts through canonical cleanup. */
+export function acquireClasspilotHeartbeatAdmission(signal?: AbortSignal): Promise<() => void> {
+  return runtimeAdmissionEnabled ? heartbeatAdmissionGate.acquire(signal) : Promise.resolve(() => {});
+}
+
 /**
  * Installed after JWT verification, before entitlement's first database checkout.
  * Known Promise-returning middleware and the handler keep their original order.

@@ -161,12 +161,11 @@ export const heartbeats = pgTable(
     extensionVersion: text("extension_version"),
     chromeVersion: text("chrome_version"),
     screenshotHealth: jsonb("screenshot_health"),
+    telemetryPayloadHash: varchar("telemetry_payload_hash", { length: 64 }),
     timestamp: timestamp("timestamp").notNull().default(sql`now()`),
   },
   (table) => [
     index("heartbeats_timestamp_idx").on(table.timestamp),
-    index("heartbeats_student_id_idx").on(table.studentId),
-    index("heartbeats_student_email_idx").on(table.studentEmail),
     index("heartbeats_device_id_idx").on(table.deviceId),
     index("heartbeats_student_timestamp_idx").on(
       table.studentId,
@@ -194,8 +193,8 @@ export const heartbeats = pgTable(
   ]
 );
 
-export type Heartbeat = typeof heartbeats.$inferSelect;
-export type InsertHeartbeat = typeof heartbeats.$inferInsert;
+export type Heartbeat = Omit<typeof heartbeats.$inferSelect, "telemetryPayloadHash">;
+export type InsertHeartbeat = Omit<typeof heartbeats.$inferInsert, "telemetryPayloadHash">;
 
 // ============================================================================
 // Daily Usage - Pre-aggregated daily monitored browser activity per student

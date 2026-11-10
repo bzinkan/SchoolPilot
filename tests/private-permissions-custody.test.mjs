@@ -68,6 +68,17 @@ test('current runtime imports are all included in release-plan dependency custod
   assert.equal(/^function (?:Test-IsPathWithin|Assert-NoReparsePointInExistingPath|Set-PrivatePathPermissions|Assert-PrivatePathPermissions|Assert-PrivateInputPath) \{/m.test(runtime), false);
 });
 
+test('every current runtime dependency triggers the rollout-safety CI job', () => {
+  const workflow = readFileSync(path.join(repository, '.github/workflows/ci-build.yml'), 'utf8');
+  const filterStart = workflow.indexOf('            rollout_tooling:');
+  const filterEnd = workflow.indexOf('\n  backend:', filterStart);
+  assert.ok(filterStart >= 0 && filterEnd > filterStart);
+  const filter = workflow.slice(filterStart, filterEnd);
+  for (const dependency of CURRENT_RELEASE_TOOL_DEPENDENCIES) {
+    assert.ok(filter.includes(`'${dependency}'`), `${dependency} must run the rollout-safety tests`);
+  }
+});
+
 test('runtime evolution does not alter permission custody or historical release pins', t => {
   const f = fixture(t);
   writeFileSync(path.join(f.root, 'scripts/deploy-classpilot-runtime-config.ps1'), '# new rollout profile\n');

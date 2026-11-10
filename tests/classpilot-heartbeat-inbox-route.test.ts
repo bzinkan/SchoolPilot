@@ -1,3 +1,4 @@
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -55,7 +56,7 @@ function fixture(options: { rows?: Fields[]; checked?: boolean; failCommit?: boo
     classpilotControlAuthorityRevisionForDelivery,
     classpilotControlStateExactBinding(value: unknown) { return value; },
   };
-  const run: () => Promise<unknown> = runInNewContext(executable, context);
+  const run: () => Promise<unknown> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { run, release: release.resolve, ready: delivered.promise, deliveredMessages, deviceLastHeartbeat, response, request: () => inboxRequest };
 }
 const legacy = { id: "legacy", message: "Synthetic", commandId: null, teachingSessionId: null, supervisionContextId: null };

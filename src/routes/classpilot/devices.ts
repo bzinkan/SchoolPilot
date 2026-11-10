@@ -1,4 +1,12 @@
+import { DeviceTelemetryDelivery, heartbeatTelemetryIdentity, validTelemetryOperationId,
+  DEVICE_TELEMETRY_IP_WINDOW_MS, DEVICE_TELEMETRY_IP_MAX_OPERATIONS, deviceTelemetryIpRateExceeded,
+  registerClasspilotDeviceTelemetryOperations, type DeviceTelemetryContext, type DeviceTelemetryOutcome,
+} from "../../services/classpilotDeviceTelemetry.js";
+import { parseScreenshotImageRequest, uploadedScreenshotPixelBytes } from "../../services/classpilotScreenshotImageRequest.js";
+import { screenshotDeltaTargetByteLimit } from "../../services/classpilotScreenshotDelta.js";
 import { privateChatMessageLifecycle } from "../../services/classpilotPrivateChatLifecycle.js";
+import { parseKnownScreenshotImages, knownScreenshotImageForBinding, publicScreenshotImageData } from "../../services/classpilotScreenshotReferences.js";
+import { screenshotResponseEncoder } from "../../services/classpilotScreenshotResponseEncoding.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import crypto from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
@@ -32,7 +40,8 @@ import {
 } from "../../middleware/classpilotTileAdmission.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { createRequireClasspilotEntitlement, requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
-import { withClasspilotHeartbeatAdmission } from "../../middleware/classpilotHeartbeatAdmission.js";
+import { resolveActiveStudentTokenSession } from "../../services/classpilotStudentAuth.js";
+import { withClasspilotHeartbeatAdmission, acquireClasspilotHeartbeatAdmission, HeartbeatAdmissionError } from "../../middleware/classpilotHeartbeatAdmission.js";
 import {
   markStudentSignInStage,
   markStudentSignInMethod,
@@ -119,12 +128,17 @@ import {
   recordLocalOrderedDelivery,
   setScreenshot,
   setClassBoundScreenshot,
+  setClassBoundScreenshotImage,
+  setClassBoundScreenshotDelta,
+  refreshClassBoundScreenshotImage,
   getScreenshot,
   getClassBoundScreenshot,
   setFlightPathStatus,
   recordScreenshotUpload,
   getScreenshots,
   getClassBoundScreenshots,
+  getClassBoundScreenshotImages,
+  getSupervisionBoundScreenshotImages,
   screenshotBindingVersion,
   classBoundScreenshotBindingVersion,
   screenshotMatchesBinding,
@@ -133,13 +147,17 @@ import {
   type SupervisionBoundScreenshotBinding,
   getSupervisionBoundScreenshots,
   setSupervisionBoundScreenshot,
+  setSupervisionBoundScreenshotImage,
+  setSupervisionBoundScreenshotDelta,
+  refreshSupervisionBoundScreenshotImage,
   supervisionBoundScreenshotBindingVersion,
   supervisionBoundScreenshotMatchesBinding,
   type ScreenshotBinding,
   type ScreenshotData,
+  type ScreenshotImageData,
   type WsRedisTarget,
 } from "../../realtime/ws-redis.js";
-import { classifyImmediateEducationalUrl, classifyUrl } from "../../services/aiClassification.js";
+import { classifyImmediateEducationalUrl, classifyImmediateHeartbeatUrl, classifyUrl } from "../../services/aiClassification.js";
 import { classpilotSafetyObservation, getClasspilotMonitoringPolicy, requireClasspilotFullMonitoring, resolveClasspilotMonitoringPolicy } from "../../services/classpilotMonitoringPolicy.js";
 import { processClasspilotAfterHoursSafety } from "../../services/classpilotAfterHoursSafety.js";
 import { getSchoolWebsitePolicy, recordSchoolWebsitePolicyAck } from "../../services/classpilotSchoolWebsitePolicy.js";
@@ -406,7 +424,7 @@ function param(req: any, key: string): string {
 }
 
 // Per-IP rate limit for extension endpoints to prevent DB connection exhaustion
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit, { ipKeyGenerator, MemoryStore } from "express-rate-limit";
 function extensionIp(req: Request): string {
   return ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0");
 }
@@ -619,13 +637,22 @@ function authenticatedDeviceKey(req: Request, res: Response): string {
   return `device:${schoolId}:${deviceId}`;
 }
 
+const deviceHeartbeatRateStore = redisStore("rl:device:heartbeat:") ?? new MemoryStore();
+const deviceScreenshotRateStore = redisStore("rl:device:screenshot:") ?? new MemoryStore();
+const deviceTelemetryIpRateStore = redisStore("rl:device:telemetry-ip:") ?? new MemoryStore();
+// Initialize the same Store contract as HTTP, including its Redis window.
+// Redis is cross-process; without REDIS_URL, MemoryStore is per-process.
+// Configured store errors retain HTTP's passOnStoreError behavior below.
+// The shared-NAT ceiling preserves the 2,000-device cadence.
+rateLimit({ windowMs: DEVICE_TELEMETRY_IP_WINDOW_MS, max: DEVICE_TELEMETRY_IP_MAX_OPERATIONS, store: deviceTelemetryIpRateStore,
+  standardHeaders: false, legacyHeaders: false, passOnStoreError: true });
 const deviceHeartbeatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   message: { error: "Too many heartbeat requests, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  store: redisStore("rl:device:heartbeat:"),
+  store: deviceHeartbeatRateStore,
   passOnStoreError: true,
   keyGenerator: authenticatedDeviceKey,
   handler: (_req, res, _next, options) => {
@@ -653,7 +680,7 @@ const deviceScreenshotLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  store: redisStore("rl:device:screenshot:"),
+  store: deviceScreenshotRateStore,
   passOnStoreError: true,
   keyGenerator: authenticatedDeviceKey,
   handler: (_req, res, _next, options) => {
@@ -878,17 +905,8 @@ function safeTileHeartbeat(heartbeat: Heartbeat) {
   };
 }
 
-function publicScreenshotData(data: ScreenshotData) {
-  return {
-    screenshot: data.screenshot,
-    timestamp: data.timestamp,
-    ...(data.tabTitle !== undefined ? { tabTitle: data.tabTitle } : {}),
-    ...(data.tabUrl !== undefined ? { tabUrl: data.tabUrl } : {}),
-    ...(data.tabFavicon !== undefined ? { tabFavicon: data.tabFavicon } : {}),
-    ...((data.bindingVersion?.startsWith("v2:") || data.bindingVersion?.startsWith("v3:"))
-      ? { bindingVersion: data.bindingVersion }
-      : {}),
-  };
+function publicScreenshotData(data: ScreenshotData | ScreenshotImageData) {
+  return publicScreenshotImageData(data);
 }
 
 function classpilotScreenshotStoreRequired(): boolean {
@@ -920,7 +938,7 @@ function screenshotForAuthorizedStudent(
 }
 
 function classBoundScreenshotForAuthorizedStudent(
-  data: ScreenshotData | null,
+  data: ScreenshotData | ScreenshotImageData | null,
   binding: ClassBoundScreenshotBinding
 ) {
   if (!data || !classBoundScreenshotMatchesBinding(data, binding)) return null;
@@ -1105,7 +1123,7 @@ function realtimeControlAuthority(
 }
 
 /** Called only from the upload authority callback while its transaction locks are held. */
-async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBinding, data: ScreenshotData) {
+async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBinding, data: Pick<ScreenshotData, "timestamp" | "capturedAt">) {
   const startedAt = Date.now();
   const orderedKey = `${classpilotRealtimeOrderingKey(binding.schoolId, binding.deviceId)}:${CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE}:session:${binding.teachingSessionId}`;
   const revision = String(data.timestamp);
@@ -1130,7 +1148,7 @@ async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBin
 }
 
 async function publishLockedSupervisionScreenshotAvailable(
-  binding: SupervisionBoundScreenshotBinding, data: ScreenshotData, assignedStaffId: string, contextAuthorityRevision: string
+  binding: SupervisionBoundScreenshotBinding, data: Pick<ScreenshotData, "timestamp" | "capturedAt">, assignedStaffId: string, contextAuthorityRevision: string
 ) {
   const orderedKey = `${classpilotRealtimeOrderingKey(binding.schoolId, binding.deviceId)}:${CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE}:supervision:${binding.supervisionContextId}`;
   const revision = String(data.timestamp);
@@ -3598,6 +3616,23 @@ router.post("/extension/runtime-error", requireDeviceAuth, requireClasspilotEnti
 // Heartbeat (items #1, #2, #3, #5, #8, #9)
 // ============================================================================
 
+function deviceTelemetryHttpContext(req: Request, res: Response): DeviceTelemetryContext {
+  const delivery = new DeviceTelemetryDelivery();
+  if (res.writableFinished) delivery.finish();
+  else if (res.destroyed) delivery.close();
+  else { res.once("finish", () => delivery.finish()); res.once("close", () => delivery.close()); }
+  return {
+    binding: Object.freeze({ schoolId: res.locals.schoolId as string, studentId: res.locals.studentId as string,
+      deviceId: res.locals.deviceId as string, studentSessionId: res.locals.studentSessionId as string }),
+    payload: req.body, sourceIp: extensionIp(req), delivery,
+    reply: (status, body = {}, headers) => {
+      if (headers) for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+      if (status === 204) res.status(status).send(); else res.status(status).json(body);
+      return { status, body, ...(headers ? { headers } : {}) };
+    },
+  };
+}
+
 router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlement, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId as string;
@@ -3793,9 +3828,19 @@ router.post("/device/heartbeat",
   trackUsageCapacityMiddleware("heartbeat_middleware", createRequireClasspilotEntitlement(schoolId =>
     runWithUsageCapacityOperation("heartbeat_middleware", () => resolveClasspilotEntitlement(schoolId)))),
   trackUsageCapacityMiddleware("heartbeat_middleware", deviceHeartbeatLimiter), async (req, res, next) => {
+  try { await executeCanonicalHeartbeat(deviceTelemetryHttpContext(req, res)); } catch (error) { next(error); }
+}]));
+
+export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext): Promise<DeviceTelemetryOutcome> {
   const endHeartbeatHandler = startUsageCapacityOperation("heartbeat_handler");
   let finishForegroundTelemetry: () => void = () => {};
   try {
+    const operationId = context.operationId ?? context.payload?.telemetryOperationId;
+    if (operationId !== undefined && !validTelemetryOperationId(operationId)) {
+      return context.reply(400, { code: "DEVICE_TELEMETRY_OPERATION_ID_INVALID" });
+    }
+    const telemetryIdentity = operationId === undefined ? undefined
+      : heartbeatTelemetryIdentity(context.binding, operationId, context.payload);
     const {
       activeTabUrl: reportedActiveTabUrl,
       activeTabTitle: reportedActiveTabTitle,
@@ -3812,7 +3857,7 @@ router.post("/device/heartbeat",
       classroomStateOutcome,
       restrictionAuthState,
       clientProtocolVersion,
-    } = req.body;
+    } = context.payload;
     const appliedAuthPolicyRevision = (
       typeof reportedAppliedAuthPolicyRevision === "number"
       && Number.isSafeInteger(reportedAppliedAuthPolicyRevision)
@@ -3832,13 +3877,13 @@ router.post("/device/heartbeat",
     let activeTabTitle = reportedActiveTabTitle;
     let favicon = reportedFavicon;
     let allOpenTabs = reportedAllOpenTabs;
-    const schoolId = res.locals.schoolId as string;
-    const studentId = res.locals.studentId as string;
-    const deviceId = res.locals.deviceId as string;
-    const studentSessionId = res.locals.studentSessionId as string;
+    const schoolId = context.binding.schoolId as string;
+    const studentId = context.binding.studentId as string;
+    const deviceId = context.binding.deviceId as string;
+    const studentSessionId = context.binding.studentSessionId as string;
     const protocol = negotiateClasspilotSurfaceProtocol({
       surface: "heartbeat",
-      payload: req.body,
+      payload: context.payload,
       scope: {
         serverOrigin: process.env.PUBLIC_BASE_URL,
         schoolId,
@@ -3869,7 +3914,8 @@ router.post("/device/heartbeat",
     // This burst short-circuit only covers a repeat within five seconds, so it
     // is never the only heartbeat a flagged device sends.
     if (
-      !protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
+      !telemetryIdentity
+      && !protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
       && !protocol.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
       && canShortCircuitAcceptedHeartbeat({
       previous: lastHb,
@@ -3890,14 +3936,14 @@ router.post("/device/heartbeat",
           deviceId,
           reason: "session_replaced",
         });
-        return res.status(409).json({
+        return context.reply(409, {
           error: "student_session_replaced",
           message: "This student is signed in on another Chromebook.",
         });
       }
       if (authority.outcome === "inactive_session") {
         recordHeartbeatHotPathCounter("heartbeatInactiveSession");
-        return res.status(401).json({ error: "Student session is no longer active" });
+        return context.reply(401, { error: "Student session is no longer active" });
       }
       if (authority.leaseRenewed) {
         recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
@@ -3914,7 +3960,7 @@ router.post("/device/heartbeat",
         studentSessionId,
         authorityExpiresAtMs: authority.authorityExpiresAt?.getTime() ?? null,
       }, MAX_DEVICE_HEARTBEAT_ENTRIES);
-      return res.status(204).send();
+      return context.reply(204);
     }
     const pendingMessageRecoveryHeartbeat = !lastHb
       || !lastAcceptedBindingMatches
@@ -3974,7 +4020,9 @@ router.post("/device/heartbeat",
       // sanitization. Store these server-derived fields with the observation so
       // known learning sites need neither a later UPDATE nor a second fan-out.
       const immediateClassification = activeTabUrl && !activeTabUrl.startsWith("chrome")
-        ? classifyImmediateEducationalUrl(activeTabUrl, { schoolDomain: school.domain })
+        ? (activeTabTitle === undefined || typeof activeTabTitle === "string"
+          ? classifyImmediateHeartbeatUrl(activeTabUrl, activeTabTitle, { schoolDomain: school.domain })
+          : classifyImmediateEducationalUrl(activeTabUrl, { schoolDomain: school.domain }))
         : null;
 
       // --- Save heartbeat and throttled presence in one DB round trip ---
@@ -3998,7 +4046,7 @@ router.post("/device/heartbeat",
         contentCategory: immediateClassification?.contentCategory ?? null,
         teacherIntentSource: immediateClassification?.teacherIntentSource ?? null,
         safetyAlert: immediateClassification?.safetyAlert ?? null,
-        }, res.locals.studentSessionId as string),
+        }, context.binding.studentSessionId as string, telemetryIdentity),
         Promise.resolve(privacyControlState),
       ]);
       let controlState = initialControlState;
@@ -4008,13 +4056,14 @@ router.post("/device/heartbeat",
       if (heartbeat.outcome === "inactive_session") {
         return { outcome: "inactive_session" } as const;
       }
+      if (heartbeat.outcome === "operation_conflict") return { outcome: "operation_conflict" } as const;
       if (
         controlState
         && Number.isSafeInteger(Number(appliedClassroomStateRevision))
         && Number(appliedClassroomStateRevision) === controlState.revision
       ) {
         const outcome = String(classroomStateOutcome || "").toLowerCase();
-        const reportedFocusStatus = readClasspilotFocusStatusEnvelope(req.body);
+        const reportedFocusStatus = readClasspilotFocusStatusEnvelope(context.payload);
         const ackOutcome = outcome === "applied" || outcome === "success"
           ? "applied"
           : outcome === "failed"
@@ -4119,14 +4168,14 @@ router.post("/device/heartbeat",
       }, MAX_DEVICE_HEARTBEAT_ENTRIES);
       const monitoringPolicy = heartbeatDbResult.monitoringPolicy;
       const observation = monitoringPolicy.mode === "safety_only"
-        ? classpilotSafetyObservation(req.body) : null;
+        ? classpilotSafetyObservation(context.payload) : null;
       if (observation && (!lastAcceptedBindingMatches || now - (lastHb?.acceptedAt ?? 0) >= HEARTBEAT_MIN_INTERVAL_MS)) {
         void trackHeartbeatClassificationProducer(processClasspilotAfterHoursSafety({
           schoolId, studentId, studentSessionId, deviceId, ...observation,
           acceptedCapabilities: protocol.acceptedCapabilities,
         })).catch(() => { /* No browser data enters diagnostics. */ });
       }
-      return res.json({
+      return context.reply(200, {
         ok: true, schoolId, studentId, studentSessionId,
         exactBinding: { studentId, studentSessionId },
         ...protocol, monitoringPolicy,
@@ -4135,8 +4184,11 @@ router.post("/device/heartbeat",
         pendingMessages: [],
       });
     }
+    if (heartbeatDbResult.outcome === "operation_conflict") {
+      return context.reply(409, { code: "DEVICE_TELEMETRY_OPERATION_MISMATCH", error: "Operation ID was already used with a different payload" });
+    }
     if (heartbeatDbResult.outcome === "inactive_school") {
-      return res.status(402).json({ planStatus: "inactive" });
+      return context.reply(402, { planStatus: "inactive" });
     }
     if (heartbeatDbResult.outcome === "replaced_session") {
       recordHeartbeatHotPathCounter("heartbeatReplacedSession");
@@ -4147,7 +4199,7 @@ router.post("/device/heartbeat",
         deviceId,
         reason: "session_replaced",
       });
-      return res.status(409).json({
+      return context.reply(409, {
         error: "student_session_replaced",
         message: "This student is signed in on another Chromebook.",
       });
@@ -4156,7 +4208,7 @@ router.post("/device/heartbeat",
       recordHeartbeatHotPathCounter("heartbeatInactiveSession");
       // Preserve requireDeviceAuthWithoutTenant's established response while
       // letting the insert CTE remain the sole database authority.
-      return res.status(401).json({ error: "Student session is no longer active" });
+      return context.reply(401, { error: "Student session is no longer active" });
     }
     const {
       heartbeat,
@@ -4169,6 +4221,7 @@ router.post("/device/heartbeat",
     if (heartbeat.leaseRenewed) {
       recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
     }
+    if (!heartbeat.replayed) {
     recordAcceptedHeartbeatGap({
       previous: lastHb,
       studentId,
@@ -4181,6 +4234,7 @@ router.post("/device/heartbeat",
       studentSessionId,
       authorityExpiresAtMs: heartbeat.authorityExpiresAt?.getTime() ?? null,
     }, MAX_DEVICE_HEARTBEAT_ENTRIES);
+    }
     const restrictionAuthGateActive = isClasspilotCapabilityActive(
       "restrictionAuthPassThroughV1",
       { schoolId }
@@ -4279,7 +4333,7 @@ router.post("/device/heartbeat",
       observationStatus: heartbeatObservationStatus,
     });
     const studentEmail = heartbeat.studentEmail;
-    recordHeartbeatHotPathCounter("heartbeatRecorded");
+    if (!heartbeat.replayed) recordHeartbeatHotPathCounter("heartbeatRecorded");
 
     const classificationPending = !persistedImmediateClassification && typeof activeTabUrl === "string" &&
       activeTabUrl.length > 0 &&
@@ -4288,7 +4342,7 @@ router.post("/device/heartbeat",
     // Write the latest history and authoritative realtime snapshot concurrently
     // after releasing PostgreSQL. Neither Redis path can make the accepted
     // heartbeat fail; authorized reads retain their documented fallback chain.
-    const heartbeatTileCacheWrite = writeHeartbeatTileCache({
+    const heartbeatTileCacheWrite = heartbeat.replayed ? Promise.resolve(true) : writeHeartbeatTileCache({
       id: heartbeat.id,
       deviceId,
       studentId,
@@ -4312,7 +4366,8 @@ router.post("/device/heartbeat",
       timestamp: heartbeat.timestamp,
       classificationPending,
     });
-    const realtimeStatusWrite = writeClasspilotRealtimeStatus({
+    const realtimeStatusWrite = heartbeat.replayed
+      ? Promise.resolve({ status: "stale" as const, snapshot: undefined }) : writeClasspilotRealtimeStatus({
       schoolId,
       studentId,
       studentSessionId,
@@ -4383,81 +4438,12 @@ router.post("/device/heartbeat",
       // Historical classification belongs to the already persisted heartbeat.
       // Register it before a stale snapshot return or optional staff publication
       // can end this request; current-page effects remain separately fenced.
-      registerHeartbeatClassificationWork();
-      if (!realtimeSnapshot) {
-        if (realtimeStatusMutation.status === "stale") {
-          // A newer heartbeat or a sign-out tombstone already owns the latest
-          // status. Preserve the accepted historical row but never broadcast or
-          // classify this delayed request as current activity.
-          if (fabSyncPending) void markClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
-          return res.json({
-            ok: true,
-            planStatus: school.planStatus || "active",
-            ...protocol,
-          });
-        }
-        throw new Error("Realtime heartbeat snapshot was not created");
-      }
-      const nextRestrictionAuthState = realtimeSnapshot.restrictionAuthState || "idle";
-      const previousRestrictionAuthState = restrictionAuthStateByDevice.get(deviceId);
-      const transitionMetric = classpilotRestrictionAuthTransitionMetric(
-        previousRestrictionAuthState?.studentSessionId === studentSessionId
-          ? previousRestrictionAuthState.state
-          : null,
-        nextRestrictionAuthState
-      );
-      if (transitionMetric) recordHeartbeatHotPathCounter(transitionMetric);
-      setBoundedMap(
-        restrictionAuthStateByDevice,
-        deviceId,
-        {
-          studentSessionId,
-          state: nextRestrictionAuthState,
-          observedAt: realtimeSnapshot.observedAt,
-        },
-        MAX_DEVICE_HEARTBEAT_ENTRIES
-      );
-
-      // --- Update in-memory real-time status ---
-      updateDeviceStatus({
-        deviceId,
-        studentId,
-        studentEmail,
-        schoolId,
-        activeTabUrl: activeTabUrl || "",
-        activeTabTitle: activeTabTitle || "",
-        favicon: favicon || undefined,
-        screenLocked: screenLocked || false,
-        flightPathActive: flightPathActive || false,
-        activeFlightPathName: activeFlightPathName || undefined,
-        isSharing: isScreenSharing || isScreenRecording || false,
-        cameraActive: cameraActive || false,
-        lastSeenAt: Date.now(),
-        aiClassification: persistedImmediateClassification ?? undefined,
-        allOpenTabs: allOpenTabs || undefined,
-        screenshotHealth: screenshotHealth || undefined,
-        extensionVersion: extensionVersion || undefined,
-        chromeVersion: chromeVersion || undefined,
-      });
-
-      // --- Broadcast full student state to teachers (item #1) ---
-      const update: Record<string, unknown> = {
-        type: "student-update",
-        studentId,
-        schoolId,
-        visibilityState,
-        // True only on the heartbeat that re-delivers a FAB state the class-start
-        // push could not reach; the next frame reports false again.
-        fabSyncPending: fabSyncPending === true,
-        isScreenRecording,
-        status: trackingStatus,
-        timestamp: new Date().toISOString(),
-        ...publicRealtimeFields(realtimeSnapshot),
-      };
-
       // --- AI content classification (item #8) — async, non-blocking ---
       function registerHeartbeatClassificationWork(): void {
-        if (persistedImmediateClassification) return;
+        // Only the initial accepted observation owns this work. A retry still
+        // rebuilds current policy below, but current classroom intent must never
+        // reclassify or overwrite the already persisted historical observation.
+        if (heartbeat.replayed || persistedImmediateClassification) return;
         if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
           const classificationProducer = classifyUrl(
             activeTabUrl,
@@ -4705,6 +4691,79 @@ router.post("/device/heartbeat",
         }
       }
 
+      registerHeartbeatClassificationWork();
+      if (!heartbeat.replayed) {
+      if (!realtimeSnapshot) {
+        if (realtimeStatusMutation.status === "stale") {
+          // A newer heartbeat or a sign-out tombstone already owns the latest
+          // status. Preserve the accepted historical row but never broadcast or
+          // classify this delayed request as current activity.
+          if (fabSyncPending) void markClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
+          return context.reply(200, {
+            ok: true,
+            planStatus: school.planStatus || "active",
+            ...protocol,
+          });
+        }
+        throw new Error("Realtime heartbeat snapshot was not created");
+      }
+      const nextRestrictionAuthState = realtimeSnapshot.restrictionAuthState || "idle";
+      const previousRestrictionAuthState = restrictionAuthStateByDevice.get(deviceId);
+      const transitionMetric = classpilotRestrictionAuthTransitionMetric(
+        previousRestrictionAuthState?.studentSessionId === studentSessionId
+          ? previousRestrictionAuthState.state
+          : null,
+        nextRestrictionAuthState
+      );
+      if (transitionMetric) recordHeartbeatHotPathCounter(transitionMetric);
+      setBoundedMap(
+        restrictionAuthStateByDevice,
+        deviceId,
+        {
+          studentSessionId,
+          state: nextRestrictionAuthState,
+          observedAt: realtimeSnapshot.observedAt,
+        },
+        MAX_DEVICE_HEARTBEAT_ENTRIES
+      );
+
+      // --- Update in-memory real-time status ---
+      updateDeviceStatus({
+        deviceId,
+        studentId,
+        studentEmail,
+        schoolId,
+        activeTabUrl: activeTabUrl || "",
+        activeTabTitle: activeTabTitle || "",
+        favicon: favicon || undefined,
+        screenLocked: screenLocked || false,
+        flightPathActive: flightPathActive || false,
+        activeFlightPathName: activeFlightPathName || undefined,
+        isSharing: isScreenSharing || isScreenRecording || false,
+        cameraActive: cameraActive || false,
+        lastSeenAt: Date.now(),
+        aiClassification: persistedImmediateClassification ?? undefined,
+        allOpenTabs: allOpenTabs || undefined,
+        screenshotHealth: screenshotHealth || undefined,
+        extensionVersion: extensionVersion || undefined,
+        chromeVersion: chromeVersion || undefined,
+      });
+
+      // --- Broadcast full student state to teachers (item #1) ---
+      const update: Record<string, unknown> = {
+        type: "student-update",
+        studentId,
+        schoolId,
+        visibilityState,
+        // True only on the heartbeat that re-delivers a FAB state the class-start
+        // push could not reach; the next frame reports false again.
+        fabSyncPending: fabSyncPending === true,
+        isScreenRecording,
+        status: trackingStatus,
+        timestamp: new Date().toISOString(),
+        ...publicRealtimeFields(realtimeSnapshot),
+      };
+
       const onForegroundFailure = () => {
         recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures");
         recordUsageCapacityCounter("heartbeatOptionalTelemetryFailures", "heartbeat_background");
@@ -4728,6 +4787,7 @@ router.post("/device/heartbeat",
         // Legacy, supervision and non-negotiated paths keep the original gate.
         await publishOriginalForeground().then(() => { foregroundTelemetrySucceeded = true; }, onForegroundFailure);
         finishForegroundTelemetry();
+      }
       }
     }
 
@@ -4775,8 +4835,8 @@ router.post("/device/heartbeat",
         } : null,
       }));
       const legacyDeliveredIds = recent.filter(message => !message.commandId).map(message => message.id);
-      let released = false, responseFinished = res.writableFinished;
-      let responseClosed = res.destroyed && !responseFinished;
+      let released = false, responseFinished = context.delivery.finished;
+      let responseClosed = context.delivery.closed && !responseFinished;
       let appliedState: DeliveredMessageState | undefined;
       const apply = () => {
         if (!released) return;
@@ -4810,8 +4870,8 @@ router.post("/device/heartbeat",
         }
       };
       if (pendingMessages.length > 0) {
-        res.once("finish", () => { if (!responseClosed) responseFinished = true; apply(); });
-        res.once("close", () => { if (!responseFinished) responseClosed = true; apply(); });
+        context.delivery.onFinished( () => { if (!responseClosed) responseFinished = true; apply(); });
+        context.delivery.onClosed( () => { if (!responseFinished) responseClosed = true; apply(); });
       }
       commitPendingInbox = () => { released = true; apply(); };
     };
@@ -4878,7 +4938,7 @@ router.post("/device/heartbeat",
                 observationStatus: heartbeatObservationStatus,
               })
             : screenshotPolicy;
-          const finalFab = req.body?.requestFabState === true || fabSyncPending
+          const finalFab = context.payload?.requestFabState === true || fabSyncPending
             ? await buildStudentFabState(schoolId, studentId, {
                 studentSessionId,
                 acceptedCapabilities: protocol.acceptedCapabilities,
@@ -4913,7 +4973,7 @@ router.post("/device/heartbeat",
           ) {
             recordHeartbeatHotPathCounter("lateSignInCapableDelivery");
           }
-          return res.json({
+          return context.reply(200, {
             ok: true,
             schoolId,
             studentId,
@@ -4974,7 +5034,7 @@ router.post("/device/heartbeat",
     }
     await Promise.all(teacherReplyPublications);
     if (!finalDelivery.authorized) {
-      return res.status(409).json({
+      return context.reply(409, {
         error: "Student session is no longer active",
         code: "STUDENT_SESSION_REPLACED",
         ...protocol,
@@ -4983,7 +5043,7 @@ router.post("/device/heartbeat",
     return finalDelivery.value;
   } catch (err) {
     recordUsageCapacityCounter("heartbeatHandlerFailures", "heartbeat_handler");
-    next(err);
+    throw err;
   } finally {
     // This also releases current safety work on stale, denied and failed paths.
     // Historical classification persistence never waits for this barrier.
@@ -4992,7 +5052,8 @@ router.post("/device/heartbeat",
     // disconnect must never report this handler as drained before its work ends.
     endHeartbeatHandler();
   }
-}]));
+}
+
 
 // ============================================================================
 // Screenshots
@@ -5001,6 +5062,10 @@ router.post("/device/heartbeat",
 // POST /api/classpilot/device/screenshot - Upload screenshot
 router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspilotEntitlement, deviceScreenshotLimiter, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
+  try { await executeCanonicalScreenshot(deviceTelemetryHttpContext(req, res)); } catch (error) { next(error); }
+});
+
+export async function executeCanonicalScreenshot(context: DeviceTelemetryContext): Promise<DeviceTelemetryOutcome> {
   try {
     const {
       screenshot,
@@ -5013,11 +5078,11 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       tabSnapshotRevision,
       capturedAt,
       screenshotAuthority,
-    } = req.body;
-    const deviceId = res.locals.deviceId as string;
-    const schoolId = res.locals.schoolId as string;
-    const studentId = res.locals.studentId as string;
-    const studentSessionId = res.locals.studentSessionId as string;
+    } = context.payload;
+    const deviceId = context.binding.deviceId as string;
+    const schoolId = context.binding.schoolId as string;
+    const studentId = context.binding.studentId as string;
+    const studentSessionId = context.binding.studentSessionId as string;
     const binding: ScreenshotBinding = {
       schoolId,
       deviceId,
@@ -5050,7 +5115,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         realtime?.status !== "hit"
         || !classpilotRealtimeFresh(realtime.snapshot)
       ) {
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED",
         });
@@ -5072,10 +5137,18 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
     );
     const safetyCaptureNegotiated = safetyCaptureRolloutActive
       && acceptedHeartbeatCapabilities.has("safetyEvidenceCaptureV1");
-
-    if (typeof screenshot !== "string" || screenshot.length === 0) {
-      return res.status(400).json({ error: "screenshot data required" });
+    const imageReferencesNegotiated = trackingLeaseNegotiated
+      && acceptedHeartbeatCapabilities.has("scopedScreenshotReferencesV1")
+      && isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding);
+    const imageRequest = parseScreenshotImageRequest(context.payload, imageReferencesNegotiated,
+      imageReferencesNegotiated && acceptedHeartbeatCapabilities.has("scopedScreenshotDeltasV1")
+        && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding));
+    if (imageRequest.mode === "need_full_frame") return context.reply(409, { ok: false, code: "SCREENSHOT_IMAGE_REQUIRED" });
+    if (imageRequest.mode === "invalid") {
+      return context.reply(400, { error: "screenshot data required" });
     }
+    const imageProtocol = imageRequest.mode !== "full" || imageRequest.referenceProtocol;
+    const availableImageBytes = imageRequest.mode === "delta" ? screenshotDeltaTargetByteLimit(context.payload) : 0;
 
     if (captureKind === "safety_evidence") {
       const capturedAtDate = typeof capturedAt === "string" ? new Date(capturedAt) : null;
@@ -5095,7 +5168,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         || !capturedAtDate
         || !Number.isFinite(capturedAtDate.getTime())
       ) {
-        return res.status(400).json({
+        return context.reply(400, {
           error: "Invalid safety evidence capture",
           code: "SAFETY_EVIDENCE_CAPTURE_INVALID",
         });
@@ -5117,13 +5190,13 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         })
       );
       if (completion.status === "unavailable") {
-        return res.status(completion.reason === "not_found" ? 404 : 409).json({
+        return context.reply(completion.reason === "not_found" ? 404 : 409, {
           ok: false,
           evidenceAvailable: false,
           code: `SAFETY_EVIDENCE_${completion.reason.toUpperCase()}`,
         });
       }
-      return res.json({
+      return context.reply(200, {
         ok: true,
         evidenceAvailable: true,
         evidenceRequestId,
@@ -5140,7 +5213,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         || !Number.isFinite(capturedAtDate.getTime())
         || capturedAtDate.toISOString() !== capturedAt
       ) {
-        return res.status(400).json({
+        return context.reply(400, {
           ok: false,
           code: "SCREENSHOT_AUTHORITY_INVALID",
         });
@@ -5239,8 +5312,18 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             const data = { screenshot, timestamp: capturedAtDate.getTime(), capturedAt: capturedAtDate.toISOString(),
               tabTitle, tabUrl, tabFavicon, ...supervisionBinding,
               bindingVersion: supervisionBoundScreenshotBindingVersion(supervisionBinding) };
-            const stored = await setSupervisionBoundScreenshot(supervisionBinding, data);
+            const { screenshot: _pixels, ...metadata } = data;
+            const imageWrite = imageProtocol ? imageRequest.mode === "reference"
+              ? await refreshSupervisionBoundScreenshotImage(supervisionBinding, { ...metadata, imageId: imageRequest.imageId })
+              : imageRequest.mode === "delta"
+                ? await setSupervisionBoundScreenshotDelta(supervisionBinding, metadata, imageRequest.delta, availableImageBytes)
+                : await setSupervisionBoundScreenshotImage(supervisionBinding, data) : undefined;
+            if (imageWrite?.status === "need_full_frame") return { outcome: "image_required" as const, screenshotPolicy };
+            if (imageWrite?.status === "invalid") return { outcome: "image_invalid" as const, screenshotPolicy };
+            if (imageWrite?.status === "superseded") return { outcome: "image_superseded" as const, screenshotPolicy };
+            const stored = imageProtocol ? imageWrite?.status === "stored" : await setSupervisionBoundScreenshot(supervisionBinding, data);
             const required = classpilotScreenshotStoreRequired();
+            if (!stored && !required && imageRequest.mode !== "full") return { outcome: "image_required" as const, screenshotPolicy };
             if (!stored && !required) classpilotScreenshotFallback.setSupervisionBound(supervisionBinding, data);
             const outcome = stored ? "redis" as const : required ? "unavailable" as const : "local_fallback" as const;
             if (outcome !== "unavailable" && current.supervisionRetention?.assignedStaffId) {
@@ -5248,7 +5331,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
                 current.supervisionRetention.contextAuthorityRevision)
                 .catch(() => recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures"));
             }
-            return { outcome, screenshotPolicy, data };
+            return { outcome, screenshotPolicy, data, imageId: imageWrite?.status === "stored" ? imageWrite.imageId : undefined };
           }
 
           const classBinding: ClassBoundScreenshotBinding = {
@@ -5268,9 +5351,19 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             bindingVersion: classBoundScreenshotBindingVersion(classBinding),
           };
           const screenshotStoreStartedAt = Date.now();
-          const stored = await setClassBoundScreenshot(classBinding, data);
+          const { screenshot: _pixels, ...metadata } = data;
+          const imageWrite = imageProtocol ? imageRequest.mode === "reference"
+            ? await refreshClassBoundScreenshotImage(classBinding, { ...metadata, imageId: imageRequest.imageId })
+            : imageRequest.mode === "delta"
+              ? await setClassBoundScreenshotDelta(classBinding, metadata, imageRequest.delta, availableImageBytes)
+              : await setClassBoundScreenshotImage(classBinding, data) : undefined;
+          if (imageWrite?.status === "need_full_frame") return { outcome: "image_required" as const, screenshotPolicy };
+          if (imageWrite?.status === "invalid") return { outcome: "image_invalid" as const, screenshotPolicy };
+          if (imageWrite?.status === "superseded") return { outcome: "image_superseded" as const, screenshotPolicy };
+          const stored = imageProtocol ? imageWrite?.status === "stored" : await setClassBoundScreenshot(classBinding, data);
           recordHeartbeatHotPathTiming("screenshotStoreMs", Date.now() - screenshotStoreStartedAt);
           const screenshotStoreRequired = classpilotScreenshotStoreRequired();
+          if (!stored && !screenshotStoreRequired && imageRequest.mode !== "full") return { outcome: "image_required" as const, screenshotPolicy };
           if (!stored && !screenshotStoreRequired) {
             classpilotScreenshotFallback.setClassBound(classBinding, data);
           }
@@ -5304,6 +5397,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             screenshotPolicy,
             classBinding,
             data,
+            imageId: imageWrite?.status === "stored" ? imageWrite.imageId : undefined,
           };
         })
       );
@@ -5325,7 +5419,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
           trackingSettings: strictResult.trackingSettings,
           trackingAuthority: strictResult.current,
         });
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: strictResult.status === "superseded"
             ? "SCREENSHOT_AUTHORITY_SUPERSEDED"
@@ -5335,9 +5429,12 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       }
 
       const strictValue = strictResult.value;
+      if (strictValue.outcome === "image_required") return context.reply(409, { ok: false, code: "SCREENSHOT_IMAGE_REQUIRED" });
+      if (strictValue.outcome === "image_invalid") return context.reply(400, { ok: false, code: "SCREENSHOT_IMAGE_INVALID" });
+      if (strictValue.outcome === "image_superseded") return context.reply(200, { ok: true, retained: false, screenshotPolicy: strictValue.screenshotPolicy });
       if (strictValue.outcome === "tracking_window_closed") {
         recordHeartbeatHotPathCounter("screenshotUploadTrackingWindowClosed");
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: "SCREENSHOT_CAPTURE_PAUSED",
           screenshotPolicy: strictValue.screenshotPolicy,
@@ -5389,7 +5486,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         }
         const superseded = capturedAtValidation === "before_authority"
           || capturedAtValidation === "after_authority";
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: superseded
             ? "SCREENSHOT_AUTHORITY_SUPERSEDED"
@@ -5402,17 +5499,17 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
         });
       }
       if (strictValue.outcome === "discarded") {
-        recordScreenshotUpload(Buffer.byteLength(screenshot, "utf8"), "discarded");
-        return res.json({
+        recordScreenshotUpload(uploadedScreenshotPixelBytes(screenshot), "discarded");
+        return context.reply(200, {
           ok: true,
           retained: false,
           screenshotPolicy: strictValue.screenshotPolicy,
         });
       }
 
-      recordScreenshotUpload(Buffer.byteLength(screenshot, "utf8"), strictValue.outcome);
+      recordScreenshotUpload(uploadedScreenshotPixelBytes(screenshot), strictValue.outcome);
       if (strictValue.outcome === "unavailable") {
-        return res.status(503).json({
+        return context.reply(503, {
           ok: false,
           error: "Screenshot service unavailable",
           code: "SCREENSHOT_STORE_UNAVAILABLE",
@@ -5420,9 +5517,10 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       }
       recordHeartbeatHotPathCounter("screenshotUploadAccepted");
 
-      return res.json({
+      return context.reply(200, {
         ok: true,
         retained: true,
+        ...(strictValue.imageId ? { imageId: strictValue.imageId } : {}),
         screenshotPolicy: strictValue.screenshotPolicy,
       });
     }
@@ -5446,19 +5544,19 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       const screenshotPolicy = resolvedPolicy.screenshotPolicy;
       screenshotControlAuthority = realtimeControlAuthority(resolvedPolicy.controlState);
       if (screenshotPolicy.mode !== "lease") {
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: "OBSERVATION_LEASE_UNAVAILABLE",
         });
       }
       if ("diagnostic" in screenshotPolicy && screenshotPolicy.diagnostic === "unavailable") {
-        return res.status(503).json({
+        return context.reply(503, {
           ok: false,
           code: "OBSERVATION_LEASE_UNAVAILABLE",
         });
       }
       if (!screenshotPolicy.observed) {
-        return res.status(409).json({
+        return context.reply(409, {
           ok: false,
           code: "SCREENSHOT_PAUSED_UNOBSERVED",
           screenshotPolicy,
@@ -5487,7 +5585,7 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       stored ? "redis" : screenshotStoreRequired ? "unavailable" : "local_fallback"
     );
     if (!stored && screenshotStoreRequired) {
-      return res.status(503).json({
+      return context.reply(503, {
         ok: false,
         error: "Screenshot service unavailable",
         code: "SCREENSHOT_STORE_UNAVAILABLE",
@@ -5519,15 +5617,57 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
       });
     }
 
-    return res.json({ ok: true });
+    return context.reply(200, { ok: true });
   } catch (err) {
-    next(err);
+    throw err;
   }
+}
+
+async function runWebSocketDeviceOperation(kind: "heartbeat" | "screenshot", context: DeviceTelemetryContext): Promise<DeviceTelemetryOutcome> {
+  let release: (() => void) | undefined;
+  try {
+    if (kind === "heartbeat") release = await acquireClasspilotHeartbeatAdmission(context.signal);
+    const schoolId = context.binding.schoolId;
+    const entitlement = await runWithTenantContext({ schoolId, operation: "auth" }, () => resolveClasspilotEntitlement(schoolId));
+    if (!entitlement.entitled) return context.reply(403, { error: "school_not_entitled", code: "CLASSPILOT_NOT_ENTITLED",
+      reason: entitlement.reason, schoolActive: false, planStatus: "inactive" });
+    if (context.signal?.aborted || context.delivery.closed) return context.reply(503, { code: "DEVICE_TELEMETRY_UNAVAILABLE" });
+    // These are the identical shared per-device stores used by the HTTP
+    // middleware, so alternating transports never resets a device's allowance.
+    const store = kind === "heartbeat" ? deviceHeartbeatRateStore : deviceScreenshotRateStore;
+    let limited = false;
+    try {
+      limited = deviceTelemetryIpRateExceeded((await deviceTelemetryIpRateStore.increment(ipKeyGenerator(context.sourceIp))).totalHits)
+        || (await store.increment(`device:${schoolId}:${context.binding.deviceId}`)).totalHits > 60;
+    } catch { /* Preserve the HTTP limiters' passOnStoreError behavior. */ }
+    if (limited) return context.reply(429, { error: "Too many telemetry requests", code: kind === "heartbeat"
+      ? "HEARTBEAT_RATE_LIMITED" : "SCREENSHOT_UPLOAD_RATE_LIMITED" }, { "retry-after": "1" });
+    if (kind === "heartbeat") return await executeCanonicalHeartbeat(context);
+    // Screenshot HTTP authentication performs this fresh database check before
+    // entering its canonical operation. Reproduce it without a fake request.
+    const active = await runWithTenantContext({ schoolId, operation: "auth" }, () => resolveActiveStudentTokenSession({
+      schoolId, studentId: context.binding.studentId, deviceId: context.binding.deviceId,
+      sessionId: context.binding.studentSessionId,
+    }));
+    if (!active) return context.reply(401, { error: "Student session is no longer active" });
+    const monitoringPolicy = await getClasspilotMonitoringPolicy(schoolId);
+    if (monitoringPolicy.mode !== "full") return context.reply(403, { code: "MONITORING_OUTSIDE_SCHOOL_HOURS", monitoringPolicy });
+    return await executeCanonicalScreenshot(context);
+  } catch (error) {
+    if (error instanceof HeartbeatAdmissionError) return context.reply(503, { code: "CLASSPILOT_HEARTBEAT_BUSY",
+      error: "Heartbeat service is busy; retry shortly" }, { "retry-after": "1" });
+    throw error;
+  } finally { release?.(); }
+}
+registerClasspilotDeviceTelemetryOperations({
+  heartbeat: context => runWebSocketDeviceOperation("heartbeat", context),
+  screenshot: context => runWebSocketDeviceOperation("screenshot", context),
 });
 
 // POST /api/classpilot/tiles/screenshots - Get one authorized screenshot cohort
 router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
+  res.vary("Accept-Encoding");
   try {
     const parsed = parseTileStudentIds(req.body);
     const sessionScope = parseTileTeachingSessionId(req.body);
@@ -5536,6 +5676,14 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
       return res.status(400).json({
         error: "studentIds must contain 1 to 50 non-empty strings and teachingSessionId must be a non-empty string when provided",
       });
+    }
+    const knownImages = parseKnownScreenshotImages(req.body?.knownImageIds, parsed.studentIds);
+    // Older APIs ignore this body hint; pixels still require the exact known
+    // base binding and the school's live capability on every read below.
+    const allowImageDeltas = req.body?.imageDeltaProtocolVersion === 1;
+    if (knownImages === null) {
+      releaseClassPilotTileAdmission(res);
+      return res.status(400).json({ error: "knownImageIds must name only requested students and their exact image bindings" });
     }
     recordHeartbeatHotPathCounter("tileBatchScreenshotRequests");
     recordHeartbeatHotPathCounter("tileBatchScreenshotItems", parsed.studentIds.length);
@@ -5652,9 +5800,17 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
       }
     }
     const [classScreenshotRead, legacyScreenshotRead, supervisionScreenshotRead] = await Promise.all([
-      getClassBoundScreenshots(classBindings),
+      getClassBoundScreenshotImages(classBindings, { knownImageIds: classBindings.map(binding =>
+        isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding)
+          ? knownScreenshotImageForBinding(knownImages, binding.studentId, classBoundScreenshotBindingVersion(binding))
+          : undefined), allowDeltas: classBindings.map(binding => allowImageDeltas
+            && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding)) }),
       getScreenshots(legacyBindings),
-      getSupervisionBoundScreenshots(supervisionBindings),
+      getSupervisionBoundScreenshotImages(supervisionBindings, { knownImageIds: supervisionBindings.map(binding =>
+        isClasspilotCapabilityActive("scopedScreenshotReferencesV1", binding)
+          ? knownScreenshotImageForBinding(knownImages, binding.studentId, supervisionBoundScreenshotBindingVersion(binding))
+          : undefined), allowDeltas: supervisionBindings.map(binding => allowImageDeltas
+            && isClasspilotCapabilityActive("scopedScreenshotDeltasV1", binding)) }),
     ]);
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",
@@ -5690,22 +5846,14 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     );
     const supervisionScreenshotByStudent = new Map(supervisionScreenshotRead.status === "ok"
       ? supervisionBindings.map((binding, index) => [binding.studentId, supervisionScreenshotRead.screenshots[index] ?? null]) : []);
-    // Redis can finish after a release, reassignment, or binding replacement.
-    // Revalidate the bounded supervision cohort immediately before serialization;
-    // neither an old revision nor old pixels may survive that asynchronous gap.
-    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
-      ? await runWithTenantContext({ schoolId: scope.schoolId },
-        () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
-      : accessByStudent;
-    releaseClassPilotTileAdmission(res);
-    if (currentAccesses.size === 0) return res.status(404).json({ error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
-    const tiles = accesses.map((access) => {
-      const current = currentAccesses.get(access.studentId);
-      if (!current || current.deviceId !== access.deviceId
-        || current.studentSessionId !== access.studentSessionId
-        || current.teachingSessionId !== access.teachingSessionId
-        || current.supervisionContextId !== access.supervisionContextId
-        || current.controlRevision !== access.controlRevision) {
+    const sameScreenshotAccess = (access: (typeof accesses)[number], current: ReturnType<typeof accessByStudent.get>) => Boolean(
+      current && current.schoolId === access.schoolId && current.studentId === access.studentId
+      && current.deviceId === access.deviceId && current.studentSessionId === access.studentSessionId
+      && current.teachingSessionId === access.teachingSessionId && current.supervisionContextId === access.supervisionContextId
+      && current.controlRevision === access.controlRevision
+    );
+    const tilesForAccess = (currentAccesses: typeof accessByStudent) => accesses.map((access) => {
+      if (!sameScreenshotAccess(access, currentAccesses.get(access.studentId))) {
         return { studentId: access.studentId, screenshot: null };
       }
       const supervisionBinding = supervisionBindingByStudent.get(access.studentId);
@@ -5750,6 +5898,23 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
           }
         : { studentId: access.studentId, screenshot: null };
     });
+    const candidateTiles = tilesForAccess(accessByStudent);
+    const candidateResponse: { tiles: typeof candidateTiles; screenshotStore?: "unavailable" } = {
+      tiles: candidateTiles,
+      ...(screenshotStoreUnavailable ? { screenshotStore: "unavailable" } : {}),
+    };
+    const preparedResponse = await screenshotResponseEncoder.prepare(req, res, candidateResponse);
+    // Redis and optional encoding can finish after a release, reassignment, or
+    // binding replacement. Retain the existing final authority read AFTER both;
+    // prepared pixels may only publish for that same exact current cohort.
+    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
+      ? await runWithTenantContext({ schoolId: scope.schoolId },
+        () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
+      : accessByStudent;
+    releaseClassPilotTileAdmission(res);
+    if (currentAccesses.size === 0) return res.status(404).json({ error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
+    const accessUnchanged = accesses.every(access => sameScreenshotAccess(access, currentAccesses.get(access.studentId)));
+    const tiles = accessUnchanged ? candidateTiles : tilesForAccess(currentAccesses);
     // A store outage is counted once above; keep it out of the per-item miss
     // and fallback counters that size ordinary cache misses.
     if (!screenshotStoreUnavailable) {
@@ -5765,6 +5930,9 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
         );
       }
     }
+    if (accessUnchanged && preparedResponse) return screenshotResponseEncoder.send(res, candidateResponse, preparedResponse);
+    // A changed binding uses freshly filtered identity JSON synchronously; no
+    // encoded candidate may cross another asynchronous authority gap.
     return res.json({
       tiles,
       ...(screenshotStoreUnavailable ? { screenshotStore: "unavailable" } : {}),

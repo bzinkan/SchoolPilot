@@ -279,8 +279,8 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
   );
   assert.match(refresh, /classpilot:student-control:\$\{options\.schoolId\}:\$\{options\.studentId\}/);
   const route = routes.slice(
-    routes.indexOf('router.post("/device/heartbeat"'),
-    routes.indexOf('router.get("/device/screenshot/:deviceId"')
+    routes.indexOf("export async function executeCanonicalHeartbeat("),
+    routes.indexOf("export async function executeCanonicalScreenshot(")
   );
   const heartbeatDbResult = route.indexOf("const heartbeatDbResult = await");
   const recordedBindingCacheWrite = route.indexOf(
@@ -295,7 +295,7 @@ test("heartbeat authority expires atomically and renews only an accepted manual 
   assert.match(route, /refreshExactSessionAuthority/);
   assert.match(
     route,
-    /canShortCircuitAcceptedHeartbeat[\s\S]*?refreshExactSessionAuthority\(\)[\s\S]*?res\.status\(204\)\.send\(\)/
+    /canShortCircuitAcceptedHeartbeat[\s\S]*?refreshExactSessionAuthority\(\)[\s\S]*?context\.reply\(204\)/
   );
   assert.match(
     route,

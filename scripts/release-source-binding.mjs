@@ -78,6 +78,7 @@ export const CURRENT_RELEASE_TOOL_DEPENDENCIES = Object.freeze([
   PRIVATE_PERMISSION_HELPER,
   'scripts/classpilot-roadmap-release-evidence.ps1',
   'scripts/classpilot-transient-replay-runtime.ps1',
+  'scripts/classpilot-device-telemetry-runtime.ps1',
 ]);
 export function assertPrivatePermissionHelper(root, code = 'BINDING_PERMISSION_HELPER_CHANGED') {
   const helper = path.join(root, PRIVATE_PERMISSION_HELPER);

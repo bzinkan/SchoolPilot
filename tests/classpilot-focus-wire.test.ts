@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as focus from "../src/services/classpilotFocus.js";
 import { classpilotControlStateAckRequired } from "../src/services/classpilotControlStateAckGate.js";
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 
 const fixture: { heartbeatAckProperties: string; sendClassroomStateAck: string } = JSON.parse(
   readFileSync(new URL("./fixtures/classpilot-focus-wire-297.json", import.meta.url), "utf8"),
@@ -59,7 +60,7 @@ async function consume(surface: Surface, packet: Packet, options: { pending?: bo
   const controlState = { revision: 7, appliedRevision: options.pending ? null : 7,
     enforcementHealth: options.pending ? "pending" : "synced",
     desiredState: { focusStatusV1: options.stored } };
-  const invoke: () => Promise<void> = runInNewContext(code[surface], {
+  const invoke: () => Promise<void> = runInNewContext(code[surface], withDeviceTelemetryContext({
     ...focus, ...binding, classpilotControlStateAckRequired, Number, String,
     req: { body: packet }, message: packet,
     client: { ...binding, role: "student", acceptedCapabilities: ["focusTabV1"] },
@@ -75,7 +76,7 @@ async function consume(surface: Surface, packet: Packet, options: { pending?: bo
       assert.equal(context.schoolId, binding.schoolId); return action();
     },
     acknowledgeClasspilotStudentControlState: async (value: Packet) => { calls.push(value); return undefined; },
-  });
+  }));
   await invoke();
   return calls;
 }

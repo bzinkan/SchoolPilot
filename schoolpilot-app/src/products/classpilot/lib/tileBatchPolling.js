@@ -7,6 +7,8 @@ import {
   SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD,
 } from './studentMonitoringDisplay.js';
 import { withClasspilotReadDeadline } from './classpilotRecovery.js';
+import { knownScreenshotImageIds, resolveScreenshotImageReferences } from './screenshotImageReferences.js';
+import { canDecodeScreenshotDeltas, resolveScreenshotImageDeltas } from './screenshotImageDeltas.js';
 
 export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
@@ -619,12 +621,48 @@ export function assertTileScreenshotStoreAvailable(response) {
   });
 }
 
-export async function fetchTileBatch(request, requestApi, signal) {
-  const response = await withClasspilotReadDeadline(boundedSignal => requestApi('POST', request.endpoint, request.body, {
-    signal: boundedSignal,
-    ...(request.contextAuthorityRevision != null ? { contextAuthorityRevision: request.contextAuthorityRevision } : {}),
-  }), signal);
-  return request.kind === 'screenshots'
-    ? normalizeTileScreenshotBindings(assertTileScreenshotStoreAvailable(response))
-    : response;
+export async function fetchTileBatch(request, requestApi, signal, { getCachedData, isCurrent } = {}) {
+  return withClasspilotReadDeadline(async (boundedSignal) => {
+    const assertCurrent = () => {
+      if (boundedSignal.aborted || isCurrent?.() === false) throw new DOMException('Preview context changed', 'AbortError');
+    };
+    const read = (body) => {
+      assertCurrent();
+      return requestApi('POST', request.endpoint, body, {
+        signal: boundedSignal,
+        ...(request.contextAuthorityRevision != null ? { contextAuthorityRevision: request.contextAuthorityRevision } : {}),
+      });
+    };
+    const known = request.kind === 'screenshots'
+      ? knownScreenshotImageIds(getCachedData?.(), request.body.studentIds)
+      : {};
+    const offered = Object.keys(known).length ? { ...request.body, knownImageIds: known,
+      ...(canDecodeScreenshotDeltas() ? { imageDeltaProtocolVersion: 1 } : {}) } : request.body;
+    const resolveImages = async (response) => {
+      const deltas = await resolveScreenshotImageDeltas(assertTileScreenshotStoreAvailable(response), getCachedData?.(), {
+        signal: boundedSignal, isCurrent, getCachedData,
+      });
+      assertCurrent();
+      const references = resolveScreenshotImageReferences(deltas.data, getCachedData?.());
+      return { data: references.data, missingStudentIds: [...new Set([...deltas.missingStudentIds, ...references.missingStudentIds])] };
+    };
+    let response = await read(offered);
+    assertCurrent();
+    if (request.kind !== 'screenshots') return response;
+    let resolved = await resolveImages(response);
+    if (resolved.missingStudentIds.length) {
+      // The query may have been scrubbed while this read was in flight. Recover
+      // once through the same fresh authority, without offering cached IDs.
+      const fullBody = { ...request.body };
+      delete fullBody.knownImageIds;
+      delete fullBody.imageDeltaProtocolVersion;
+      response = await read(fullBody);
+      assertCurrent();
+      resolved = await resolveImages(response);
+      if (resolved.missingStudentIds.length) throw Object.assign(new Error('SCREENSHOT_IMAGE_UNAVAILABLE'), {
+        code: 'SCREENSHOT_IMAGE_UNAVAILABLE', response: { status: 503 },
+      });
+    }
+    return normalizeTileScreenshotBindings(resolved.data);
+  }, signal);
 }

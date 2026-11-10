@@ -1,4 +1,8 @@
 import { privateChatMessageLifecycle } from "../services/classpilotPrivateChatLifecycle.js";
+import { DEVICE_TELEMETRY_CAPABILITY, DeviceTelemetryDelivery, createDeviceTelemetryDispatcher,
+  createDeviceTelemetryLanes, deviceTelemetrySourceIp, executeRegisteredDeviceTelemetry,
+  validTelemetryOperationId, type DeviceTelemetryOutcome,
+} from "../services/classpilotDeviceTelemetry.js";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
@@ -895,12 +899,23 @@ export function setupWebSocket(
   }
 
   // --- Connection handler ---
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, request) => {
     if (!webSocketWork.canStart()) {
       ws.close(1013, "Server shutting down");
       return;
     }
     const client = registerWsClient(ws);
+    const telemetryLanes = createDeviceTelemetryLanes();
+    const telemetryAbort = new AbortController();
+    const telemetrySourceIp = deviceTelemetrySourceIp(request, Number(process.env.TRUST_PROXY_HOPS ??
+      (process.env.NODE_ENV === "production" ? 2 : 1)));
+    const telemetryDispatcher = createDeviceTelemetryDispatcher({
+      verifyToken: verifyStudentToken,
+      allowed: binding => client.authenticated && client.role === "student"
+        && !!client.acceptedCapabilities?.includes(DEVICE_TELEMETRY_CAPABILITY)
+        && isClasspilotCapabilityActive(DEVICE_TELEMETRY_CAPABILITY, binding),
+      execute: executeRegisteredDeviceTelemetry,
+    });
     const frameBucket = createClasspilotWsFrameBucket();
     let pendingFrames = 0;
     let frameQueue: Promise<void> = Promise.resolve();
@@ -2584,6 +2599,41 @@ export function setupWebSocket(
         }
         return;
       }
+      // Route only this fixed, authenticated operation envelope off the control
+      // queue. Slow telemetry must not retain command/chat acknowledgements.
+      let telemetry: unknown;
+      try { telemetry = JSON.parse(data.toString()); } catch { /* Existing handler owns invalid JSON. */ }
+      if (telemetry && typeof telemetry === "object" && (telemetry as { type?: unknown }).type === "device-telemetry") {
+        const frame = telemetry as { operationId?: unknown; kind?: unknown };
+        if (!validTelemetryOperationId(frame.operationId) || (frame.kind !== "heartbeat" && frame.kind !== "screenshot")) return;
+        const binding = { schoolId: client.schoolId || "", studentId: client.studentId || "",
+          studentSessionId: client.studentSessionId || "", deviceId: client.deviceId || "" };
+        const delivery = new DeviceTelemetryDelivery();
+        const closeDelivery = () => delivery.close();
+        ws.once("close", closeDelivery);
+        let responded = false;
+        const reply = (outcome: DeviceTelemetryOutcome) => {
+          if (responded || delivery.closed) return outcome;
+          responded = true;
+          if (ws.readyState !== WebSocket.OPEN || !client.authenticated || client.schoolId !== binding.schoolId
+            || client.studentId !== binding.studentId || client.studentSessionId !== binding.studentSessionId
+            || client.deviceId !== binding.deviceId) { delivery.close(); return outcome; }
+          const response = { type: "device-telemetry-result", operationId: frame.operationId, kind: frame.kind,
+            ...outcome, exactBinding: { studentId: binding.studentId, studentSessionId: binding.studentSessionId } };
+          ws.send(JSON.stringify(response), error => { if (error) delivery.close(); else delivery.finish(); });
+          return outcome;
+        };
+        const kind = frame.kind;
+        void webSocketWork.track(telemetryLanes.run(kind, () => telemetryDispatcher(telemetry, {
+          binding, sourceIp: telemetrySourceIp, signal: telemetryAbort.signal, delivery, reply,
+        })).then(outcome => {
+          if (outcome === null) reply({ status: 503, body: { code: "DEVICE_TELEMETRY_BUSY" }, headers: { "retry-after": "1" } });
+        }).catch(error => {
+          errorMonitor.trackError("websocket_error", error as Error, { job: "deviceWebSocketTelemetry" }, { persist: false });
+          reply({ status: 503, body: { code: "DEVICE_TELEMETRY_SERVICE_UNAVAILABLE" }, headers: { "retry-after": "1" } });
+        }).finally(() => { ws.off("close", closeDelivery); }));
+        return;
+      }
       if (pendingFrames >= CLASSPILOT_WS_MAX_PENDING_FRAMES) {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "rate-limit", code: "WS_FRAME_QUEUE_EXCEEDED" }));
@@ -2599,6 +2649,8 @@ export function setupWebSocket(
     });
 
     ws.on("close", () => {
+      telemetryLanes.stop();
+      telemetryAbort.abort();
       stopPingInterval(ws);
       stopOwnedLiveViews("requester-disconnected");
       clearStaffPresence();

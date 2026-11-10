@@ -39,7 +39,7 @@ const WINDOWS_UNAVAILABLE_AUDIENCE="_windowsUnavailableStudentTargets";
 const unavailableAudienceSchema=z.array(z.object({id:z.string().uuid(),studentId:z.string().min(1),code:z.literal("WINDOWS_SOURCE_UNAVAILABLE")}).strict());
 function windowsUnavailableAudience(payload:Record<string,unknown>){return unavailableAudienceSchema.parse(payload[WINDOWS_UNAVAILABLE_AUDIENCE]??[]);}
 function windowsPublicCommandPayload(payload:Record<string,unknown>){const publicPayload={...payload};delete publicPayload[WINDOWS_UNAVAILABLE_AUDIENCE];return publicPayload;}
-const unsupportedWindowsCapabilities=new Set(["liveViewIceServersV1","liveViewNegotiationV1","kioskLaunchTicketV1","kioskLaunchTicketV2","managedDeviceContinuityV1","safetyEvidenceCaptureV1","screenshotObservationLeaseV1","screenshotReadOnlyObservationV1"]);
+const unsupportedWindowsCapabilities=new Set(["liveViewIceServersV1","liveViewNegotiationV1","kioskLaunchTicketV1","kioskLaunchTicketV2","managedDeviceContinuityV1","safetyEvidenceCaptureV1","screenshotObservationLeaseV1","screenshotReadOnlyObservationV1","deviceTelemetryTransportV1","scopedScreenshotReferencesV1","scopedScreenshotDeltasV1"]);
 function currentWindowsCapabilities(browser:WindowsBrowser){
   return negotiateClasspilotProtocol({clientProtocolVersion:3,advertisedCapabilities:browser.acceptedCapabilities.filter(cap=>!unsupportedWindowsCapabilities.has(cap)),scope:{schoolId:browser.schoolId}}).acceptedCapabilities;
 }

@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
+import { executeRedisScriptCommand } from "./redisScriptCommand.js";
+import { createScopedScreenshotImageCache, type ScreenshotImageScope,
+  type ScreenshotImageReadResult, type ScreenshotImageWriteResult,
+} from "./scopedScreenshotImageCache.js";
+import { ScreenshotImageActivity } from "./screenshotImageActivity.js";
+import { SCREENSHOT_JPEG_DATA_URI, type ScreenshotUploadDelta } from "../services/classpilotScreenshotDelta.js";
+export type { ScreenshotImageReadData as ScreenshotImageData, ScreenshotImageWriteResult } from "./scopedScreenshotImageCache.js";
 import {
   dispatchCacheInvalidation,
   registerCacheInvalidationPublisher,
@@ -199,10 +206,12 @@ function emptyHotPathActivity(): HotPathActivity {
 }
 
 let hotPathActivity = emptyHotPathActivity();
+const screenshotImageActivity = new ScreenshotImageActivity();
 
 function flushHotPathActivity(): void {
   const activity = hotPathActivity;
   hotPathActivity = emptyHotPathActivity();
+  const screenshotImages = screenshotImageActivity.flush();
   if (
     activity.redisMessagesPublished === 0 &&
     activity.redisMessagesReceived === 0 &&
@@ -211,6 +220,7 @@ function flushHotPathActivity(): void {
     Object.keys(activity.coordinationOutcomes).length === 0 &&
     Object.keys(activity.observationStatusOutcomes).length === 0 &&
     Object.keys(activity.commandPhases).length === 0
+    && Object.values(screenshotImages).every(value => value === 0)
   ) {
     return;
   }
@@ -221,6 +231,7 @@ function flushHotPathActivity(): void {
     event: "realtime_hot_path_summary",
     intervalSeconds: HOT_PATH_LOG_INTERVAL_MS / 1_000,
     publicationLatencyBoundsMs: PUBLICATION_LATENCY_BUCKETS_MS,
+    screenshotImages,
     ...activity,
   }));
 }
@@ -437,7 +448,10 @@ export async function executeRealtimeRedisCommandOutcome<T = unknown>(
 ): Promise<RedisPublicationOutcome<T>> {
   if (!redisUrl) return { status: "not_admitted", reason: "not_configured" };
   const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
-  const outcome = await coordinationRuntime.publish(client => client.sendCommand<T>(command), { budgetMs: timeoutMs });
+  const deadlineAt = performance.now() + timeoutMs;
+  const outcome = await coordinationRuntime.publish(client => executeRedisScriptCommand(
+    args => client.sendCommand<T>(args), command, { deadlineAt, isReady: () => client.isReady },
+  ), { budgetMs: timeoutMs });
   // Advisory presence/refresh claims fail closed. An uncertain SET is not
   // retried; its frozen timestamps/NX lease remain bounded if it executes late.
   return outcome;
@@ -448,9 +462,13 @@ export async function executeRealtimeRedisCommandOutcome<T = unknown>(
 export async function realtimeRedisCommandOutcome(
   args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
 ): Promise<RedisPublicationOutcome<unknown>> {
+  const deadlineAt = performance.now() + 250;
   const outcome: RedisPublicationOutcome<unknown> = !redisUrl
     ? { status: "not_admitted", reason: "not_configured" }
-    : await coordinationRuntime.publish(client => client.sendCommand(args), {
+    : await coordinationRuntime.publish(client => executeRedisScriptCommand(
+      command => client.sendCommand(command), args,
+      { deadlineAt, signal: options.signal, isReady: () => client.isReady },
+    ), {
       budgetMs: 250, signal: options.signal,
     });
   if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);
@@ -727,6 +745,7 @@ const SCREENSHOT_TTL_SECONDS = 120; // 120 seconds — must outlive both the 30s
 
 export type ScreenshotData = {
   screenshot: string;
+  imageId?: string;
   timestamp: number;
   capturedAt?: string;
   tabTitle?: string;
@@ -742,6 +761,7 @@ export type ScreenshotData = {
   controlRevision?: number;
   bindingVersion?: string;
 };
+export type ScreenshotMetadata = Omit<ScreenshotData, "screenshot">;
 
 export type ScreenshotBinding = {
   schoolId: string;
@@ -893,6 +913,7 @@ export function decodeScreenshotData(value: unknown): ScreenshotData | null {
   }
   return {
     screenshot: candidate.screenshot,
+    ...(typeof candidate.imageId === "string" ? { imageId: candidate.imageId } : {}),
     timestamp: candidate.timestamp,
     ...(typeof candidate.capturedAt === "string" ? { capturedAt: candidate.capturedAt } : {}),
     ...(typeof candidate.tabTitle === "string" ? { tabTitle: candidate.tabTitle } : {}),
@@ -946,7 +967,7 @@ export function screenshotMatchesBinding(
 }
 
 export function classBoundScreenshotMatchesBinding(
-  data: ScreenshotData | null,
+  data: ScreenshotMetadata | null,
   binding: ClassBoundScreenshotBinding
 ): boolean {
   if (!data) return false;
@@ -971,7 +992,7 @@ export function classBoundScreenshotMatchesBinding(
  * captured under one authority can never satisfy a read under the other.
  */
 export function supervisionBoundScreenshotMatchesBinding(
-  data: ScreenshotData | null,
+  data: ScreenshotMetadata | null,
   binding: SupervisionBoundScreenshotBinding
 ): boolean {
   if (!data) return false;
@@ -1020,12 +1041,90 @@ export async function setScreenshot(binding: ScreenshotBinding, data: BoundScree
 
 export async function setClassBoundScreenshot(binding: ClassBoundScreenshotBinding, data: ClassBoundScreenshotData): Promise<boolean> {
   if (!classBoundScreenshotMatchesBinding(data, binding)) return false;
-  return storeScreenshot([classBoundScreenshotBindingCacheKey(binding)], data);
+  return screenshotImageCache.storeLegacy(classImageScope(binding), data);
 }
 
 export async function setSupervisionBoundScreenshot(binding: SupervisionBoundScreenshotBinding, data: SupervisionBoundScreenshotData): Promise<boolean> {
   if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return false;
-  return storeScreenshot([supervisionBoundScreenshotBindingCacheKey(binding)], data);
+  return screenshotImageCache.storeLegacy(supervisionImageScope(binding), data);
+}
+
+// Reference storage is separate from the legacy JSON key. Each write/read still
+// carries the exact authority; ordinary heartbeats never invoke a refresh.
+const screenshotImageCache = createScopedScreenshotImageCache(
+  args => realtimeRedisCommand(args), { prefix: SCREENSHOT_KEY_PREFIX,
+    onDeltaBaseRead: bytes => screenshotImageActivity.record('delta_base_read', bytes) },
+);
+function classImageScope(binding: ClassBoundScreenshotBinding): ScreenshotImageScope {
+  return { binding, bindingVersion: classBoundScreenshotBindingVersion(binding),
+    legacyKey: classBoundScreenshotBindingCacheKey(binding) };
+}
+function supervisionImageScope(binding: SupervisionBoundScreenshotBinding): ScreenshotImageScope {
+  return { binding, bindingVersion: supervisionBoundScreenshotBindingVersion(binding),
+    legacyKey: supervisionBoundScreenshotBindingCacheKey(binding) };
+}
+export async function setClassBoundScreenshotImage(binding: ClassBoundScreenshotBinding, data: ClassBoundScreenshotData): Promise<ScreenshotImageWriteResult> {
+  if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotImageWrite(screenshotImageCache.storeFull(classImageScope(binding), data), 'full', Buffer.byteLength(data.screenshot, 'utf8'));
+}
+export async function setSupervisionBoundScreenshotImage(binding: SupervisionBoundScreenshotBinding, data: SupervisionBoundScreenshotData): Promise<ScreenshotImageWriteResult> {
+  if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotImageWrite(screenshotImageCache.storeFull(supervisionImageScope(binding), data), 'full', Buffer.byteLength(data.screenshot, 'utf8'));
+}
+export async function setClassBoundScreenshotDelta(binding: ClassBoundScreenshotBinding, data: Omit<ClassBoundScreenshotData, "screenshot">,
+  delta: ScreenshotUploadDelta, maxTargetBytes: number): Promise<ScreenshotImageWriteResult> {
+  if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotDeltaWrite(screenshotImageCache.storeDelta(classImageScope(binding), data, delta, maxTargetBytes), delta);
+}
+export async function setSupervisionBoundScreenshotDelta(binding: SupervisionBoundScreenshotBinding, data: Omit<SupervisionBoundScreenshotData, "screenshot">,
+  delta: ScreenshotUploadDelta, maxTargetBytes: number): Promise<ScreenshotImageWriteResult> {
+  if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotDeltaWrite(screenshotImageCache.storeDelta(supervisionImageScope(binding), data, delta, maxTargetBytes), delta);
+}
+export async function refreshClassBoundScreenshotImage(binding: ClassBoundScreenshotBinding, data: Omit<ClassBoundScreenshotData, "screenshot"> & { imageId: string }): Promise<ScreenshotImageWriteResult> {
+  if (!classBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotImageWrite(screenshotImageCache.refresh(classImageScope(binding), data), 'reference');
+}
+export async function refreshSupervisionBoundScreenshotImage(binding: SupervisionBoundScreenshotBinding, data: Omit<SupervisionBoundScreenshotData, "screenshot"> & { imageId: string }): Promise<ScreenshotImageWriteResult> {
+  if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return { status: "invalid" };
+  return recordScreenshotImageWrite(screenshotImageCache.refresh(supervisionImageScope(binding), data), 'reference');
+}
+
+async function recordScreenshotImageWrite(work: Promise<ScreenshotImageWriteResult>, kind: 'full' | 'reference', bytes = 0): Promise<ScreenshotImageWriteResult> {
+  const result = await work;
+  if (result.status === 'stored') screenshotImageActivity.record(kind, bytes);
+  else if (kind === 'reference' && result.status === 'need_full_frame') screenshotImageActivity.record('miss');
+  return result;
+}
+async function recordScreenshotDeltaWrite(work: Promise<ScreenshotImageWriteResult>, delta: ScreenshotUploadDelta): Promise<ScreenshotImageWriteResult> {
+  const result = await work;
+  if (result.status === "stored") screenshotImageActivity.record('delta_upload', Buffer.byteLength(delta.data),
+    SCREENSHOT_JPEG_DATA_URI.length + Math.ceil(delta.targetBytes / 3) * 4);
+  else if (result.status === "need_full_frame") screenshotImageActivity.record('delta_miss');
+  return result;
+}
+type ScreenshotImageReadOptions = { knownImageIds?: readonly (string | null | undefined)[]; allowDeltas?: readonly boolean[] };
+async function readScreenshotImages(scopes: readonly ScreenshotImageScope[], options: ScreenshotImageReadOptions): Promise<ScreenshotImageReadResult> {
+  if (!scopes.length) return { status: "ok", screenshots: [] };
+  if (!redisUrl) return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
+    ? { status: "unavailable" } : { status: "ok", screenshots: scopes.map(() => null) };
+  const result = await screenshotImageCache.read(scopes, options.knownImageIds, options.allowDeltas);
+  if (result.status === 'ok') screenshotImageActivity.record('metadata_read', result.screenshots.filter(data => data?.unchanged === true).length);
+  if (result.status === 'ok') for (const data of result.screenshots) {
+    if (data?.delta) screenshotImageActivity.record('delta_read', Buffer.byteLength(data.delta.data));
+  }
+  return result;
+}
+export async function getClassBoundScreenshotImages(bindings: readonly ClassBoundScreenshotBinding[], options: ScreenshotImageReadOptions = {}): Promise<ScreenshotImageReadResult> {
+  return readScreenshotImages(bindings.map(classImageScope), options);
+}
+export async function getSupervisionBoundScreenshotImages(bindings: readonly SupervisionBoundScreenshotBinding[], options: ScreenshotImageReadOptions = {}): Promise<ScreenshotImageReadResult> {
+  return readScreenshotImages(bindings.map(supervisionImageScope), options);
+}
+function fullScreenshotBatch(result: ScreenshotImageReadResult): ScreenshotBatchReadResult {
+  if (result.status === "unavailable") return result;
+  return { status: "ok", screenshots: result.screenshots.map(data =>
+    data && typeof data.screenshot === "string" ? data as ScreenshotData : null) };
 }
 
 export async function getScreenshot(
@@ -1148,59 +1247,14 @@ export async function getScreenshots(
 export async function getClassBoundScreenshots(
   bindings: readonly ClassBoundScreenshotBinding[]
 ): Promise<ScreenshotBatchReadResult> {
-  if (bindings.length === 0) return { status: "ok", screenshots: [] };
-  if (!redisUrl) {
-    return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
-      ? { status: "unavailable" }
-      : { status: "ok", screenshots: bindings.map(() => null) };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 250);
-  timeout.unref?.();
-  try {
-    const redisCommand = realtimeRedisCommand;
-    const result = await redisCommand(
-      ["MGET", ...bindings.map(classBoundScreenshotBindingCacheKey)],
-      { readyTimeoutMs: 100, signal: controller.signal }
-    );
-    return decodeClassBoundScreenshotBatchRead(bindings, result);
-  } catch (error) {
-    console.warn("[Screenshot] Redis class-bound mGet failed:", safeErrorMetadata(error));
-    return { status: "unavailable" };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fullScreenshotBatch(await getClassBoundScreenshotImages(bindings));
 }
 
 /** Supervision reads never consult class, V1, or device-only keys. */
 export async function getSupervisionBoundScreenshots(
   bindings: readonly SupervisionBoundScreenshotBinding[]
 ): Promise<ScreenshotBatchReadResult> {
-  if (bindings.length === 0) return { status: "ok", screenshots: [] };
-  if (!redisUrl) {
-    return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production"
-      ? { status: "unavailable" }
-      : { status: "ok", screenshots: bindings.map(() => null) };
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 250);
-  timeout.unref?.();
-  try {
-    const redisCommand = realtimeRedisCommand;
-    const result = await redisCommand(
-      ["MGET", ...bindings.map(supervisionBoundScreenshotBindingCacheKey)],
-      { readyTimeoutMs: 100, signal: controller.signal }
-    );
-    return decodeSupervisionBoundScreenshotBatchRead(bindings, result);
-  } catch (error) {
-    console.warn(
-      "[Screenshot] Redis supervision-bound mGet failed:",
-      safeErrorMetadata(error)
-    );
-    return { status: "unavailable" };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fullScreenshotBatch(await getSupervisionBoundScreenshotImages(bindings));
 }
 
 // Flight path status storage in Redis (for multi-instance deployments)

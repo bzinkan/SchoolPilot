@@ -50,7 +50,7 @@ async function respFixture() {
         if (command === "PUBLISH") published.push(args[2]!);
         if (command === "MULTI") { queued = 0; socket.write("+OK\r\n"); }
         else if (command === "PUBLISH" && queued !== null) { queued++; socket.write("+QUEUED\r\n"); }
-        else if (["PUBLISH", "EVAL", "EXEC", "MGET", "GET", "SETEX", "PING"].includes(command)) {
+        else if (["PUBLISH", "EVAL", "EVALSHA", "EXEC", "MGET", "GET", "SETEX", "PING"].includes(command)) {
           writes++;
           const reply = queued !== null ? `*${queued}\r\n${":1\r\n".repeat(queued)}` : command === "PING" ? "+PONG\r\n" : ":1\r\n";
           queued = null;

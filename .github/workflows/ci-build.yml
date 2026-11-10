@@ -57,6 +57,7 @@ jobs:
               - 'scripts/deploy-classpilot-runtime-config.ps1'
               - 'scripts/classpilot-roadmap-release-evidence.ps1'
               - 'scripts/classpilot-transient-replay-runtime.ps1'
+              - 'scripts/classpilot-device-telemetry-runtime.ps1'
               - 'scripts/private-permissions.ps1'
               - 'scripts/operations/**'
               - 'scripts/enforce-private-chat-release-floor.mjs'
@@ -289,6 +290,11 @@ jobs:
         env:
           GIT_SHA: ${{ github.sha }}
         run: node --import tsx tests/setup-classpilot-today-schedule-ci.ts
+
+      # Uses the existing PostgreSQL service and removes only its newly owned
+      # empty database; no additional CI service or load-test infrastructure.
+      - name: Native heartbeat index retirement (owned empty database)
+        run: npm run test:heartbeat-index-native
 
       - name: DB and ordinary cross-tenant tests (serial)
         run: npm run test:db-serial
@@ -540,7 +546,11 @@ jobs:
 
       - name: ClassPilot same-digest runtime-config deployment tests
         shell: pwsh
-        run: pwsh -NoProfile -File tests/classpilot-runtime-config-deploy.test.ps1
+        run: |
+          foreach ($test in @('classpilot-runtime-config-deploy.test.ps1', 'classpilot-telemetry-runtime-registry.test.ps1', 'classpilot-screenshot-delta-runtime.test.ps1')) {
+            pwsh -NoProfile -File "tests/$test"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: My Desk runtime-config deployment tests
         shell: pwsh

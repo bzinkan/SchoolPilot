@@ -454,7 +454,8 @@ try {
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
-        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', 'pollReplaySafeV1'
+        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', 'pollReplaySafeV1',
+        'deviceTelemetryTransportV1', 'scopedScreenshotReferencesV1', 'scopedScreenshotDeltasV1'
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
