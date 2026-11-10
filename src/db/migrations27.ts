@@ -1,4 +1,5 @@
 import { mydeskGradeFilingMigration } from "./mydeskGradeFilingMigration.js";
+import { classpilotTelemetryIdempotencyMigration } from "./classpilotTelemetryIdempotencyMigration.js";
 import { schoolDisciplineRedesignMigration } from "./schoolDisciplineRedesignMigration.js";
 import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigration.js";
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
@@ -571,6 +572,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotWindowsActivityParentsMigration,
   classpilotManualTodayMigration,
   classpilotTodayScheduleMigration,
+  classpilotTelemetryIdempotencyMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

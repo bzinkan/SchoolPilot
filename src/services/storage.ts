@@ -10389,10 +10389,12 @@ export async function refreshStudentSessionAuthorityWithoutTelemetry(options: {
   };
 }
 
+const { telemetryPayloadHash: privateHeartbeatPayloadHashColumn, ...publicHeartbeatColumns } = getTableColumns(heartbeats);
+
 export async function createHeartbeat(
   data: InsertHeartbeat
 ): Promise<Heartbeat> {
-  const [hb] = await db.insert(heartbeats).values(data).returning();
+  const [hb] = await db.insert(heartbeats).values(data).returning(publicHeartbeatColumns);
   return hb!;
 }
 
@@ -10402,10 +10404,12 @@ export async function createHeartbeatAndRefreshPresence(
     schoolId: string;
     studentId: string;
   },
-  studentSessionId: string
+  studentSessionId: string,
+  telemetry?: { id: string; payloadHash: string }
 ): Promise<
   | {
       outcome: "recorded";
+      replayed?: boolean;
       id: string;
       studentEmail: string;
       timestamp: Date;
@@ -10419,12 +10423,13 @@ export async function createHeartbeatAndRefreshPresence(
     }
   | { outcome: "replaced_session" }
   | { outcome: "inactive_session" }
+  | { outcome: "operation_conflict" }
 > {
   const screenshotHealthJson =
     data.screenshotHealth === undefined || data.screenshotHealth === null
       ? null
       : JSON.stringify(data.screenshotHealth);
-  const result = await db.execute(sql`
+  const statement = sql`
     WITH locked_student_authority AS MATERIALIZED (
       SELECT pg_advisory_xact_lock(hashtextextended(
         ${`classpilot:student-control:${data.schoolId}:${data.studentId}`},
@@ -10470,8 +10475,18 @@ export async function createHeartbeatAndRefreshPresence(
           OR manual_lease_expires_at > clock_timestamp()
         )
     ),
+    existing_heartbeat AS MATERIALIZED (
+      SELECT id, student_email, timestamp, ai_category, content_category, teacher_intent_source, safety_alert
+      FROM heartbeats
+      WHERE id = ${telemetry?.id ?? null}
+        AND school_id = ${data.schoolId} AND student_id = ${data.studentId} AND device_id = ${data.deviceId}
+        AND telemetry_payload_hash = ${telemetry?.payloadHash ?? null}
+        AND EXISTS (SELECT 1 FROM eligible_session)
+    ),
     inserted_heartbeat AS (
       INSERT INTO heartbeats (
+        id,
+        telemetry_payload_hash,
         device_id,
         student_id,
         student_email,
@@ -10493,6 +10508,8 @@ export async function createHeartbeatAndRefreshPresence(
         safety_alert
       )
       SELECT
+        COALESCE(${telemetry?.id ?? null}::varchar, gen_random_uuid()::text),
+        ${telemetry?.payloadHash ?? null},
         ${data.deviceId},
         ${data.studentId},
         eligible_session.student_email,
@@ -10513,7 +10530,14 @@ export async function createHeartbeatAndRefreshPresence(
         ${data.teacherIntentSource ?? null},
         ${data.safetyAlert ?? null}
       FROM eligible_session
+      WHERE NOT EXISTS (SELECT 1 FROM existing_heartbeat)
+      ON CONFLICT (id) DO NOTHING
       RETURNING id, student_email, timestamp, ai_category, content_category, teacher_intent_source, safety_alert
+    ),
+    accepted_heartbeat AS (
+      SELECT *, false AS replayed FROM inserted_heartbeat
+      UNION ALL
+      SELECT *, true AS replayed FROM existing_heartbeat
     ),
     refreshed_device AS (
       UPDATE devices
@@ -10536,7 +10560,7 @@ export async function createHeartbeatAndRefreshPresence(
         END
       WHERE device_id = ${data.deviceId}
         AND school_id = ${data.schoolId}
-        AND EXISTS (SELECT 1 FROM eligible_session)
+        AND EXISTS (SELECT 1 FROM inserted_heartbeat)
         AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
     ),
     refreshed_session AS (
@@ -10551,7 +10575,7 @@ export async function createHeartbeatAndRefreshPresence(
         AND student_id = ${data.studentId}
         AND device_id = ${data.deviceId}
         AND is_active = true
-        AND EXISTS (SELECT 1 FROM eligible_session)
+        AND EXISTS (SELECT 1 FROM inserted_heartbeat)
         AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
       RETURNING manual_lease_expires_at
     )
@@ -10564,6 +10588,7 @@ export async function createHeartbeatAndRefreshPresence(
       content_category,
       teacher_intent_source,
       safety_alert,
+      replayed,
       (SELECT auth_kind FROM eligible_session LIMIT 1) AS auth_kind,
       COALESCE(
         (SELECT manual_lease_expires_at FROM refreshed_session LIMIT 1),
@@ -10573,10 +10598,12 @@ export async function createHeartbeatAndRefreshPresence(
         (SELECT auth_kind FROM eligible_session LIMIT 1) = 'manual_shared'
         AND EXISTS (SELECT 1 FROM refreshed_session)
       ) AS lease_renewed
-    FROM inserted_heartbeat
+    FROM accepted_heartbeat
     UNION ALL
     SELECT
       CASE
+        WHEN ${telemetry?.id ?? null}::varchar IS NOT NULL AND EXISTS (SELECT 1 FROM eligible_session)
+          THEN 'operation_conflict'::text
         WHEN EXISTS (
           SELECT 1
           FROM student_sessions AS replacement
@@ -10598,14 +10625,21 @@ export async function createHeartbeatAndRefreshPresence(
       NULL::text AS content_category,
       NULL::text AS teacher_intent_source,
       NULL::text AS safety_alert,
+      false AS replayed,
       NULL::text AS auth_kind,
       NULL::timestamptz AS authority_expires_at,
       false AS lease_renewed
-    WHERE NOT EXISTS (SELECT 1 FROM inserted_heartbeat)
+    WHERE NOT EXISTS (SELECT 1 FROM accepted_heartbeat)
     LIMIT 1
-  `);
+  `;
+  let result = await db.execute(statement);
+  // A concurrent ON CONFLICT winner can be newer than this statement's
+  // snapshot. One fresh statement sees that committed row; ambiguous database
+  // errors are never retried, and the primary key still forbids a second row.
+  if (telemetry && result.rows[0]?.outcome === "operation_conflict") result = await db.execute(statement);
   const row = result.rows[0] as {
     outcome?: unknown;
+    replayed?: unknown;
     id?: unknown;
     student_email?: unknown;
     timestamp?: unknown;
@@ -10617,6 +10651,7 @@ export async function createHeartbeatAndRefreshPresence(
     authority_expires_at?: unknown;
     lease_renewed?: unknown;
   } | undefined;
+  if (row?.outcome === "operation_conflict") return { outcome: "operation_conflict" };
   if (row?.outcome === "replaced_session") {
     return { outcome: "replaced_session" };
   }
@@ -10667,6 +10702,7 @@ export async function createHeartbeatAndRefreshPresence(
   }
   return {
     outcome: "recorded",
+    replayed: row.replayed === true,
     id,
     // Student email is intentionally nullable for PIN/shared-device sessions.
     // Realtime payloads historically normalize that optional value to "".
@@ -10760,7 +10796,7 @@ export async function getHeartbeatsByDevice(
     conditions.push(inArray(heartbeats.studentId, authorizedStudentIds));
   }
   return db
-    .select()
+    .select(publicHeartbeatColumns)
     .from(heartbeats)
     .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
@@ -10923,7 +10959,7 @@ export async function getHeartbeatsByDeviceInRange(
     conditions.push(inArray(heartbeats.studentId, authorizedStudentIds));
   }
   return db
-    .select()
+    .select(publicHeartbeatColumns)
     .from(heartbeats)
     .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
@@ -10943,7 +10979,7 @@ export async function getHeartbeatsByStudent(
   if (startDate) conditions.push(sql`${heartbeats.timestamp} >= ${startDate.toISOString()}`);
   if (endDate) conditions.push(sql`${heartbeats.timestamp} <= ${endDate.toISOString()}`);
   return db
-    .select()
+    .select(publicHeartbeatColumns)
     .from(heartbeats)
     .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
@@ -10960,7 +10996,7 @@ export async function getHeartbeatsForStudentsInRange(
 ): Promise<ClasspilotSessionReportInput["heartbeats"]> {
   if (studentIds.length === 0) return [];
   const legacy = await dbInstance
-    .select()
+    .select(publicHeartbeatColumns)
     .from(heartbeats)
     .where(
       and(

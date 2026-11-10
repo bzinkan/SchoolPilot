@@ -437,7 +437,7 @@ test("registration, heartbeat, and WebSocket auth invoke the shared executable c
   );
   assert.match(
     heartbeat,
-    /negotiateClasspilotSurfaceProtocol\(\{[\s\S]*surface: "heartbeat"[\s\S]*payload: req\.body/
+    /negotiateClasspilotSurfaceProtocol\(\{[\s\S]*surface: "heartbeat"[\s\S]*payload: context\.payload/
   );
   assert.match(
     websocket,

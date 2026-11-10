@@ -1,3 +1,4 @@
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -39,6 +40,13 @@ function cacheProjection(result: Fields) {
   return { tile: tile[0]!, realtime: realtime[0]! };
 }
 
+test("a cross-transport replay does not duplicate tile history or renew realtime presence", () => {
+  const projection = cacheProjection({ heartbeat: { id: "same-heartbeat", replayed: true, timestamp: new Date() },
+    persistedImmediateClassification: null });
+  assert.equal(projection.tile, undefined);
+  assert.equal(projection.realtime, undefined);
+});
+
 async function record(options: { url?: string; schoolDomain?: string; returnMode?: "missing" | "mismatch" | "replaced"; sso?: boolean } = {}) {
   const writes: Fields[] = [], classifiedUrls: string[] = [];
   const context = {
@@ -69,7 +77,7 @@ async function record(options: { url?: string; schoolDomain?: string; returnMode
       }) };
     },
   };
-  const run: () => Promise<Fields> = runInNewContext(executable, context);
+  const run: () => Promise<Fields> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { result: await run(), writes, classifiedUrls };
 }
 

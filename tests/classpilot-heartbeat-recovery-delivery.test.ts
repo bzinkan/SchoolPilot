@@ -1,3 +1,4 @@
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -94,7 +95,7 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
     publishWS(target: Frame, frame: Frame) { assert.equal(held, true); order.push("publish"); remote.push({ target, frame }); return options.publish?.() ?? Promise.resolve(true); },
     Promise,
   };
-  const run: () => Promise<unknown> = runInNewContext(executable, context);
+  const run: () => Promise<unknown> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { run, order, local, remote, released: released.promise, snapshot: () => ({ held, leases, authorities, response }), lifecycle };
 }
 

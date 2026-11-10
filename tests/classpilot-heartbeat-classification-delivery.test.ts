@@ -1,3 +1,4 @@
+import { withDeviceTelemetryContext } from "./helpers/deviceTelemetryVm.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -81,7 +82,7 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
     },
     broadcastToStaffSessionLocal() { order.push("safety-local-alert"); }, async publishWS() { order.push("safety-remote-alert"); return true; },
   };
-  const run: () => Promise<unknown> = runInNewContext(executable, context);
+  const run: () => Promise<unknown> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { run, order, historical, published, tracked, counters, phaseCounters, safetyCloses, safetyTimeline, release: () => releaseClassification?.(), releaseForeground: () => releaseForeground?.(),
     drain: async () => { await Promise.allSettled(tracked); } };
 }

@@ -127,8 +127,8 @@ describe("ClassPilot heartbeat presence hot path", () => {
 
     assert.equal(
       functionSource.match(/\bdb\.execute\s*\(/g)?.length,
-      1,
-      "the hot path must issue one database statement"
+      2,
+      "one ordinary statement plus one guarded definite-conflict reread"
     );
     assert.match(functionSource, /WITH\s+locked_student_authority\s+AS\s+MATERIALIZED/i);
     assert.match(
@@ -187,7 +187,7 @@ describe("ClassPilot heartbeat presence hot path", () => {
       "createHeartbeatAndRefreshPresence({"
     );
     const presenceCallEnd = heartbeatRoute.indexOf(
-      "res.locals.studentSessionId",
+      "context.binding.studentSessionId",
       presenceCallStart
     );
     assert.ok(presenceCallStart >= 0 && presenceCallEnd > presenceCallStart);

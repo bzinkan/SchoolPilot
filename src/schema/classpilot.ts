@@ -161,6 +161,7 @@ export const heartbeats = pgTable(
     extensionVersion: text("extension_version"),
     chromeVersion: text("chrome_version"),
     screenshotHealth: jsonb("screenshot_health"),
+    telemetryPayloadHash: varchar("telemetry_payload_hash", { length: 64 }),
     timestamp: timestamp("timestamp").notNull().default(sql`now()`),
   },
   (table) => [
@@ -194,8 +195,8 @@ export const heartbeats = pgTable(
   ]
 );
 
-export type Heartbeat = typeof heartbeats.$inferSelect;
-export type InsertHeartbeat = typeof heartbeats.$inferInsert;
+export type Heartbeat = Omit<typeof heartbeats.$inferSelect, "telemetryPayloadHash">;
+export type InsertHeartbeat = Omit<typeof heartbeats.$inferInsert, "telemetryPayloadHash">;
 
 // ============================================================================
 // Daily Usage - Pre-aggregated daily monitored browser activity per student

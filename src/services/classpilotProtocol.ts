@@ -52,6 +52,8 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "focusTabV1",
   "privateChatLifecycleV1",
   "pollReplaySafeV1",
+  "deviceTelemetryTransportV1",
+  "scopedScreenshotReferencesV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -95,6 +97,8 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   focusTabV1: "CLASSPILOT_CAP_FOCUS_TAB_V1",
   privateChatLifecycleV1: "CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1",
   pollReplaySafeV1: "CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1",
+  deviceTelemetryTransportV1: "CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1",
+  scopedScreenshotReferencesV1: "CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -125,6 +129,8 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "focusTabV1",
   "privateChatLifecycleV1",
   "pollReplaySafeV1",
+  "deviceTelemetryTransportV1",
+  "scopedScreenshotReferencesV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -425,6 +431,8 @@ export function negotiateClasspilotProtocol(options: {
         && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
         && (capability !== "privateChatLifecycleV1" || advertised.has("studentChatIdempotencyV1") && serverEnabled.has("studentChatIdempotencyV1"))
         && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
+        && (capability !== "scopedScreenshotReferencesV1" || trackingWindowLeaseAccepted
+          && advertised.has("deviceTelemetryTransportV1") && serverEnabled.has("deviceTelemetryTransportV1"))
     ),
   };
 }
