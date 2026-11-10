@@ -244,7 +244,7 @@ test("a confirmed initial classification needs no producer, historical UPDATE or
 
 test("a durable replay cannot reclassify history using current classroom intent", async () => {
   const f = fixture({ replayed: true, classificationResult: {
-    category: "non-educational", contentCategory: "Gaming", safetyAlert: null, domain: "www.ixl.com",
+    category: "non-educational", contentCategory: "Gaming", safetyAlert: null, domain: "www.ixl.com", classifiedAt: 1_000,
   } });
   await f.run(); await f.drain();
   assert.equal(f.tracked.length, 0, "the initial accepted operation owns its historical producer");
