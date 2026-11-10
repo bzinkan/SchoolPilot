@@ -114,17 +114,25 @@ the unchanged infrastructure. Pro does not include application metrics/alarms
 or database/Redis/ALB charges.
 
 At thirty students/class and one teacher batch every five seconds, the model
-includes roughly 6.37 million teacher requests plus socket upgrades, before
-other API traffic and recovery. That teacher interval is an illustrative
-assumption, not a measured dashboard rate. The existing screenshot-event
-coalescer can trigger targeted reads every 250 ms when captures are staggered;
-history, reconciliation and other endpoints also create requests. Sustained
-four reads/second across 67 classrooms would be about 127.35 million requests
-in the six-hour scenario, exceeding Pro's allowance by itself. Set
-`teacherPollSeconds=0.25` to inspect that request sensitivity. Image references
-reduce returned pixels, not those teacher HTTP requests. Do not accept the
-request budget without real usage evidence. A routine HTTP heartbeat alongside
-healthy WS telemetry would also undermine it and is deliberately absent.
+includes roughly 6.37 million teacher screenshot requests plus socket upgrades,
+before history, reconciliation, other API traffic and recovery. The existing
+shared screenshot queue enforces a five-second start ceiling per exact cohort
+for both targeted notifications and reconciliation; its outer 250 ms event
+coalescer does not bypass that ceiling. This remains a scenario rather than a
+measured all-endpoint request rate. Image references reduce returned pixels, not
+those teacher HTTP requests. Do not accept the request allowance without real
+usage evidence. A routine HTTP heartbeat alongside healthy WS telemetry would
+also undermine it and is deliberately absent.
+
+The current dashboard also polls active sessions every ten seconds and active
+command state every thirty seconds on healthy transport. At 67 simultaneously
+visible classrooms for the full six-hour scenario, those two enabled polls add
+about 3.18 million and 1.06 million requests. Together with screenshot reads,
+that is **10.61 million** before history, raised hands, aggregate reconciliation,
+schedule reads, sign-ins and recovery. This is conditional workload arithmetic,
+not observed usage, but it already exceeds Pro's ten-million allowance. Further
+teacher-request optimization or a different reviewed edge option is required
+before treating that full-day workload as compatible with Pro.
 
 If Pro is not compatible, do not count its savings or drop security features.
 Actual deduplication/traffic observations may support another reviewed option.
@@ -156,6 +164,22 @@ retired session 401. It exits cleanly without a forced process exit. This is a
 correctness check with synthetic fixtures, not a capacity test.
 
 ## Production observations still required
+
+Transport savings preserve every successful normal heartbeat. At ten seconds,
+2,000 devices create 4.32 million rows per six-hour school day or 5.76 million
+per eight-hour day. Retention defaults to 720 hours (30 calendar days), and the
+schema declares a primary key plus nine secondary heartbeat indexes. The new
+nullable 64-character payload hash adds about 6.08/8.11 GB of raw characters per
+22-school-day six/eight-hour workload, without a new index or backfill. These
+figures exclude all PostgreSQL tuple/index/WAL overhead and other row fields.
+They do not establish whether the current 100 GiB allocation is sufficient.
+
+The existing purge retains its 5,000-row batches and 100 ms inter-batch pauses.
+Expiring one normal day's rows entails 864/1,152 batches: roughly 86/115 seconds
+of deliberate pauses alone, before SQL, index cleanup and other retention work.
+Measure actual table/index sizes, row width, purge duration, autovacuum and WAL/
+backup growth. Do not shorten retention, skip history or remove indexes merely
+to make the estimate fit the target.
 
 As real schools adopt the reviewed release, observe existing aggregate counters
 and normal AWS metrics: actual online/observed student-hours; full-image vs
