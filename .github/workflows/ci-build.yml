@@ -57,6 +57,7 @@ jobs:
               - 'scripts/deploy-classpilot-runtime-config.ps1'
               - 'scripts/classpilot-roadmap-release-evidence.ps1'
               - 'scripts/classpilot-transient-replay-runtime.ps1'
+              - 'scripts/classpilot-device-telemetry-runtime.ps1'
               - 'scripts/private-permissions.ps1'
               - 'scripts/operations/**'
               - 'scripts/enforce-private-chat-release-floor.mjs'

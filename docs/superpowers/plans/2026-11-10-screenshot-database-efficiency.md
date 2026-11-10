@@ -127,3 +127,20 @@ tests that import it. Do not repeat the broad Node 24 backend run.
   84bc7740d0a5747e37e6915ac510165e31d5efaecf77f7dd3eeb4c80549fc7b2.
   It was not uploaded; live Store identity, pending submissions and managed-device
   adoption remain unverified. No new capability was enabled or AWS fleet accepted.
+
+## Authorized deployment follow-on
+
+The operator subsequently authorized backend/dashboard deployment, governed
+optimization activation, a new extension package saved in the primary dist
+folder, post-deployment normal-operation verification and cleanup of this task's
+completed branches. No paid AWS load testing is authorized. Preserve the current
+UI, capture cadence/quality, history, controls and security boundaries.
+
+PR 725's first CI run found one backend-unit failure: the new dot-sourced
+telemetry runtime helper was missing from CURRENT_RELEASE_TOOL_DEPENDENCIES.
+The existing custody test reproduced RED locally. Add the helper to current
+dependency custody without changing historical frozen pins; 65 release-custody/
+binding checks passed. Independent review also found its missing rollout_tooling
+path filter. A new filter-coverage check reproduced RED, then all seven custody
+checks passed after adding the exact helper path. The CI YAML parses cleanly.
+No production mutation occurred before resolving these release-safety findings.
