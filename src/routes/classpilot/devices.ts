@@ -637,8 +637,9 @@ const deviceHeartbeatRateStore = redisStore("rl:device:heartbeat:") ?? new Memor
 const deviceScreenshotRateStore = redisStore("rl:device:screenshot:") ?? new MemoryStore();
 const deviceTelemetryIpRateStore = redisStore("rl:device:telemetry-ip:") ?? new MemoryStore();
 // Initialize the same Store contract as HTTP, including its Redis window.
-// Redis is cross-process; the existing local fallback is per-process during
-// Redis outages. The shared-NAT ceiling preserves the 2,000-device cadence.
+// Redis is cross-process; without REDIS_URL, MemoryStore is per-process.
+// Configured store errors retain HTTP's passOnStoreError behavior below.
+// The shared-NAT ceiling preserves the 2,000-device cadence.
 rateLimit({ windowMs: DEVICE_TELEMETRY_IP_WINDOW_MS, max: DEVICE_TELEMETRY_IP_MAX_OPERATIONS, store: deviceTelemetryIpRateStore,
   standardHeaders: false, legacyHeaders: false, passOnStoreError: true });
 const deviceHeartbeatLimiter = rateLimit({

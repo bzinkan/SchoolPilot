@@ -92,6 +92,8 @@ $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
 $script:ScheduledClassroomCapability = "scheduledClassroomV1"
 $script:PollReplayCapability = "pollReplaySafeV1"
+$script:DeviceTelemetryCapability = "deviceTelemetryTransportV1"
+$script:ScreenshotReferencesCapability = "scopedScreenshotReferencesV1"
 $script:TransientReplayModes = @("transient-replay-off", "transient-timer-replay-pilot", "transient-poll-replay-pilot")
 $script:TransientReplayEnvironmentNames = @(
     "CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH",
@@ -151,7 +153,7 @@ $script:AdditiveCapabilities = @(
     $script:RestrictionAuthPassThroughCapability,
     $script:ScheduledClassroomCapability,
     $script:PollReplayCapability
-) + @($script:RoadmapCapabilities)
+) + @($script:RoadmapCapabilities) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability)
 # Registry order is fixed: the retired capability keeps the slot it held before
 # kioskLaunchTicketV2, so serialized registries keep their byte order.
 $script:AllCapabilities = @(
@@ -164,9 +166,9 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability) }) + @(
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability, $script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability) }) + @(
     "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability
-)
+) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability)
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
     authBoundTelemetryV1          = "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1"
@@ -191,6 +193,8 @@ $script:CapabilityFlags = [ordered]@{
     focusTabV1                   = "CLASSPILOT_CAP_FOCUS_TAB_V1"
     privateChatLifecycleV1       = 'CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1'
     pollReplaySafeV1             = 'CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1'
+    deviceTelemetryTransportV1   = 'CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1'
+    scopedScreenshotReferencesV1 = 'CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -251,6 +255,7 @@ function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
 
 . (Join-Path $PSScriptRoot 'classpilot-roadmap-release-evidence.ps1')
 . (Join-Path $PSScriptRoot 'classpilot-transient-replay-runtime.ps1')
+. (Join-Path $PSScriptRoot 'classpilot-device-telemetry-runtime.ps1')
 
 function Get-ServingProtocolCapabilities {
     param(
@@ -653,7 +658,7 @@ function Assert-ExactProperties {
 function ConvertTo-RuntimeConfiguration {
     param([Parameter(Mandatory = $true)]$Profile, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
     Assert-ExactProperties -Value $Profile -Allowed @(
-        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn", "pollReplayEvidence"
+        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn", "pollReplayEvidence", "localValidation"
     ) -Trail "profile"
     $schemaVersion = [int]$Profile.schemaVersion
     $mode = [string]$Profile.mode
@@ -678,6 +683,7 @@ function ConvertTo-RuntimeConfiguration {
     # liveViewIceServersV1 and copies every other control from the source.
     $schemaTenModes = @("live-view-retire")
     $schemaElevenModes = @($script:TransientReplayModes)
+    $schemaTwelveModes = @($script:TelemetryProfileCapabilities.Keys)
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -689,9 +695,11 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 9 -and $mode -cnotin $schemaNineModes) -or
         ($schemaVersion -eq 10 -and $mode -cnotin $schemaTenModes) -or
         ($schemaVersion -eq 11 -and $mode -cnotin $schemaElevenModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)) {
+        ($schemaVersion -eq 12 -and $mode -cnotin $schemaTwelveModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
+    Assert-TelemetryLocalValidation -Profile $Profile
 
     $schoolId = ""
     $pilotSchoolId = ""
@@ -723,9 +731,9 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin @(
         "tracking-window-pilot", "student-gate-pilot", "late-signin-pilot",
         "fast-preview-pilot", "restriction-auth-pilot"
-    ) -or $mode -cin $script:RoadmapPilotModes -or $mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot')) {
+    ) -or $mode -cin $script:RoadmapPilotModes -or $mode -cin $script:TelemetryPilotModes -or $mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot')) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
-        $schoolPattern = if ($mode -cin $script:TransientReplayModes) {
+        $schoolPattern = if ($mode -cin $script:TransientReplayModes -or $mode -cin $script:TelemetryPilotModes) {
             '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         } else { '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' }
         if ($pilotSchoolId -cnotmatch $schoolPattern) {
@@ -786,6 +794,17 @@ function ConvertTo-RuntimeConfiguration {
         throw "Live View is retired; runtime profiles must not carry TURN inputs and preserve the existing TURN wiring."
     }
 
+    if ($mode -cin $schemaTwelveModes) {
+        return [pscustomobject]@{
+            Mode = $mode
+            SchoolScopeCount = if ($mode -cin $script:TelemetryPilotModes) { 1 } else { 0 }
+            EnabledCapabilities = if ($mode -cin @($script:TelemetryPilotModes + $script:TelemetryGlobalModes)) { @($script:TelemetryProfileCapabilities[$mode]) } else { @() }
+            Environment = [ordered]@{}
+            Turn = $null
+            RequiresSourceRuntime = $true
+            PilotSchoolId = if ($mode -cin $script:TelemetryPilotModes) { $pilotSchoolId } else { $null }
+        }
+    }
     if ($mode -cin $schemaElevenModes) {
         return [pscustomobject]@{
             Mode = $mode
@@ -912,6 +931,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "scheduled-classroom-global-on", "scheduled-classroom-off",
         "school-scope-unpin", "live-view-retire"
     ) -and [string]$RuntimeIntent.Mode -cnotin $script:TransientReplayModes -and
+        -not $script:TelemetryProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode) -and
         -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -958,6 +978,9 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $isUnpinIntent = [string]$RuntimeIntent.Mode -ceq "school-scope-unpin"
     if ([string]$RuntimeIntent.Mode -cin $script:TransientReplayModes) {
         Set-TransientReplayRuntimeIntent -RuntimeIntent $RuntimeIntent -SourceEnvironment $sourceEnvironment -Values $values -Rollouts $rollouts
+    }
+    elseif ($script:TelemetryProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
+        Set-TelemetryRuntimeIntent -RuntimeIntent $RuntimeIntent -Values $values -Rollouts $rollouts
     }
     elseif ($isUnpinIntent) {
         # Every entry and every kill switch was copied from the source above. The
@@ -1067,7 +1090,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes -or
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes -or [string]$RuntimeIntent.Mode -cin $script:TelemetryPilotModes -or
             [string]$RuntimeIntent.Mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot')) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
@@ -2730,6 +2753,7 @@ function Get-RuntimeActivationState {
     }
 
     Assert-RoadmapRuntimeControls -Values $values -Rollouts $rollouts
+    Assert-TelemetryRuntimeControls -Values $values -Rollouts $rollouts
     $replayState = Get-TransientReplayRuntimeControl -Environment $Environment
     if ($protocol -ceq 'false' -and $replayState.Mode -cne 'off') {
         throw 'Protocol-off runtime must disable transient replay first.'
@@ -3118,8 +3142,11 @@ function Assert-AllowedRuntimeTransition {
     $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
     $targetControls = Get-RuntimeCapabilityControls -Environment $targetEnvironment
     $roadmapMode = [string]$TargetRuntimeConfiguration.Mode
+    Assert-TelemetryRuntimeTransition -SourceControls $sourceControls -TargetControls $targetControls `
+        -SourceState $source -TargetState $target -RuntimeConfiguration $TargetRuntimeConfiguration
     Assert-TransientReplayRuntimeTransition -SourceEnvironment @($sourceContainer[0].environment) `
         -TargetEnvironment $targetEnvironment -RuntimeConfiguration $TargetRuntimeConfiguration
+    if ($script:TelemetryProfileCapabilities.ContainsKey($roadmapMode)) { return }
     if ($roadmapMode -cin $script:TransientReplayModes) {
         if ([string]$source.Mode -cnotin @('global-on', 'tracking-window-pilot', 'tracking-window-global-on') -or
             [string]$source.Mode -cne [string]$target.Mode -or [string]$source.SchoolId -cne [string]$target.SchoolId) {
@@ -4067,6 +4094,7 @@ function New-RuntimeConfigPlan {
     $profileSnapshot = Read-StrictJsonSnapshot -Path $PrivateProfilePath
     $profile = $profileSnapshot.Value
     $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profile -Now $Now
+    Assert-TelemetryLocalValidationSource -Profile $profile -AppSha $AppSha
     $runtime = $runtimeIntent
     $toolSha = if ($SkipRepositoryCheck -or $runtime.Mode -ceq "off") {
         Get-RepositoryHeadSha -RepositoryRoot $RepositoryRoot
@@ -4715,6 +4743,7 @@ function Invoke-RuntimeConfigApply {
         throw "Private runtime profile changed after planning."
     }
     $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value -Now $Now
+    Assert-TelemetryLocalValidationSource -Profile $profileSnapshot.Value -AppSha ([string]$Plan.appSha)
     $runtime = $runtimeIntent
     $roadmapReleaseSnapshot = $null
     $roadmapPilotSnapshot = $null
