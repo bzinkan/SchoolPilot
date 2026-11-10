@@ -37,7 +37,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: November 9, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 10, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
