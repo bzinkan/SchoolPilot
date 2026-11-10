@@ -48,7 +48,7 @@ test("incompressible and insufficient absolute/relative savings keep the origina
   }
 });
 test("encoder deadline and bad-clock fallback cannot mutate the capture", async () => {
-  const { encodeScreenshotDelta } = await load(); const base = bytes(4096), target = base.slice(); target[120] ^= 7;
+  const { encodeScreenshotDelta } = await load(); const base = bytes(4096), target = base.slice(); target[120] = target[120]! ^ 7;
   const original = target.slice();
   assert.deepEqual(encodeScreenshotDelta(base, target, { budgetMs: 0 }), { kind: "full", reason: "budget" });
   assert.deepEqual(encodeScreenshotDelta(base, target, { now: () => NaN }), { kind: "full", reason: "clock" });
