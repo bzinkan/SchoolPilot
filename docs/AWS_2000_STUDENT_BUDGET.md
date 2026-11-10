@@ -197,6 +197,11 @@ The existing `realtime_hot_path_summary` log now includes fixed-size
 actual full-image size and references/(full uploads+references) for the observed
 reuse rate. These logs contain no image IDs, hashes or student labels and do not
 create additional CloudWatch custom metric streams.
+These new counters describe accepted image-cache writes and reads. Uploads
+discarded before that cache, legacy clients and denied requests are outside
+their denominator. Correlate them with existing total upload, discarded upload
+and screenshot-payload-byte counters and edge/ALB billing measurements; an
+accepted-cache reuse percentage is not an all-traffic savings percentage.
 
 ## Rate sources
 
