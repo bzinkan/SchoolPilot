@@ -166,8 +166,6 @@ export const heartbeats = pgTable(
   },
   (table) => [
     index("heartbeats_timestamp_idx").on(table.timestamp),
-    index("heartbeats_student_id_idx").on(table.studentId),
-    index("heartbeats_student_email_idx").on(table.studentEmail),
     index("heartbeats_device_id_idx").on(table.deviceId),
     index("heartbeats_student_timestamp_idx").on(
       table.studentId,

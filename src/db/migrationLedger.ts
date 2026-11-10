@@ -140,10 +140,16 @@ async function runOneMigration(
     // stable PostgreSQL session for advisory locks and bounded session
     // timeouts. Deliberately do not issue BEGIN/COMMIT on this client.
     const client = await pool.connect();
+    let migrationFailed = false;
     try {
       await migration.apply(client);
+    } catch (error) {
+      // A failed online migration may also have failed to restore session
+      // settings or advisory locks. Never return that session to the pool.
+      migrationFailed = true;
+      throw error;
     } finally {
-      client.release();
+      client.release(migrationFailed);
     }
     const durationMs = Date.now() - startedAt;
     await pool.query(`

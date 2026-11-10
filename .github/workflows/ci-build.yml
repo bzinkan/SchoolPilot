@@ -290,6 +290,11 @@ jobs:
           GIT_SHA: ${{ github.sha }}
         run: node --import tsx tests/setup-classpilot-today-schedule-ci.ts
 
+      # Uses the existing PostgreSQL service and removes only its newly owned
+      # empty database; no additional CI service or load-test infrastructure.
+      - name: Native heartbeat index retirement (owned empty database)
+        run: npm run test:heartbeat-index-native
+
       - name: DB and ordinary cross-tenant tests (serial)
         run: npm run test:db-serial
 
