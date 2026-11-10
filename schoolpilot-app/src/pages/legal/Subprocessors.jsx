@@ -24,7 +24,7 @@ export default function Subprocessors() {
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Subprocessor</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Provider</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Purpose</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Data Processed</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Location</th>
@@ -54,7 +54,7 @@ export default function Subprocessors() {
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Subprocessor</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Provider</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Purpose</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Data Processed</th>
                   </tr>
@@ -86,7 +86,7 @@ export default function Subprocessors() {
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Subprocessor</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Provider</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Purpose</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Data Processed</th>
                   </tr>
@@ -114,7 +114,7 @@ export default function Subprocessors() {
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Subprocessor</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Provider</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Purpose</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Data Processed</th>
                   </tr>
@@ -141,7 +141,7 @@ export default function Subprocessors() {
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Subprocessor</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Provider</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Purpose</th>
                     <th className="px-4 py-2 text-left text-sm font-semibold text-slate-700">Data Processed</th>
                   </tr>
