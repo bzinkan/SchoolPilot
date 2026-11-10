@@ -28,7 +28,7 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: October 7, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 9, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -37,6 +37,7 @@ export default function AITransparency() {
               Schoolpilot uses <strong>Google's Gemini API</strong> to help classify browser activity
               and identify potential safety concerns in ClassPilot. When a school separately enables
               MailPilot, Schoolpilot uses Anthropic's Claude API for email safety classification.
+              ClassPilot can also use Anthropic for safety review of student chat and text poll responses.
               Classification supports school staff review; it does not establish whether a student
               is learning or whether a safety concern is confirmed.
             </p>
@@ -85,9 +86,14 @@ export default function AITransparency() {
               <li>Administrators can approve an exact URL for safety review or explicitly block a website.</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              AI classifications and reviewed unsafe-domain rules do not automatically close tabs or
-              add website blocks. School website policies and authorized classroom restrictions are
-              enforced separately. Notification delivery and staff review are not guaranteed to be immediate.
+              During normal monitored browsing, qualifying harmful-search or unsafe-page detections
+              can request automatic closure of the specific current tab after authorization and target
+              checks. A sent request does not confirm that the Chromebook closed the tab. Missing or
+              ambiguous targets do not become a request to close other tabs. After-hours safety-only
+              collection is reporting-only and does not request tab closure. Safety detections do not
+              automatically add website blocks; school website policies and authorized classroom
+              restrictions are enforced separately. Notification delivery and staff review are not
+              guaranteed to be immediate.
             </p>
           </section>
 
@@ -102,31 +108,50 @@ export default function AITransparency() {
           </section>
 
           <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Student Chat and Poll Safety Review</h2>
+            <p className="text-slate-700 leading-relaxed">
+              ClassPilot checks student-authored chat messages and text poll responses with local safety
+              rules. When text matches a safety rule, AI enrichment is enabled, and the provider is available,
+              up to 500 characters of that text may be sent to Anthropic's Claude API to assess severity and
+              provide an explanation for school review. This processing is separate from MailPilot and the
+              optional staff assistant. Message text can contain names, email addresses or other personal
+              information. A provider failure does not suppress the local-rule alert, and a classification
+              does not establish that a safety concern is confirmed.
+            </p>
+          </section>
+
+          <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">MailPilot Email Safety Classification</h2>
             <p className="text-slate-700 leading-relaxed">
-              If a school separately enables MailPilot email monitoring, SchoolPilot may use Anthropic's
+              If a school separately enables MailPilot email monitoring, Schoolpilot may use Anthropic's
               Claude API to classify student Gmail messages for safety concerns such as self-harm, violence,
               sexual content, drugs, or bullying. MailPilot is not enabled by default; it requires school
-              authorization and operational setup. In that workflow, message text may be processed for
-              safety classification, and SchoolPilot stores the resulting alert, severity, confidence, and
-              review status for school safety staff.
+              authorization and operational setup. The classification request includes whether a message
+              is inbound or outbound, its sender and recipient fields, subject, and up to 4,000 characters
+              of message text. These fields can contain names, email addresses, and other personal or
+              sensitive information. For flagged messages, Schoolpilot stores sender and recipient fields,
+              the subject, an excerpt of up to 600 characters, and classification and review information
+              for authorized school administrators. MailPilot records follow the separate retention rules
+              described in our <a href="/privacy" className="text-blue-600 underline">Privacy Policy</a>.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Optional AI Assistant</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot may offer an optional AI assistant for authorized school staff. This assistant is
-              disabled by default and is enabled only after the school-facing data flow has been reviewed.
-              When enabled, user prompts and authorized tool results may be processed by Anthropic to answer
-              the request. Schoolpilot limits model-bound tool results by role, product license, and school,
-              excludes sensitive fields such as attendance reasons and individual browsing history, and logs
-              AI tool activity for audit review.
+              The optional staff AI assistant is not exposed in the current app interface. Its backend is
+              disabled by default and requires separate operational enablement; the school-facing data flow
+              must be reviewed before activation. When enabled, staff prompts, conversation history, and
+              authorized tool results may be processed by Anthropic to answer the request. Tools are limited
+              by role, product license, and school. Tool responses omit attendance reasons, and the individual
+              browsing-history tool is unavailable to the assistant. Free-text prompts and other permitted
+              tool results can still contain personal information; these controls do not make the conversation
+              anonymous. Schoolpilot logs AI tool activity for audit review.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Provider</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Providers</h2>
             <p className="text-slate-700 leading-relaxed">
               ClassPilot website classification uses <strong>Google Gemini</strong>. Provider terms are
               described in the{" "}
@@ -140,11 +165,14 @@ export default function AITransparency() {
               <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Privacy Center
               </a>{" "}
-              explain the terms for MailPilot email safety classification and the optional staff assistant.
+              explain the terms for student chat/poll safety review, MailPilot email safety classification
+              and the optional staff assistant.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
               Applicable provider/account settings and agreements determine provider retention, access,
-              and training-use terms. Removing data from Schoolpilot does not itself delete a provider's
+              and training-use terms. Providers and agreement-review limitations are listed in the{" "}
+              <a href="/privacy#service-providers" className="text-blue-600 underline">Service Providers section of our Privacy Policy</a>.
+              Removing data from Schoolpilot does not itself delete a provider's
               retained copy. This page does not promise provider-side deletion or zero retention.
             </p>
           </section>

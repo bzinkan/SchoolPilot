@@ -335,6 +335,26 @@ test("Windows real routes isolate credentials, browser children, authority, comm
     assert.equal((await heartbeat(chrome,7,"https://chrome.example.edu")).body.classroomState.restrictions.screenLock.active,true);
     edge=await pair(bound.body.guardCredential,"edge",edge.profileId);
   });
+  await t.test("private chat diagnoses only fresh Windows capability evidence while retaining durable-delivery compatibility",async()=>{
+    const lifecycle=await import("../dist/services/classpilotPrivateChatLifecycle.js");
+    const scope={schoolId,studentId};
+    const original=await fixture.query("SELECT id,accepted_capabilities,last_seen_at FROM classpilot_windows_browsers WHERE school_id=$1 AND student_id=$2 AND ended_at IS NULL",[schoolId,studentId]);
+    assert.equal(original.rows.length,2);
+    try{
+      await fixture.query("UPDATE classpilot_windows_browsers SET last_seen_at=clock_timestamp() WHERE school_id=$1 AND student_id=$2 AND ended_at IS NULL",[schoolId,studentId]);
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingReadiness(scope)),"update_required");
+      await fixture.query("UPDATE classpilot_windows_browsers SET accepted_capabilities=accepted_capabilities || '[\"privateChatLifecycleV1\"]'::jsonb WHERE school_id=$1 AND student_id=$2 AND ended_at IS NULL",[schoolId,studentId]);
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingReadiness(scope)),"ready");
+      await fixture.query("UPDATE classpilot_windows_browsers SET last_seen_at=clock_timestamp()-interval '2 minutes' WHERE id=$1 AND school_id=$2",[original.rows[0].id,schoolId]);
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingReadiness(scope)),"reconnecting");
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingSupported(scope)),true,"Existing durable delivery uses guard and capability authority independently of readiness");
+      await fixture.query("UPDATE classpilot_windows_browsers SET accepted_capabilities='[]'::jsonb WHERE id=$1 AND school_id=$2",[original.rows[0].id,schoolId]);
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingReadiness(scope)),"reconnecting","Stale unsupported metadata cannot establish an upgrade diagnosis");
+      assert.equal(await inSchool(()=>lifecycle.privateChatBindingReadiness({schoolId:otherSchoolId,studentId})),"signed_out");
+    }finally{
+      for(const row of original.rows)await fixture.query("UPDATE classpilot_windows_browsers SET accepted_capabilities=$1,last_seen_at=$2 WHERE school_id=$3 AND id=$4",[JSON.stringify(row.accepted_capabilities),row.last_seen_at,schoolId,row.id]);
+    }
+  });
   await t.test("selected browser metadata expires at the class deadline even while the guard remains valid",async()=>{
     const {classpilotWindowsStore}=await import("../dist/services/classpilotWindowsStore.js");
     const before=await tiles({selectedSources:[{studentId,...source(chrome)}]});assert.equal(before.status,200);

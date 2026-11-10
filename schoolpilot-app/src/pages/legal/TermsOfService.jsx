@@ -28,7 +28,7 @@ export default function TermsOfService() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Terms of Service</h1>
-        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 9, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -163,9 +163,10 @@ export default function TermsOfService() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">10. Third-Party Services</h2>
             <p className="text-slate-700 leading-relaxed">
               Schoolpilot integrates with Google Classroom and Google Workspace for Education and uses
-              contracted infrastructure, communications, error-monitoring, TURN relay, billing, and
-              AI-classification providers to operate enabled features. The current provider list, purpose,
-              and data exposure are published on our <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">Subprocessors</a> page.
+              infrastructure, communications, billing, and AI-classification providers to operate enabled
+              features. Live View and its TURN relay are retired. Optional error monitoring remains gated
+              pending agreement and activation review. The provider list, purposes, data exposure and
+              agreement-review limitations are published in the <a href="/privacy#service-providers" className="text-amber-600 hover:text-amber-700 underline">Service Providers section of our Privacy Policy</a>.
               Your use of integrations is also subject to applicable third-party terms.
             </p>
           </section>

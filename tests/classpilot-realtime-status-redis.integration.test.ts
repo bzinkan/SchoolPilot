@@ -133,6 +133,44 @@ it("native Redis keeps exact increasing revisions for writes and patches in one 
   assert.equal(f.evalCount(), 5);
 });
 
+it("native Redis distinguishes an explicit empty negotiation from absent capability metadata", {
+  skip: !redisUrl, timeout: 10_000,
+}, async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.writer.write(f.heartbeat)).status, "stored");
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilities"), false);
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilitiesEmpty"), false);
+  assert.equal(Object.hasOwn(JSON.parse((await f.client.get(f.key))!), "acceptedCapabilities"), false);
+
+  assert.equal((await f.writer.write({ ...f.heartbeat, acceptedCapabilities: [] })).status, "stored");
+  assert.equal((await f.read()).acceptedCapabilitiesEmpty, true, "A completed empty negotiation must remain distinguishable from unknown metadata");
+  assert.equal(JSON.parse((await f.client.get(f.key))!).acceptedCapabilitiesEmpty, true);
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilities"), false, "Existing screenshot compatibility selection must keep its absent-array behavior");
+  assert.equal(Object.hasOwn(JSON.parse((await f.client.get(f.key))!), "acceptedCapabilities"), false);
+  assert.equal((await f.writer.patchClassification({ ...f.heartbeat, classification: null })).status, "stored");
+  assert.equal((await f.read()).acceptedCapabilitiesEmpty, true, "Classification cannot turn confirmed unsupported metadata into uncertainty");
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilities"), false);
+
+  assert.equal((await f.writer.write({ ...f.heartbeat, acceptedCapabilities: ["privateChatLifecycleV1"] })).status, "stored");
+  assert.deepEqual((await f.read()).acceptedCapabilities, ["privateChatLifecycleV1"]);
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilitiesEmpty"), false, "A partial capable row losing its array must not become confirmed unsupported");
+  assert.equal((await f.writer.write(f.heartbeat)).status, "stored");
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilities"), false, "A later metadata-free snapshot cannot retain an older capability decision");
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilitiesEmpty"), false);
+  assert.equal((await f.writer.patchClassification({ ...f.heartbeat, classification: null })).status, "stored");
+  assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilities"), false, "An unrelated mutation must not fabricate negotiation evidence");
+  const raw = JSON.parse((await f.client.get(f.key))!);
+  for (const marker of [false, "true"]) {
+    await f.client.set(f.key, JSON.stringify({ ...raw, acceptedCapabilitiesEmpty: marker }), { EX: 360 });
+    assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilitiesEmpty"), false, "Only literal true is authoritative");
+  }
+  for (const capabilities of [null, {}, "privateChatLifecycleV1"]) {
+    await f.client.set(f.key, JSON.stringify({ ...raw, acceptedCapabilities: capabilities, acceptedCapabilitiesEmpty: true }), { EX: 360 });
+    assert.equal(Object.hasOwn(await f.read(), "acceptedCapabilitiesEmpty"), false, "Malformed present capability metadata cannot establish a negative negotiation");
+  }
+  await f.ttl();
+});
+
 it("native Redis preserves escaped and unknown root values and removes duplicate replaced keys", {
   skip: !redisUrl, timeout: 10_000,
 }, async (t) => {

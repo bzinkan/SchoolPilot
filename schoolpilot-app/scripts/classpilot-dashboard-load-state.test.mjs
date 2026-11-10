@@ -6852,12 +6852,14 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
       ? { status: 403, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } }
       : { renewAfterSeconds: 30 },
     screenshotTiles: async body => {
+      // An older in-flight response must not satisfy a later frame's DOM wait.
+      const requestFrame = frame;
       const row = rows.find(student => student.contextId === body.supervisionContextId);
       assert(row, 'A claimed preview uses its own supervision authority, never the unrelated class');
       const bindingVersion = `v3:claim-${row.studentId}`;
       return { tiles: [{ studentId: row.studentId, bindingVersion, screenshot: {
         screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion, timestamp: new Date(await page.evaluate(() => Date.now())).toISOString(),
-        tabTitle: `Claimed screen ${frame}`, tabUrl: 'https://lesson.example.edu/work',
+        tabTitle: `Claimed screen ${requestFrame}`, tabUrl: 'https://lesson.example.edu/work',
       } }] };
     },
   });
@@ -6888,6 +6890,13 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
     studentId: row.studentId, capturedAt: TESTING_TIME.toISOString() });
   await page.clock.fastForward(5100);
   for (const row of rows) await page.getByTestId(`card-student-${row.studentId}`).getByText('Claimed screen 3', { exact: true }).waitFor();
+  // Check notification authority without ambient frame aging; the separate
+  // recovery cases exercise the preview watchdog with an advancing wall clock.
+  const rejectionWindowClock = await page.evaluate(() => ({ date: Date.now(), monotonic: performance.now() }));
+  await page.clock.setFixedTime(rejectionWindowClock.date);
+  // Drain earlier authorized work through the queue's five-second start ceiling.
+  await page.clock.runFor(5100);
+  await page.waitForLoadState('networkidle');
   const authorizedReads = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SECOND_SCHOOL_ID, studentId: STUDENT_ID });
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID });
@@ -6895,6 +6904,8 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
   await page.waitForTimeout(100);
   assert.equal(harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length, authorizedReads,
     'Foreign-school and unrelated teaching-session notifications cannot refresh claimed previews');
+  const rejectionWindowElapsedMs = await page.evaluate(started => performance.now() - started, rejectionWindowClock.monotonic);
+  await page.clock.setSystemTime(new Date(rejectionWindowClock.date + rejectionWindowElapsedMs));
   deniedContext = OWN_TESTING_CONTEXT_ID;
   await page.clock.fastForward(31_000);
   await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor({ state: 'hidden' });
@@ -7783,12 +7794,16 @@ test('private lifecycle: a stale Send refreshes tokens without replaying the wri
   assert.deepEqual(mutations.filter(row => row.pathname.endsWith('/reply'))[1].body.expectedPrivateChatLifecycle, next); assert.deepEqual(harness.pageErrors, []);
 });
 
-test('private lifecycle: an unsupported offline student keeps cleanup and history but receives no new private write', { timeout: 60_000 }, async context => {
+test('private lifecycle: offline legacy readiness keeps cleanup and history but blocks new private writes', { timeout: 60_000 }, async context => {
+  // An older server's negative boolean also covered stale or absent telemetry;
+  // without explicit readiness it cannot establish that an update is needed.
   const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true, lifecycleSupported: false,
     students: [student({ status: 'offline', isLoggedIn: false, loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null })] });
   const { page, harness, mutations } = fixture;
   fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
-  await page.getByTestId('chat-private-lifecycle-note').getByText("Update ClassPilot on this student's Chromebook to use private chat.", { exact: true }).waitFor();
+  const readinessNote = page.getByTestId('chat-private-lifecycle-note');
+  await readinessNote.getByText('Private chat is syncing. Refresh messages before replying.', { exact: true }).waitFor();
+  assert.doesNotMatch(await readinessNote.textContent(), /update|outdated/i);
   assert.equal(await replyInput(page).isDisabled(), true); assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0);
   await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
   await threadText(page, storedChatMessage().content).waitFor();

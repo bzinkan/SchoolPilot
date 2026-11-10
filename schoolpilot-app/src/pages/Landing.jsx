@@ -448,7 +448,6 @@ export default function SchoolpilotLanding() {
             <a href="/terms" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Terms</a>
             <a href="/privacy" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Privacy</a>
             <a href="/security" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Security</a>
-            <a href="/subprocessors" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Subprocessors</a>
             <a href="/ai-transparency" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>AI Transparency</a>
           </div>
 

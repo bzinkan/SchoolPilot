@@ -140,6 +140,8 @@ export type ClasspilotRealtimeStatus = {
   clientProtocolVersion?: number;
   /** Server-negotiated protocol capabilities for this exact heartbeat binding. */
   acceptedCapabilities?: string[];
+  /** An authoritative empty negotiation; preserve the legacy list's omission. */
+  acceptedCapabilitiesEmpty?: true;
   /** Raw extension feature declarations used only for legacy UI compatibility. */
   extensionCapabilities?: string[];
   chromeVersion?: string;
@@ -862,6 +864,11 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
       .slice(0, 32)
       .map((value) => boundedString(value, 64));
   }
+  // A present malformed list is unknown metadata, not proof of an empty
+  // negotiation. A real list already supplies its own capability evidence.
+  if (row.acceptedCapabilitiesEmpty === true && !Object.hasOwn(row, "acceptedCapabilities")) {
+    snapshot.acceptedCapabilitiesEmpty = true;
+  }
   if (typeof row.chromeVersion === "string") {
     snapshot.chromeVersion = boundedString(row.chromeVersion, 128);
   }
@@ -993,6 +1000,7 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
     snapshot.clientProtocolVersion = clientProtocolVersion;
   }
   if (acceptedCapabilities.length > 0) snapshot.acceptedCapabilities = acceptedCapabilities;
+  else if (Array.isArray(input.acceptedCapabilities)) snapshot.acceptedCapabilitiesEmpty = true;
   if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;

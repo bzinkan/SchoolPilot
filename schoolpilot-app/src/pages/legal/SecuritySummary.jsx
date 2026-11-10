@@ -62,8 +62,8 @@ export default function SecuritySummary() {
         <footer className="mt-1 border-t border-slate-200 pt-2 text-[10px] leading-relaxed text-slate-600">
           <p>
             <strong className="text-slate-800">Documents:</strong> full HECVAT Lite at
-            school-pilot.net/security/hecvat-lite · subprocessors at school-pilot.net/subprocessors ·
-            privacy policy at school-pilot.net/privacy · WISP under NDA · NDPA and state DPAs signed on request.
+            school-pilot.net/security/hecvat-lite · privacy and service providers at school-pilot.net/privacy ·
+            WISP under NDA · NDPA and state DPAs signed on request.
           </p>
           <p>
             <strong className="text-slate-800">Contacts:</strong> security@school-pilot.net (security and incidents) ·

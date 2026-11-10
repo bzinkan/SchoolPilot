@@ -169,6 +169,18 @@ test('a pause is described by who paused it, and a testing pause is locked', () 
   assert.equal(describeChatPause({ messagesPaused: true }).reason, 'teacher', 'an unknown reason reads as the teacher');
 });
 
+test('private reply errors reserve the update diagnosis for confirmed fresh capability evidence', () => {
+  const reason = code => describeChatReplyError({ response: { status: 409, data: { code, error: 'Legacy update text must not leak' } } }, 'Ada');
+  assert.match(reason('PRIVATE_CHAT_CLIENT_UPDATE_REQUIRED'), /Update ClassPilot/);
+  assert.match(reason('PRIVATE_CHAT_RECONNECT_REQUIRED'), /reconnect/i);
+  assert.match(reason('PRIVATE_CHAT_SIGN_IN_REQUIRED'), /signs in/i);
+  assert.match(reason('PRIVATE_CHAT_READINESS_UNAVAILABLE'), /syncing/i);
+  assert.match(reason('PRIVATE_CHAT_UPDATE_REQUIRED'), /syncing/i, 'The old code also meant stale telemetry');
+  for (const code of ['PRIVATE_CHAT_RECONNECT_REQUIRED', 'PRIVATE_CHAT_SIGN_IN_REQUIRED', 'PRIVATE_CHAT_READINESS_UNAVAILABLE', 'PRIVATE_CHAT_UPDATE_REQUIRED']) {
+    assert.doesNotMatch(reason(code), /update|outdated/i);
+  }
+});
+
 test('device readiness: not reporting wins over everything and keeps the offline test id', () => {
   const offline = { telemetryCurrent: false, status: 'signal_lost' };
   const readiness = describeChatDeviceReadiness({

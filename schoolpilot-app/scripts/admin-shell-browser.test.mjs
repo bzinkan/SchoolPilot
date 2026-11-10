@@ -348,7 +348,14 @@ test('Classes sort by start time, retain order through filters, and remember the
   ];
   const { page, errors } = await open({ mode: 'classes', route: '/classpilot/admin', classes });
   const classNames = () => page.locator('[data-testid^="class-card-"] p.font-medium.leading-tight').allTextContents();
+  const archivedResponse = Promise.withResolvers();
   try {
+    // Status filters fetch a new query; exercise the pending-response transition.
+    await page.route('**/api/classpilot/admin/classes?**', async route => {
+      if (new URL(route.request().url()).searchParams.get('status') !== 'archived') return route.fallback();
+      await archivedResponse.promise;
+      return route.fallback();
+    });
     await page.getByLabel('Draft').waitFor();
     await page.evaluate(() => window.fixtureGuardedNavigate('/classpilot/admin/classes'));
     await page.getByTestId('class-card-math').waitFor();
@@ -362,7 +369,14 @@ test('Classes sort by start time, retain order through filters, and remember the
     assert.deepEqual(await classNames(), ['Grade 5 Art', 'Grade 5 Science', 'Grade 5 Math', 'Grade 5 Homeroom']);
 
     await page.getByRole('combobox', { name: 'Filter class status' }).click();
+    const archivedRequestStarted = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname.endsWith('/classpilot/admin/classes') && url.searchParams.get('status') === 'archived';
+    });
     await page.getByRole('option', { name: 'Archived', exact: true }).click();
+    await archivedRequestStarted;
+    archivedResponse.resolve();
+    await page.getByTestId('class-card-archived').waitFor();
     assert.deepEqual(await classNames(), ['Grade 5 Archived']);
 
     await page.getByRole('combobox', { name: 'Filter class status' }).click();
@@ -378,7 +392,7 @@ test('Classes sort by start time, retain order through filters, and remember the
     assert.match(await page.getByRole('combobox', { name: 'Sort classes' }).textContent(), /Sort by time/);
     assert.deepEqual(await classNames(), ['Grade 4 Music', 'Grade 5 Art', 'Grade 5 Science', 'Grade 5 Math', 'Grade 5 Homeroom']);
     assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { archivedResponse.resolve(); await page.close(); }
 });
 
 test('a queued committed-owner navigation is vetoed if that editor unmounts before approval', async () => {

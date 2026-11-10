@@ -3,7 +3,7 @@
 **Vendor:** Schoolpilot LLC
 **Product:** Schoolpilot (ClassPilot, PassPilot, GoPilot)
 **Website:** https://school-pilot.net
-**Assessment Date:** September 28, 2026
+**Assessment Date:** November 9, 2026
 **Assessor:** Internal self-assessment
 **Contact:** security@school-pilot.net
 
@@ -67,7 +67,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | 3.9 | Session management (secure cookies, expiry)? | **Yes** | httpOnly + secure + SameSite cookies; 7-day rolling for teachers/parents; 1-hour idle timeout for admin roles |
 | 3.10 | Session fixation / CSRF protection? | **Yes** | CSRF tokens on state-changing requests |
 | 3.11 | Data retention policy documented? | **Yes** | Privacy Policy Section 4 + WISP Section 9 |
-| 3.12 | Data return/destruction on contract termination? | **Yes** | 30-day turnaround, returned in export format or permanently destroyed per school's written direction |
+| 3.12 | Data return/destruction on contract termination? | **Agreement-specific** | School-directed return/destruction follows the executed agreement's scope and timing and a verified operator process. Account deactivation does not establish permanent destruction; see Privacy Policy Section 4.1. |
 
 ---
 
@@ -75,13 +75,13 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 
 | # | Question | Response | Notes |
 |---|----------|----------|-------|
-| 4.1 | Where is production data stored? | **Yes** | Amazon Web Services, us-east-1 (United States) |
-| 4.2 | Is data stored outside the United States? | **No** | All production data stays in us-east-1 |
+| 4.1 | Where is production data stored? | **Yes** | Primary application database and file storage: Amazon Web Services, us-east-1 (United States). External processing is disclosed in the Privacy Policy. |
+| 4.2 | Is data stored outside the United States? | **Provider-dependent** | Primary AWS database/file storage is in the US; CloudFront uses global edge locations, and external providers have their own processing, retention and location terms. No blanket US-only guarantee is made for all providers. |
 | 4.3 | Is data segregated from other customers? | **Yes** | Multi-tenant database; every tenant row is scoped by `school_id` in the application and by PostgreSQL row-level security (RLS) on tenant tables in production |
 | 4.4 | Is customer data commingled with other customers? | **Partial** | Multi-tenant schema; physical database shared, rows isolated per school by application scoping and PostgreSQL RLS |
 | 4.5 | Backups encrypted? | **Yes** | RDS automated backups inherit encryption-at-rest |
-| 4.6 | Backup retention period? | **Yes** | 7-day automated snapshots + on-demand manual snapshots |
-| 4.7 | Data center certifications (SOC, ISO)? | **Yes** | AWS maintains SOC 1/2/3 Type II, ISO 27001, ISO 27017, ISO 27018, FedRAMP Moderate |
+| 4.6 | Backup retention period? | **Configuration-dependent** | Automated encrypted RDS backups. Repository configuration specifies 14 days for production; current deployed retention and manual-snapshot lifecycle require verification against AWS configuration. |
+| 4.7 | Data center certifications (SOC, ISO)? | **AWS-scoped** | AWS publishes SOC reports, ISO certifications and FedRAMP authorizations for in-scope services. These do not certify Schoolpilot; verify service/program scope with AWS. |
 
 ---
 
@@ -94,11 +94,11 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | 5.3 | Student data used only for educational purposes? | **Yes** | Privacy Policy Section 4.2 — explicit no-data-mining clause |
 | 5.4 | Student data used for advertising? | **No** | Explicitly prohibited in Privacy Policy Section 4.2 |
 | 5.5 | Student data sold to third parties? | **No** | Explicitly prohibited in Privacy Policy Section 8 |
-| 5.6 | Student data used to train AI/ML models? | **No** | Prohibited per Privacy Policy Section 4.2. ClassPilot uses Gemini API paid-tier processing for URL/title classification; MailPilot and the optional assistant use Anthropic under their respective customer-data terms. |
-| 5.7 | COPPA compliance mechanism? | **Yes** | Relies on school consent exception (34 CFR § 99.31(a)(1)) |
+| 5.6 | Student data used to train AI/ML models? | **Prohibited by policy** | Privacy Policy Section 4.2 prohibits this use. ClassPilot uses Gemini for URL/title classification; enabled chat/poll safety enrichment and MailPilot use Anthropic. Actual provider-account retention, access and training-use terms require separate review; see AI Transparency. The staff assistant is unavailable in the current app interface and disabled by default in the backend. |
+| 5.7 | COPPA compliance mechanism? | **Yes** | Relies on school authorization on parents' behalf for the educational context, for the use and benefit of the school and no other commercial purpose; see Privacy Policy Section 6. |
 | 5.8 | Parent right of access to student records? | **Yes** | 45-day response commitment in Privacy Policy Section 10 |
 | 5.9 | Parent right to amend / correct records? | **Yes** | 15 business-day response in Privacy Policy Section 10.2 |
-| 5.10 | Signed DPA / SDPA / NDPA available? | **Yes** | Terms Section 7 — incorporated by reference upon execution |
+| 5.10 | Signed DPA / SDPA / NDPA available? | **On request / when executed** | Agreements are available for review and signature; Terms Section 7 incorporates them upon execution. This is not confirmation that a particular school's agreement has already been signed. |
 | 5.11 | Customer (school) owns all student data? | **Yes** | Explicit in Terms Section 7 |
 
 ---
@@ -123,7 +123,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | 7.1 | Secure development lifecycle (SDLC) documented? | **Yes** | WISP Section 5.5: PR review, CI security audit, no prod data in dev |
 | 7.2 | Code review on all changes? | **Partial** | Changes are normally merged through pull requests that must pass automated checks (build, tests, CodeQL, secret scanning), and production deploys require a green CI run on the exact commit; independent human review is not technically enforced |
 | 7.3 | Dependency vulnerability scanning? | **Yes** | Every CI build blocks high/critical production-dependency findings unless a narrowly scoped, time-bound, evidence-backed disposition passes validation; the complete production and development dependency tree is scanned, with normalized findings and dependency counts retained and reviewed |
-| 7.4 | Static application security testing (SAST)? | **Yes** | GitHub CodeQL runs on every push and pull request to main and weekly, and fails on any error- or warning-severity finding; Gitleaks secret scanning runs on every push and pull request |
+| 7.4 | Static application security testing (SAST)? | **Yes** | GitHub CodeQL runs on main pushes, pull requests to main/codex branches and weekly; error-severity findings fail CI, warnings are logged and tracked. Gitleaks scans main pushes and pull requests. Trivy scans on main pushes, selected pull requests and weekly, and blocks fixable high/critical container findings. |
 | 7.5 | Dynamic application security testing (DAST)? | **No** | Planned with third-party pentest |
 | 7.6 | Input validation framework? | **Partial** | Zod schema validation on many, but not yet all, API inputs; Drizzle ORM parameterized queries prevent SQL injection |
 | 7.7 | Content Security Policy (CSP) headers? | **Yes** | Helmet default CSP enabled |
@@ -163,9 +163,9 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 
 | # | Question | Response | Notes |
 |---|----------|----------|-------|
-| 10.1 | Public list of subprocessors available? | **Yes** | https://school-pilot.net/subprocessors |
+| 10.1 | Public list of subprocessors available? | **Yes** | Service Providers section: https://school-pilot.net/privacy#service-providers (legacy /subprocessors links redirect there). |
 | 10.2 | Subprocessors bound by data processing agreements? | **In review** | DPA confirmations are tracked in private vendor review evidence and require human sign-off before being treated as operating evidence. |
-| 10.3 | Notice period before adding new subprocessors? | **Yes** | 30 days per Subprocessors page |
+| 10.3 | Notice period before adding new subprocessors? | **Yes** | 30 days before adding a provider processing student PII, except where emergency circumstances make notice impractical; see Privacy Policy Service Providers section. |
 | 10.4 | Customer right to object to new subprocessors? | **Yes** | Customer may terminate if subprocessor creates unacceptable risk |
 
 ---
@@ -179,7 +179,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | 11.3 | iKeepSafe FERPA / COPPA? | **Pending** | Documentation package prepared; submission pending |
 | 11.4 | 1EdTech TrustEd Apps? | **Planned** | Registration in progress |
 | 11.5 | Common Sense Education Privacy Evaluation? | **Planned** | Submission in progress |
-| 11.6 | State data privacy registrations (CA, TX, IL)? | **On request** | Signed NDPAs available for state-specific requirements |
+| 11.6 | State data privacy registrations (CA, TX, IL)? | **Not established by this assessment** | Schoolpilot offers state-specific data privacy agreements on request; executing an agreement does not establish a state registration or certification. |
 
 ---
 
@@ -188,7 +188,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 Under NDA, the following documents are provided to schools and qualified assessors:
 
 - Full Written Information Security Program (WISP)
-- Executed Data Processing Agreements with subprocessors
+- Current vendor review status and executed Data Processing Agreements, where executed and available
 - Incident Response Runbook
 - Penetration test reports (when available)
 - SOC 2 Type II report (not available yet; when available)
