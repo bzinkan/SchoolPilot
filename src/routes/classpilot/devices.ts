@@ -5,6 +5,7 @@ import { DeviceTelemetryDelivery, heartbeatTelemetryIdentity, validTelemetryOper
 import { parseScreenshotImageRequest, uploadedScreenshotPixelBytes } from "../../services/classpilotScreenshotImageRequest.js";
 import { privateChatMessageLifecycle } from "../../services/classpilotPrivateChatLifecycle.js";
 import { parseKnownScreenshotImages, knownScreenshotImageForBinding, publicScreenshotImageData } from "../../services/classpilotScreenshotReferences.js";
+import { screenshotResponseEncoder } from "../../services/classpilotScreenshotResponseEncoding.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import crypto from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
@@ -5653,6 +5654,7 @@ registerClasspilotDeviceTelemetryOperations({
 // POST /api/classpilot/tiles/screenshots - Get one authorized screenshot cohort
 router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitoring, async (req, res, next) => {
   setClassPilotNoStore(res);
+  res.vary("Accept-Encoding");
   try {
     const parsed = parseTileStudentIds(req.body);
     const sessionScope = parseTileTeachingSessionId(req.body);
@@ -5826,22 +5828,14 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     );
     const supervisionScreenshotByStudent = new Map(supervisionScreenshotRead.status === "ok"
       ? supervisionBindings.map((binding, index) => [binding.studentId, supervisionScreenshotRead.screenshots[index] ?? null]) : []);
-    // Redis can finish after a release, reassignment, or binding replacement.
-    // Revalidate the bounded supervision cohort immediately before serialization;
-    // neither an old revision nor old pixels may survive that asynchronous gap.
-    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
-      ? await runWithTenantContext({ schoolId: scope.schoolId },
-        () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
-      : accessByStudent;
-    releaseClassPilotTileAdmission(res);
-    if (currentAccesses.size === 0) return res.status(404).json({ error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
-    const tiles = accesses.map((access) => {
-      const current = currentAccesses.get(access.studentId);
-      if (!current || current.deviceId !== access.deviceId
-        || current.studentSessionId !== access.studentSessionId
-        || current.teachingSessionId !== access.teachingSessionId
-        || current.supervisionContextId !== access.supervisionContextId
-        || current.controlRevision !== access.controlRevision) {
+    const sameScreenshotAccess = (access: (typeof accesses)[number], current: ReturnType<typeof accessByStudent.get>) => Boolean(
+      current && current.schoolId === access.schoolId && current.studentId === access.studentId
+      && current.deviceId === access.deviceId && current.studentSessionId === access.studentSessionId
+      && current.teachingSessionId === access.teachingSessionId && current.supervisionContextId === access.supervisionContextId
+      && current.controlRevision === access.controlRevision
+    );
+    const tilesForAccess = (currentAccesses: typeof accessByStudent) => accesses.map((access) => {
+      if (!sameScreenshotAccess(access, currentAccesses.get(access.studentId))) {
         return { studentId: access.studentId, screenshot: null };
       }
       const supervisionBinding = supervisionBindingByStudent.get(access.studentId);
@@ -5886,6 +5880,23 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
           }
         : { studentId: access.studentId, screenshot: null };
     });
+    const candidateTiles = tilesForAccess(accessByStudent);
+    const candidateResponse: { tiles: typeof candidateTiles; screenshotStore?: "unavailable" } = {
+      tiles: candidateTiles,
+      ...(screenshotStoreUnavailable ? { screenshotStore: "unavailable" } : {}),
+    };
+    const preparedResponse = await screenshotResponseEncoder.prepare(req, res, candidateResponse);
+    // Redis and optional encoding can finish after a release, reassignment, or
+    // binding replacement. Retain the existing final authority read AFTER both;
+    // prepared pixels may only publish for that same exact current cohort.
+    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
+      ? await runWithTenantContext({ schoolId: scope.schoolId },
+        () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
+      : accessByStudent;
+    releaseClassPilotTileAdmission(res);
+    if (currentAccesses.size === 0) return res.status(404).json({ error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
+    const accessUnchanged = accesses.every(access => sameScreenshotAccess(access, currentAccesses.get(access.studentId)));
+    const tiles = accessUnchanged ? candidateTiles : tilesForAccess(currentAccesses);
     // A store outage is counted once above; keep it out of the per-item miss
     // and fallback counters that size ordinary cache misses.
     if (!screenshotStoreUnavailable) {
@@ -5901,6 +5912,9 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
         );
       }
     }
+    if (accessUnchanged && preparedResponse) return screenshotResponseEncoder.send(res, candidateResponse, preparedResponse);
+    // A changed binding uses freshly filtered identity JSON synchronously; no
+    // encoded candidate may cross another asynchronous authority gap.
     return res.json({
       tiles,
       ...(screenshotStoreUnavailable ? { screenshotStore: "unavailable" } : {}),
