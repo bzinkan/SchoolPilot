@@ -1,5 +1,5 @@
 // Public claims: keep in step with docs/soc2/claim-register.md (scanned by `npm run soc2:check`).
-export const SECURITY_PAGES_UPDATED = 'September 28, 2026';
+export const SECURITY_PAGES_UPDATED = 'November 9, 2026';
 
 export const POSTURE_STATUS_LABELS = {
   in_place: 'In place',
@@ -13,10 +13,10 @@ export const SECURITY_POSTURE = [
     items: [
       { status: 'in_place', label: 'FERPA', detail: 'Acts as a "school official" under the school\'s direct control' },
       { status: 'in_place', label: 'COPPA', detail: 'Relies on the school consent exception; children never sign up directly' },
-      { status: 'in_place', label: 'No selling, ads or AI training', detail: 'Student data is never sold, used for advertising, or used to train AI models' },
+      { status: 'in_place', label: 'Student data use policy', detail: 'Schoolpilot prohibits sale, advertising and AI-model training with student data; provider-account limitations are described in AI Transparency' },
       { status: 'in_place', label: 'Data privacy agreements', detail: 'Signs the NDPA and state variants (CA, TX, IL, NY) on request' },
       { status: 'in_place', label: 'Parent rights', detail: 'Access requests answered within 45 days; corrections within 15 business days' },
-      { status: 'in_place', label: 'End of contract', detail: 'Data returned or destroyed within 30 days, as the school directs' },
+      { status: 'in_place', label: 'End of contract', detail: 'School-directed data return and destruction follow the executed agreement and a verified operator process' },
     ],
   },
   {
@@ -27,7 +27,7 @@ export const SECURITY_POSTURE = [
       { status: 'in_place', label: 'Security training', detail: 'Annual training for everyone with access to student data' },
       { status: 'in_place', label: 'Incident response', detail: 'Schools notified within 72 hours of a breach; full report within 30 days' },
       { status: 'in_place', label: 'Monitoring and audit logs', detail: 'Alerts on failed-login spikes, bulk changes and cross-school access; admin actions logged' },
-      { status: 'in_place', label: 'Subprocessors', detail: 'Public list, with 30 days\' notice before a new one is added' },
+      { status: 'partial', label: 'Service providers', detail: 'Listed in Privacy; vendor agreement confirmations remain in review. New providers handling student PII require 30 days\' notice, except emergencies' },
     ],
   },
   {
@@ -35,9 +35,9 @@ export const SECURITY_POSTURE = [
     items: [
       { status: 'in_place', label: 'Encryption in transit', detail: 'TLS 1.2+ with HSTS' },
       { status: 'in_place', label: 'Encryption at rest', detail: 'AWS RDS (PostgreSQL) and S3 server-side encryption' },
-      { status: 'in_place', label: 'US hosting', detail: 'Production data hosted in AWS us-east-1 (United States)' },
+      { status: 'in_place', label: 'US hosting', detail: 'Primary database and file storage in AWS us-east-1; external provider processing is described in Privacy' },
       { status: 'in_place', label: 'School-by-school separation', detail: 'Enforced in the application and by PostgreSQL row-level security' },
-      { status: 'in_place', label: 'Backups and recovery', detail: 'Encrypted automated backups with 7-day retention; annual restore drill' },
+      { status: 'in_place', label: 'Backups and recovery', detail: 'Encrypted automated database backups; annual restore drill required by policy' },
     ],
   },
   {
@@ -47,7 +47,7 @@ export const SECURITY_POSTURE = [
       { status: 'in_place', label: 'Passwords', detail: 'bcrypt hashing, 10+ character complexity, lockout after 10 failed attempts' },
       { status: 'in_place', label: 'Sessions', detail: 'Secure httpOnly cookies, CSRF protection, 1-hour idle timeout for admins' },
       { status: 'in_place', label: 'Google sign-in', detail: 'Staff sign in with their school Google account' },
-      { status: 'in_place', label: 'Google-only staff sign-in', detail: 'Schools can turn off staff password sign-in on the web so staff must use Google' },
+      { status: 'in_place', label: 'Staff password controls', detail: 'Schools can disable staff passwords on the web; the GoPilot staff app keeps password access with an active GoPilot license' },
       { status: 'planned', label: 'Microsoft and SAML 2.0 sign-in', detail: 'Microsoft Entra ID and SAML 2.0 single sign-on are on the roadmap' },
       { status: 'planned', label: 'In-app MFA for administrators', detail: 'Deferred and tracked in our SOC 2 remediation register' },
     ],
@@ -55,10 +55,10 @@ export const SECURITY_POSTURE = [
   {
     title: 'Secure development',
     items: [
-      { status: 'in_place', label: 'Static code analysis', detail: 'GitHub CodeQL runs on every change and fails on any finding' },
-      { status: 'in_place', label: 'Dependency scanning', detail: 'Vulnerable dependencies are checked on every build' },
-      { status: 'in_place', label: 'Secret scanning', detail: 'Gitleaks runs on every change' },
-      { status: 'in_place', label: 'Container scanning', detail: 'Trivy scans the production image for critical and high vulnerabilities' },
+      { status: 'in_place', label: 'Static code analysis', detail: 'CodeQL runs on main pushes, pull requests and weekly; error findings block CI, warnings are logged' },
+      { status: 'in_place', label: 'Dependency scanning', detail: 'CI audits dependencies; production high/critical findings block unless a scoped, time-limited disposition passes validation' },
+      { status: 'in_place', label: 'Secret scanning', detail: 'Gitleaks runs on main pushes and pull requests' },
+      { status: 'in_place', label: 'Container scanning', detail: 'Trivy blocks fixable high/critical findings on main pushes, selected pull requests and weekly scans' },
       { status: 'planned', label: 'Penetration test', detail: 'Independent third-party test planned' },
     ],
   },
@@ -74,7 +74,7 @@ export const SECURITY_POSTURE = [
     title: 'Certifications and assessments',
     items: [
       { status: 'in_place', label: 'HECVAT Lite', detail: 'Pre-completed security questionnaire, published for review' },
-      { status: 'in_place', label: 'Hosting infrastructure', detail: 'AWS maintains SOC 2 Type II, ISO 27001 and FedRAMP Moderate for its data centers' },
+      { status: 'in_place', label: 'Hosting infrastructure', detail: 'AWS publishes SOC reports and ISO certifications for in-scope services; these do not certify Schoolpilot' },
       { status: 'planned', label: 'SOC 2 Type II', detail: 'Working toward SOC 2 Type II readiness' },
       { status: 'planned', label: 'Independent privacy reviews', detail: 'Common Sense Privacy and 1EdTech TrustEd Apps submissions planned' },
     ],

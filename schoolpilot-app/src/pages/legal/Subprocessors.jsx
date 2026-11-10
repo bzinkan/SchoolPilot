@@ -1,44 +1,25 @@
 export default function Subprocessors() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <nav className="bg-slate-900 border-b border-slate-800">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <a href="/" className="flex items-center gap-3 no-underline">
-            <svg width="40" height="40" viewBox="0 0 64 64" fill="none">
-              <rect width="64" height="64" rx="14" fill="#1e3a5f" />
-              <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff" />
-              <path d="M22 32 L48 32 L16 40 Z" fill="#eab308" />
-            </svg>
-            <span className="text-2xl font-bold text-white">Schoolpilot</span>
-          </a>
-          <a href="/" className="inline-flex items-center gap-2 text-white hover:bg-white/10 px-4 py-2 rounded-md transition-colors no-underline text-sm">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="19" y1="12" x2="5" y2="12"/>
-              <polyline points="12 19 5 12 12 5"/>
-            </svg>
-            Back to Home
-          </a>
-        </div>
-      </nav>
-
-      <div className="container mx-auto px-4 py-12 max-w-4xl">
-        <h1 className="text-4xl font-bold text-slate-900 mb-4">Subprocessors</h1>
-        <p className="text-slate-600 mb-8">Last updated: October 7, 2026</p>
-
+    <section id="service-providers" className="scroll-mt-8 mt-8">
+        <h3 className="text-xl font-semibold text-slate-900 mb-4">8.1 Service Providers</h3>
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot uses the following third-party service providers ("subprocessors") to operate
-              the Service. Each subprocessor is bound by contractual obligations to handle data in
-              accordance with applicable privacy laws, including FERPA and COPPA. Schoolpilot tracks
-              vendor review and Data Processing Agreement status for subprocessors handling student
-              personally identifiable information (PII), and provides applicable executed agreements
-              under NDA when available.
+              Schoolpilot uses the following service providers and school-authorized integrations to
+              operate enabled features. Providers that process personal information on our behalf are
+              often called "subprocessors." A provider receives only the data involved in the features
+              used by the school; some integrations also operate under the school's own provider arrangements.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              Vendor reviews and data-processing agreement confirmations remain in progress. Inclusion
+              in this list does not confirm that a separately executed Data Processing Agreement has
+              been verified for every provider. Schools may request current review status and applicable
+              executed agreements under NDA, where executed and available.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Infrastructure</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Infrastructure</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -53,19 +34,22 @@ export default function Subprocessors() {
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Amazon Web Services</strong> (AWS)</td>
                     <td className="px-4 py-3 text-slate-700">Application hosting, database (RDS), storage (S3), content delivery (CloudFront), caching (ElastiCache / Redis)</td>
-                    <td className="px-4 py-3 text-slate-700">All customer data</td>
-                    <td className="px-4 py-3 text-slate-700">United States (us-east-1)</td>
+                    <td className="px-4 py-3 text-slate-700">Customer records, files, cached previews and operational data for enabled features</td>
+                    <td className="px-4 py-3 text-slate-700">Primary database and file storage: United States (us-east-1). CloudFront uses global edge locations.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              AWS maintains SOC 1 / 2 / 3 Type II, ISO 27001, ISO 27017, ISO 27018, and FedRAMP certifications.
+              AWS publishes SOC reports, ISO certifications and FedRAMP authorizations for{" "}
+              <a href="https://aws.amazon.com/compliance/services-in-scope/" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">in-scope services</a>.
+              These do not certify Schoolpilot. External providers have their own processing and
+              retention terms; primary US hosting does not establish US-only processing by every provider.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Authentication & Identity</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Authentication, Identity & Rostering</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -78,8 +62,18 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (OAuth, Workspace API, Classroom API)</td>
-                    <td className="px-4 py-3 text-slate-700">Single sign-on, Workspace directory sync, Classroom roster import</td>
-                    <td className="px-4 py-3 text-slate-700">Email, name, classroom membership</td>
+                    <td className="px-4 py-3 text-slate-700">Sign-in, school-authorized Workspace directory and Classroom imports; Gmail access for separately enabled MailPilot</td>
+                    <td className="px-4 py-3 text-slate-700">Account identifiers, email, names, roster/class membership and selected Classroom resources; Gmail sender, recipient, subject and message text when MailPilot is enabled</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3 text-slate-700"><strong>Microsoft Corporation</strong> (Entra ID; only when enabled)</td>
+                    <td className="px-4 py-3 text-slate-700">Optional staff sign-in, requiring production configuration and school-specific tenant authorization</td>
+                    <td className="px-4 py-3 text-slate-700">Authentication exchange, tenant/account identifiers and email claim. Microsoft sign-in is not currently available in production.</td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3 text-slate-700"><strong>Clever, Inc.</strong> (Secure Sync; awaiting district validation)</td>
+                    <td className="px-4 py-3 text-slate-700">School-authorized roster import; not generally available until district validation is complete</td>
+                    <td className="px-4 py-3 text-slate-700">When connected: district, school, student/staff and class identifiers, names, emails, grades and enrollment records</td>
                   </tr>
                 </tbody>
               </table>
@@ -87,7 +81,7 @@ export default function Subprocessors() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Email</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Email</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -115,7 +109,7 @@ export default function Subprocessors() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Payment Processing</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Payment Processing</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -129,19 +123,20 @@ export default function Subprocessors() {
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Stripe, Inc.</strong></td>
                     <td className="px-4 py-3 text-slate-700">Subscription billing and payment processing</td>
-                    <td className="px-4 py-3 text-slate-700">School billing contact, payment method (Stripe-tokenized)</td>
+                    <td className="px-4 py-3 text-slate-700">School billing contact, subscription/invoice details, aggregate student counts and payment information handled by Stripe</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              Stripe is PCI-DSS Level 1 certified. No payment card data touches Schoolpilot servers — Stripe
-              Elements tokenizes card details on the client. No student PII is sent to Stripe.
+              Schoolpilot uses Stripe-hosted checkout and invoice payment pages to collect payment details.
+              Schoolpilot receives billing and payment-status information; individual student records
+              are not part of the billing integration.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI / Content Classification</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">AI / Content Classification</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -159,20 +154,22 @@ export default function Subprocessors() {
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; staff-started paperwork and student-contact imports (paused with My Desk and not currently available)</td>
-                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. When available, paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. It does not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
+                    <td className="px-4 py-3 text-slate-700">ClassPilot student chat/poll safety enrichment; MailPilot email safety classification; optional staff assistant; staff-started paperwork and student-contact imports (paused with My Desk and not currently available)</td>
+                    <td className="px-4 py-3 text-slate-700">For enabled ClassPilot chat/poll safety enrichment: up to 500 characters of student-authored text that already matched local safety rules. For enabled MailPilot: message direction, sender/recipient fields, subject and up to 4,000 characters of Gmail message text. If separately enabled, the staff assistant processes prompts, conversation history and authorized tool results. When available, paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. Imports do not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
               Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
-              API for limited MailPilot and assistant workflows, and for teacher-started paperwork-import
+              API for ClassPilot student chat/poll safety enrichment, limited MailPilot and assistant workflows,
+              and for teacher-started paperwork-import
               workflows when My Desk is available (it is currently paused). MailPilot email safety classification may
               process student Gmail message text only when a school has separately enabled MailPilot.
-              The optional AI assistant is disabled by default, limited by school role and product license,
-              and designed to avoid model-bound sensitive fields such as attendance reasons and individual
-              browsing history. Anthropic's{" "}
+              The optional AI assistant is not available in the current app interface and its backend is
+              disabled by default. If enabled, its tools are limited by school role and product license;
+              tool outputs omit attendance reasons, and individual browsing history is unavailable to the
+              assistant. Staff prompts and other permitted results can still contain personal information. Anthropic's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
                 Commercial Terms
               </a>{" "}
@@ -192,7 +189,19 @@ export default function Subprocessors() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Notification of Changes</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Optional Error Monitoring</h4>
+            <p className="text-slate-700 leading-relaxed">
+              Schoolpilot's internal error monitor stores sanitized operational diagnostics within our
+              AWS infrastructure. The optional <strong>Sentry</strong> integration is gated off pending
+              its required agreement and activation review. If enabled, it sends allowlisted diagnostic
+              messages, stack information and release/category metadata, with request bodies, cookies,
+              headers and user objects excluded and bounded text redaction applied. Redaction is not
+              a guarantee that every possible personal value will be detected.
+            </p>
+          </section>
+
+          <section>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Notification of Provider Changes</h4>
             <p className="text-slate-700 leading-relaxed">
               Schoolpilot will provide notice to schools at least <strong>thirty (30) days</strong> before
               adding any new subprocessor that will process student personally identifiable information,
@@ -203,26 +212,13 @@ export default function Subprocessors() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Questions</h2>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Provider Questions</h4>
             <p className="text-slate-700 leading-relaxed">
-              For questions about our subprocessors or to request copies of executed Data Processing
-              Agreements (under NDA), contact <a href="mailto:privacy@school-pilot.net" className="text-amber-600 hover:text-amber-700 underline">privacy@school-pilot.net</a>.
+              For current provider review status or available executed Data Processing Agreements
+              (under NDA), contact <a href="mailto:privacy@school-pilot.net" className="text-amber-600 hover:text-amber-700 underline">privacy@school-pilot.net</a>.
             </p>
           </section>
         </div>
-      </div>
-
-      <footer className="bg-slate-950 text-slate-400 py-8 mt-12">
-        <div className="container mx-auto px-4 text-center">
-          <p className="text-sm">&copy; {new Date().getFullYear()} Schoolpilot. All rights reserved.</p>
-          <div className="mt-4 space-x-4 text-sm">
-            <a href="/privacy" className="hover:text-amber-400 transition-colors">Privacy Policy</a>
-            <a href="/terms" className="hover:text-amber-400 transition-colors">Terms of Service</a>
-            <a href="/subprocessors" className="hover:text-amber-400 transition-colors">Subprocessors</a>
-            <a href="/" className="hover:text-amber-400 transition-colors">Home</a>
-          </div>
-        </div>
-      </footer>
-    </div>
+    </section>
   );
 }
