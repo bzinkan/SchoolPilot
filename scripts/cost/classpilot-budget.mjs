@@ -16,6 +16,8 @@ export function estimateClasspilotBudget(input = {}) {
   const o = {
     students: 2000, hoursPerDay: 6, schoolDays: 22, observedFraction: 1,
     unchangedFraction: 0, screenshotBytes: 22342, teacherCopies: 1,
+    changedDeltaFraction: 0, deltaPatchRatio: 1, deltaMetadataBytes: 256,
+    teacherDeltaHitFraction: 0, viewerImageWireRatio: 1,
     heartbeatRequestBytes: 0, heartbeatResponseBytes: 0,
     screenshotMetadataBytes: 512, teacherMetadataBytesPerStudent: 0,
     classSize: 30, teacherPollSeconds: 5, transport: 'http',
@@ -26,26 +28,29 @@ export function estimateClasspilotBudget(input = {}) {
     otherGrowthCost: 0, redisCrossAzFraction: 0, budget: 300, ...input,
   };
   for (const key of ['students', 'hoursPerDay', 'schoolDays', 'screenshotBytes',
-    'teacherCopies', 'heartbeatRequestBytes', 'heartbeatResponseBytes',
+    'teacherCopies', 'heartbeatRequestBytes', 'heartbeatResponseBytes', 'deltaMetadataBytes',
     'screenshotMetadataBytes', 'teacherMetadataBytesPerStudent', 'classSize',
     'teacherPollSeconds', 'monthlyBaseline', 'replacedBaselineEdgeCost',
     'connectionsPerDeviceDay', 'extraHttpRequests', 'additionalComputeCost',
     'storageGrowthCost', 'monitoringGrowthCost', 'otherGrowthCost', 'budget']) {
     if (!Number.isFinite(o[key]) || o[key] < 0) throw new Error(`Invalid ${key}`);
   }
-  for (const key of ['observedFraction', 'unchangedFraction', 'fallbackFraction', 'redisCrossAzFraction']) {
+  for (const key of ['observedFraction', 'unchangedFraction', 'fallbackFraction', 'redisCrossAzFraction',
+    'changedDeltaFraction', 'deltaPatchRatio', 'teacherDeltaHitFraction', 'viewerImageWireRatio']) {
     if (!Number.isFinite(o[key]) || o[key] < 0 || o[key] > 1) throw new Error(`Invalid ${key}`);
   }
   if (!Number.isInteger(o.students) || o.hoursPerDay > 24 || o.schoolDays > 31
-    || o.classSize === 0 || o.teacherPollSeconds === 0
+    || o.classSize === 0 || o.teacherPollSeconds === 0 || o.viewerImageWireRatio === 0
     || !['http', 'websocket'].includes(o.transport) || !['payg', 'pro'].includes(o.edgePlan)
     || o.replacedBaselineEdgeCost > o.monthlyBaseline) throw new Error('Invalid workload options');
 
   const seconds = o.hoursPerDay * 3600 * o.schoolDays;
   const heartbeats = o.students * seconds / 10;
   const screenshots = o.students * seconds * ((1 - o.observedFraction) / 30 + o.observedFraction / 5);
-  const fullImageUploads = screenshots * (1 - o.unchangedFraction);
-  const referenceUploads = screenshots - fullImageUploads;
+  const changedImageUploads = screenshots * (1 - o.unchangedFraction);
+  const deltaUploads = changedImageUploads * o.changedDeltaFraction;
+  const fullImageUploads = changedImageUploads - deltaUploads;
+  const referenceUploads = screenshots - changedImageUploads;
   const deviceOperations = heartbeats + screenshots;
   const deviceHttpRequests = deviceOperations * (o.transport === 'http' ? 1 : o.fallbackFraction);
   const teacherHttpRequests = Math.ceil(o.students / o.classSize) * seconds / o.teacherPollSeconds * o.teacherCopies;
@@ -53,8 +58,14 @@ export function estimateClasspilotBudget(input = {}) {
   // are frames, not recurring HTTP requests.
   const connections = o.students * o.schoolDays * o.connectionsPerDeviceDay;
   const edgeRequests = deviceHttpRequests + teacherHttpRequests + connections + o.extraHttpRequests;
-  const imageUpload = fullImageUploads * o.screenshotBytes;
-  const imageDownload = imageUpload * o.teacherCopies;
+  const patchBytes = o.screenshotBytes * o.deltaPatchRatio + o.deltaMetadataBytes;
+  const imageUpload = fullImageUploads * o.screenshotBytes + deltaUploads * patchBytes;
+  // A viewer without the exact base receives the full image. Gzip affects only
+  // origin-to-viewer bytes, independently of device uploads and Redis traffic.
+  const imageDownloadBeforeEncoding = (fullImageUploads * o.screenshotBytes
+    + deltaUploads * (o.teacherDeltaHitFraction * patchBytes
+      + (1 - o.teacherDeltaHitFraction) * o.screenshotBytes)) * o.teacherCopies;
+  const imageDownload = imageDownloadBeforeEncoding * o.viewerImageWireRatio;
   const heartbeatUpload = heartbeats * o.heartbeatRequestBytes;
   const heartbeatDownload = heartbeats * o.heartbeatResponseBytes;
   const screenshotMetadata = screenshots * o.screenshotMetadataBytes;
@@ -62,10 +73,12 @@ export function estimateClasspilotBudget(input = {}) {
   const originUpload = imageUpload + heartbeatUpload + screenshotMetadata;
   const viewerDownload = imageDownload + heartbeatDownload + teacherMetadata;
   const albProcessed = originUpload + viewerDownload;
-  // Image references avoid rewriting/re-reading unchanged blobs. This estimate
-  // counts one full blob write plus each viewer read; metadata and heartbeat
-  // Redis commands are additional unmeasured overhead.
-  const redisImageCrossAz = (imageUpload + imageDownload) * o.redisCrossAzFraction;
+  // Every changed target is still stored in full. Each delta additionally reads
+  // a full base and stores one patch; Redis bytes do not inherit wire savings.
+  // Command envelopes, metadata and heartbeat Redis work remain unmeasured.
+  const redisImageWrites = changedImageUploads * o.screenshotBytes + deltaUploads * patchBytes;
+  const redisDeltaBaseReads = deltaUploads * o.screenshotBytes;
+  const redisImageCrossAz = (redisImageWrites + redisDeltaBaseReads + imageDownloadBeforeEncoding) * o.redisCrossAzFraction;
   const pro = o.edgePlan === 'pro';
   const costs = {
     baseline: o.monthlyBaseline - o.replacedBaselineEdgeCost,
@@ -84,6 +97,11 @@ export function estimateClasspilotBudget(input = {}) {
   if (!has(input, 'heartbeatRequestBytes') || !has(input, 'heartbeatResponseBytes')) unknowns.push('Actual heartbeat bytes are unmeasured.');
   if (!has(input, 'teacherMetadataBytesPerStudent')) unknowns.push('Teacher metadata bytes are unmeasured.');
   if (!has(input, 'redisCrossAzFraction')) unknowns.push('Redis cross-AZ placement and metadata traffic are unmeasured.');
+  if (!has(input, 'changedDeltaFraction')) unknowns.push('Actual delta eligibility across the school workload is unmeasured.');
+  if (o.changedDeltaFraction > 0 && (!has(input, 'deltaPatchRatio') || !has(input, 'teacherDeltaHitFraction'))) {
+    unknowns.push('Actual patch sizes and teacher exact-base hit rate are unmeasured.');
+  }
+  if (o.viewerImageWireRatio < 1) unknowns.push('Viewer encoding savings depend on actual negotiation, compressor availability and content.');
   for (const [key, label] of [['storageGrowthCost', 'Storage/backup growth'], ['monitoringGrowthCost', 'Monitoring growth'],
     ['additionalComputeCost', 'Additional compute requirements'], ['otherGrowthCost', 'Other variable AWS charges']]) {
     if (!has(input, key)) unknowns.push(`${label} remains unverified.`);
@@ -93,10 +111,10 @@ export function estimateClasspilotBudget(input = {}) {
   if (pro && (originUpload + viewerDownload) / GIB > RATES.proTransferGiB) unknowns.push('The modeled workload exceeds the Pro transfer allowance.');
   return {
     assumptions: o,
-    counts: { heartbeats, screenshots, fullImageUploads, referenceUploads, deviceOperations,
+    counts: { heartbeats, screenshots, changedImageUploads, fullImageUploads, deltaUploads, referenceUploads, deviceOperations,
       deviceHttpRequests, teacherHttpRequests, connections, edgeRequests },
-    bytes: { imageUpload, imageDownload, heartbeatUpload, heartbeatDownload, screenshotMetadata,
-      teacherMetadata, originUpload, viewerDownload, albProcessed, redisImageCrossAz },
+    bytes: { imageUpload, imageDownload, imageDownloadBeforeEncoding, heartbeatUpload, heartbeatDownload, screenshotMetadata,
+      teacherMetadata, originUpload, viewerDownload, albProcessed, redisImageWrites, redisDeltaBaseReads, redisImageCrossAz },
     costs, total, remainingBudget: o.budget - total, unknowns,
     budgetStatus: total > o.budget ? 'over-target' : unknowns.length ? 'unverified' : 'within-modeled-target',
     capacityAccepted: false,
@@ -105,6 +123,8 @@ export function estimateClasspilotBudget(input = {}) {
       'ALB bytes are a planning contribution, not additive LCU dimensions; another dimension can dominate.',
       'Screenshot string size excludes envelope overhead and may differ from compressed wire size.',
       'Unchanged-image savings depend on real recaptures; animated pages may save zero bytes.',
+      'Typing fixture patch ratios are not a measured fleet delta eligibility or teacher base-hit rate.',
+      'Delta uploads reconstruct and retain the full target in Redis; they can increase cache traffic.',
       'This model never establishes production capacity or an actual monthly bill.',
     ],
   };

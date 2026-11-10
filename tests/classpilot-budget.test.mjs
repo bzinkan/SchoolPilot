@@ -77,3 +77,48 @@ test('rejects invalid assumptions rather than silently producing a cheap estimat
     assert.throws(() => estimateClasspilotBudget({ ...base, ...invalid }), /invalid/i);
   }
 });
+
+test('separates delta ingress, teacher base hits, origin encoding and cache work', () => {
+  const options = { ...base, students: 1, hoursPerDay: 1, schoolDays: 1, observedFraction: 1,
+    screenshotBytes: 1000, changedDeltaFraction: 0.5, deltaPatchRatio: 0.1,
+    deltaMetadataBytes: 10, teacherDeltaHitFraction: 0.5, viewerImageWireRatio: 0.75,
+    redisCrossAzFraction: 1 };
+  const result = estimateClasspilotBudget(options);
+  assert.equal(result.counts.screenshots, 720);
+  assert.equal(result.counts.changedImageUploads, 720);
+  assert.equal(result.counts.fullImageUploads, 360);
+  assert.equal(result.counts.deltaUploads, 360);
+  assert.equal(result.bytes.imageUpload, 399600);
+  assert.equal(result.bytes.imageDownloadBeforeEncoding, 559800);
+  assert.equal(result.bytes.imageDownload, 419850);
+  // Every changed image is still stored in full. Delta uploads read a full base
+  // and store one patch; viewer compression does not shrink Redis traffic.
+  assert.equal(result.bytes.redisImageWrites, 759600);
+  assert.equal(result.bytes.redisDeltaBaseReads, 360000);
+  assert.equal(result.bytes.redisImageCrossAz, 1679400);
+  const misses = estimateClasspilotBudget({ ...options, teacherDeltaHitFraction: 0 });
+  assert.equal(misses.bytes.imageDownloadBeforeEncoding, 720000);
+  assert.equal(misses.bytes.imageUpload, result.bytes.imageUpload);
+  assert.equal(result.capacityAccepted, false);
+});
+
+test('delta eligibility is among changed captures; static references remain independent', () => {
+  const result = estimateClasspilotBudget({ ...base, observedFraction: 1, unchangedFraction: 0.75,
+    changedDeltaFraction: 0.5, deltaPatchRatio: 0.1, teacherDeltaHitFraction: 1 });
+  assert.equal(result.counts.referenceUploads, 142560000);
+  assert.equal(result.counts.deltaUploads, 23760000);
+  assert.equal(result.counts.fullImageUploads, 23760000);
+  assert.equal(result.counts.heartbeats, 95040000);
+});
+
+test('all-moving fallback gets no delta credit and still includes honest unknowns', () => {
+  const result = estimateClasspilotBudget({ ...base, observedFraction: 1, changedDeltaFraction: 0,
+    deltaPatchRatio: 0.1, viewerImageWireRatio: 0.75 });
+  assert.equal(result.counts.deltaUploads, 0);
+  assert.equal(result.bytes.imageUpload, 190080000 * 40960);
+  assert.ok(result.unknowns.some(x => /encoding savings/i.test(x)));
+  for (const invalid of [{ changedDeltaFraction: 1.01 }, { deltaPatchRatio: -1 },
+    { teacherDeltaHitFraction: 2 }, { viewerImageWireRatio: 0 }, { deltaMetadataBytes: -1 }]) {
+    assert.throws(() => estimateClasspilotBudget({ ...base, ...invalid }), /invalid/i);
+  }
+});
