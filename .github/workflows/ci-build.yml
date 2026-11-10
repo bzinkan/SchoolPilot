@@ -545,7 +545,11 @@ jobs:
 
       - name: ClassPilot same-digest runtime-config deployment tests
         shell: pwsh
-        run: pwsh -NoProfile -File tests/classpilot-runtime-config-deploy.test.ps1
+        run: |
+          foreach ($test in @('classpilot-runtime-config-deploy.test.ps1', 'classpilot-telemetry-runtime-registry.test.ps1', 'classpilot-screenshot-delta-runtime.test.ps1')) {
+            pwsh -NoProfile -File "tests/$test"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: My Desk runtime-config deployment tests
         shell: pwsh
