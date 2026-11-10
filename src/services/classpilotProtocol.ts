@@ -54,6 +54,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "pollReplaySafeV1",
   "deviceTelemetryTransportV1",
   "scopedScreenshotReferencesV1",
+  "scopedScreenshotDeltasV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -99,6 +100,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   pollReplaySafeV1: "CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1",
   deviceTelemetryTransportV1: "CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1",
   scopedScreenshotReferencesV1: "CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1",
+  scopedScreenshotDeltasV1: "CLASSPILOT_CAP_SCOPED_SCREENSHOT_DELTAS_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -131,6 +133,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "pollReplaySafeV1",
   "deviceTelemetryTransportV1",
   "scopedScreenshotReferencesV1",
+  "scopedScreenshotDeltasV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -342,6 +345,9 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "scopedScreenshotDeltasV1"
+    && !(["scopedAuthorityChecksV1", "screenshotTrackingWindowLeaseV1", "deviceTelemetryTransportV1", "scopedScreenshotReferencesV1"] as const)
+      .every(parent => isClasspilotCapabilityActive(parent, scope, env))) return false;
   if (capability === "pollReplaySafeV1"
     && !isClasspilotCapabilityActive("scopedAuthorityChecksV1", scope, env)) return false;
   if (capability === "privateChatLifecycleV1" &&
@@ -433,6 +439,9 @@ export function negotiateClasspilotProtocol(options: {
         && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
         && (capability !== "scopedScreenshotReferencesV1" || trackingWindowLeaseAccepted
           && advertised.has("deviceTelemetryTransportV1") && serverEnabled.has("deviceTelemetryTransportV1"))
+        && (capability !== "scopedScreenshotDeltasV1" || trackingWindowLeaseAccepted
+          && advertised.has("deviceTelemetryTransportV1") && serverEnabled.has("deviceTelemetryTransportV1")
+          && advertised.has("scopedScreenshotReferencesV1") && serverEnabled.has("scopedScreenshotReferencesV1"))
     ),
   };
 }
