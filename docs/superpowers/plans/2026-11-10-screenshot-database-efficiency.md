@@ -69,3 +69,25 @@ tests that import it. Do not repeat the broad Node 24 backend run.
 - Initial entropy-only gzip probe saved ~25.5%; this is not an observed school
   workload. Real Chrome delta measurements and production cost acceptance remain
   outstanding.
+- Task 1 complete: 5eb01ed0/0ff8e484, 16 native HTTP/actual-route tests pass; gzip
+  completes before final authority checks, with bounded identity fallback.
+- Task 2 helper df4310b4 and route integration complete: 79 classifier cases and
+  37 route/history cases pass. Invalid title shapes keep the prior educational-
+  only path; completed unknown results use INSERT RETURNING proof.
+- Index proof: existing-service temporary 80,000-row fixture copied actual index
+  definitions, then removed only the two candidates. Current history/report/
+  retention query paths retained valid access; 1,466,368 index bytes were avoided
+  in this synthetic fixture. Broad unbounded COUNT (not a current history API)
+  was slower, so do not claim every hypothetical query improves. Table vanished
+  when its one connection closed; no user rows or permanent schema changed.
+- Task 4 measured: 15 genuine Chrome captures/20 comparisons, exact Node/Chrome
+  reconstruction. Typing/caret/banner-text patches save 83–99%; scroll/noise
+  fall back. See the design's exact delta interface. Binary-full uploads are
+  deferred in favor of this larger measured opportunity.
+- Task 5 interfaces: canonical src/services/screenshotDeltaCodec.ts -> generated
+  frontend lib/screenshotDeltaCodec.js and ClassPilot extension/screenshot-delta-
+  codec.js. encodeScreenshotDelta(base,target,options?) returns delta bytes or a
+  full-fallback reason; applyScreenshotDelta(base,patch) returns exact raw bytes
+  or rejects. New scopedScreenshotDeltasV1 stays off. Root owns frontend/client/
+  capability tooling; screenshot owner owns scoped cache/server integration;
+  codec owner owns canonical/generator/parity files; DB owner owns index retirement.

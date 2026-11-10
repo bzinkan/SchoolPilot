@@ -55,3 +55,54 @@ The current PAYG all-moving-image scenario cannot be made less than $300 by
 database optimization alone. Keep zero-reuse and eight-hour cases, uncertain
 compute/storage costs and unavailable Pro compatibility explicit. No local
 correctness or compression test constitutes AWS fleet-capacity acceptance.
+
+## Measured lossless delta selection
+
+The local Chrome spike used the real JPEG-50 capture and production 640px/q0.6
+thumbnail function. Fifteen captures/20 comparisons reconstructed exact bytes in
+Node and Chrome. Typing saved 92.9% (25,874 to 1,840 bytes), a caret-like change
+99.4%, and a banner text change 82.7%; scrolling/noise saved under 6%. These are
+controlled examples, not a school workload average. Encoder memory was about
+1.2–1.5 MB; partial changes used about 1.6–2.2 ms CPU, decoder about 0.01–0.03 ms.
+
+Implement deltas before a separate binary-full-image protocol. Use a bounded
+copy/literal codec that can copy bytes starting at arbitrary base bit offsets;
+it preserves the exact JPEG bitstream rather than decoding/re-encoding pixels.
+Student encoding has an 8 ms budget, at most 65,536 dictionary entries and twelve
+candidates/key; use a patch only if it saves at least 25% and 512 bytes. Base,
+target and patch inputs are bounded by 256 KiB, and decode has at most 8,192
+operations. Existing exact-image references win for identical captures.
+
+The canonical TypeScript codec is generated verbatim to the frontend and separate
+extension, with parity/golden/malformed-input tests. The extension sends a JSON
+`screenshotDelta` instead of `screenshot` only under a new default-off capability
+`scopedScreenshotDeltasV1`, requiring transport, references and their parents.
+The descriptor is `{ codec: 'cp-bit-copy-v1', baseImageId, data, targetBytes,
+uploadIntegrity }`; data is Base64 patch bytes. Upload integrity is SHA-256 over
+the domain `classpilot:screenshot-delta-upload:v1\0`, opaque base ID, `\0` and
+target raw JPEG bytes. It is server input only. Full/ref version 1 stays valid.
+
+The server reads only the exact scoped current base under existing fresh upload
+authority, bounded-decodes and verifies it, then atomically writes current full
+pixels plus one profitable patch only if the expected base ID is still current
+and fresh. Current full pixels stay compatible with older readers. Keep only one
+patch, not a history chain or duplicate full image. Full writes clear patches.
+Unknown, expired, raced or invalid bases return existing `SCREENSHOT_IMAGE_REQUIRED`;
+the extension immediately sends the full bytes from the same genuine capture.
+
+Teachers opt in with `imageDeltaProtocolVersion: 1` alongside existing known IDs.
+Only a matching base ID/binding may receive `{ imageId, delta: { codec,
+baseImageId, data, targetBytes, integrityTag }, ...freshMetadata }`. The public
+integrity tag uses domain `classpilot:screenshot-delta-display:v1\0`, target
+opaque image ID, `\0` and target bytes; it is not the private content hash or a
+cross-scope fingerprint. The existing query cache is the only pixel base. A
+missing/bad base or integrity mismatch triggers one full read with current
+authority and no delta offer. Cancellation and freshness fences remain after
+asynchronous digest work. Server-generated patches are prohibited: reuse the
+student's validated patch to keep server CPU bounded.
+
+The cache still writes the reconstructed full image. Do not claim binary/cache
+storage savings from this design. Model exact references, profitable changed-image
+patches, full fallback and viewer gzip separately. Moving video/noise remains a
+full-image workload. Governed delta pilot/global/off modes must preserve parent
+scopes and block turning references off while deltas remain active.
