@@ -64,6 +64,7 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-telemetry-registered-transports.integration.test.ts",
   "classpilot-telemetry-idempotency.integration.test.ts",
   "classpilot-today-schedule-rls.test.ts",
   "classpilot-today-schedule.integration.test.ts",

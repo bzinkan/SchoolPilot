@@ -177,8 +177,8 @@ describe("ClassPilot command and ACK hot path", () => {
     const devices = source("src/routes/classpilot/devices.ts");
     const storage = source("src/services/storage.ts");
     const heartbeatSection = devices.slice(
-      devices.indexOf('router.post("/device/heartbeat"'),
-      devices.indexOf('router.post("/device/screenshot"')
+      devices.indexOf("export async function executeCanonicalHeartbeat("),
+      devices.indexOf("export async function executeCanonicalScreenshot(")
     );
     const inboxSection = storage.slice(
       storage.indexOf("export async function getPendingMessagesForStudent"),
@@ -189,7 +189,7 @@ describe("ClassPilot command and ACK hot path", () => {
     assert.match(heartbeatSection, /pendingMessageRecoveryHeartbeat/);
     assert.match(heartbeatSection, /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?schoolId, studentId, studentSessionId, deviceId[\s\S]*?shouldCheckPendingMessages \? \{ excludeMessageIds:/);
     assert.doesNotMatch(heartbeatSection, /getPendingMessagesForStudent\(/);
-    assert.match(heartbeatSection, /res\.once\("finish", \(\) => \{[\s\S]*?responseFinished = true; apply\(\)/);
+    assert.match(heartbeatSection, /context\.delivery\.onFinished\(\s*\(\) => \{[\s\S]*?responseFinished = true; apply\(\)/);
     assert.match(heartbeatSection, /if \(!released\) return[\s\S]*?if \(!responseFinished\) return[\s\S]*?current\.messageIds\.add\(messageId\)/);
     assert.match(heartbeatSection, /if \(finalDelivery\.authorized\) commitPendingInbox\(\)/);
     assert.match(inboxSection, /eq\(messages\.schoolId, options\.schoolId\)/);
