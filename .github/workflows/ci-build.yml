@@ -179,10 +179,6 @@ jobs:
       # Test sources import the compiled dist surface so the no-emit ratchet
       # must run after a clean-checkout build, not against a stale local dist.
       - name: Test TypeScript check (no emit)
-        # The full test program can exceed Node 22's default 4 GiB heap on Linux.
-        # Bound this CI step at 5 GiB without changing production Node settings.
-        env:
-          NODE_OPTIONS: --max-old-space-size=5120
         run: npm run check:tests
 
       - name: Pure unit tests (concurrency 4)
