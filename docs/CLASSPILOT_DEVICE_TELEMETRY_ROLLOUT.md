@@ -1,14 +1,15 @@
-# Device telemetry and exact screenshot references
+# Device telemetry and lossless screenshot transport
 
-This implementation adds two capabilities, both off by default:
+This implementation adds three capabilities, all off by default:
 
 | Capability | Flag | Required parents |
 | --- | --- | --- |
 | `deviceTelemetryTransportV1` | `CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1` | Protocol v3, `scopedAuthorityChecksV1` |
 | `scopedScreenshotReferencesV1` | `CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1` | Protocol v3, scoped authority, device telemetry, `screenshotTrackingWindowLeaseV1` |
+| `scopedScreenshotDeltasV1` | `CLASSPILOT_CAP_SCOPED_SCREENSHOT_DELTAS_V1` | Protocol v3, scoped authority, device telemetry, tracking-window lease, exact-image references |
 
 Chrome extension publication is separate from the backend and dashboard release.
-Windows bridge negotiation removes both markers until that client supports them.
+Windows bridge negotiation removes these markers until that client supports them.
 Captures keep their existing cadence and quality. References reuse only identical
 image bytes within the exact school/student/login/classroom or supervision binding;
 each capture still supplies fresh metadata and passes current authority checks.
@@ -16,7 +17,7 @@ each capture still supplies fresh metadata and passes current authority checks.
 ## Release order
 
 1. Merge and review both repositories. Complete the backend migration through the
-   checksum-ledger migration task. Deploy the backend and dashboard with both new
+   checksum-ledger migration task. Deploy the backend and dashboard with all new
    capabilities **off**, then wait for the API and worker to converge completely.
 2. Release the separately reviewed extension package and establish actual managed
    device adoption. A Store listing or submission alone does not prove adoption.
@@ -33,6 +34,10 @@ each capture still supplies fresh metadata and passes current authority checks.
    one-school telemetry pilot, then its global promotion. Activate a references
    pilot afterwards, then promote it globally. Pilot scopes must stay inside each
    active parent scope; a global child requires global parents.
+6. Use Schema 13 for the separately scoped lossless delta pilot and promotion
+   after transport and references are active. Its exact-source local record
+   additionally requires successful lossless-byte, stale-base and teacher-recovery
+   checks. Keep real fleet cost/performance acceptance separate.
 
 The runtime tool requires a stable API/worker pair on the exact reviewed image
 digest and source SHA before planning and again before mutation. Its source
@@ -50,7 +55,7 @@ private profile snapshot hash, task bounds, and convergence checks are unchanged
 | `device-telemetry-off` | Disable transport only; references must already be off |
 | `screenshot-references-pilot` | References off → on for exactly `pilotSchoolId` |
 | `screenshot-references-global-on` | References' active one-school pilot → global |
-| `screenshot-references-off` | Disable references only |
+| `screenshot-references-off` | Disable references only; deltas must already be off |
 
 Every mode preserves all unrelated capability flags, entries, school scopes,
 transient replay controls, and existing task configuration. Off profiles need no
@@ -106,10 +111,52 @@ private `-ProfilePath` and `-ExternalEvidenceRoot`, and the exact
 the documented Apply procedure in [runtime operations](CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md).
 The tool changes runtime configuration only; it does not release either binary.
 
+## Schema 13 lossless delta profiles
+
+Schema 13 accepts only `screenshot-deltas-pilot`, `screenshot-deltas-global-on`
+and `screenshot-deltas-off`. It uses the same source-preserving transitions,
+exact pilot scope, global-parent requirements and evidence-free off behavior as
+Schema 12. Activation records contain all six Schema 12 checks plus these three
+boolean checks: `losslessDeltaBytesPreserved`, `staleBaseRecovery` and
+`teacherDeltaRecovery`. All must be factual and true for the exact backend and
+extension commits; `capacityAccepted` remains false. Schema 12 cannot activate
+deltas, and older serving sources cannot project away an enabled delta control.
+
+The extension still captures and encodes every image at the existing cadence and
+quality. Identical images use exact references first. Changed JPEGs may use the
+bounded `cp-bit-copy-v1` codec only when it saves at least 25% and 512 bytes within
+an 8 ms encoding budget. Full fallback uses the same capture and timestamp.
+Upload integrity is private and scoped to the acknowledged base image. The
+server retains the current full image plus at most one validated patch; it does
+not create a patch chain or encode new patches itself.
+
+Teachers offer `imageDeltaProtocolVersion: 1` in the existing JSON request body
+with their known image IDs. The live CloudFront header whitelist does not carry
+arbitrary new headers. Readers receive a patch only for their exact current
+binding and base, verify a target-scoped display digest, and reconstruct the
+original JPEG bytes in their existing query cache. Missing/corrupt/evicted bases
+recover with one freshly authorized full read. Older readers receive full images.
+No additional global pixel cache is introduced.
+
+Authorized screenshot JSON can additionally use bounded origin gzip. Encoding
+finishes before the final authority revalidation; saturation, timeout or changed
+response content uses the ordinary identity path. Current private/no-store
+headers, image bytes, capture rates and security checks remain in force.
+
+The heartbeat migration retires only `heartbeats_student_id_idx` and
+`heartbeats_student_email_idx`, after strict catalog checks attest their valid
+composite replacements and both candidates. It runs nontransactionally through
+the immutable migration ledger using `DROP INDEX CONCURRENTLY`; unexpected
+definitions stop it. All rows and retention remain. Run
+`npm run test:heartbeat-index-native` against the existing local PostgreSQL
+service before release; its guarded runner owns and removes an empty fixture
+database. No production indexes are dropped by local verification.
+
 ## Disable and binary rollback
 
-First apply `screenshot-references-off`, then `device-telemetry-off`. Confirm the
-serving pair has converged with both controls off. Wait **at least 120 seconds**
+First apply `screenshot-deltas-off`, then `screenshot-references-off`, then
+`device-telemetry-off`. Confirm the serving pair has converged with all controls
+off. Wait **at least 120 seconds**
 for exact-image cache entries and in-flight recovery to drain before rolling back
 to a pre-feature binary. Keep the additive nullable heartbeat fingerprint column
 and its immutable migration ledger entry. Do not reverse the migration or reuse
@@ -131,6 +178,7 @@ provider:
 ```powershell
 pwsh -NoProfile -File tests/classpilot-telemetry-runtime-registry.test.ps1
 pwsh -NoProfile -File tests/classpilot-telemetry-runtime-profiles.test.ps1
+pwsh -NoProfile -File tests/classpilot-screenshot-delta-runtime.test.ps1
 pwsh -NoProfile -File tests/classpilot-runtime-config-deploy.test.ps1
 ```
 

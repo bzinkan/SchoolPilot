@@ -21,7 +21,7 @@ export function estimateClasspilotBudget(input = {}) {
     heartbeatRequestBytes: 0, heartbeatResponseBytes: 0,
     screenshotMetadataBytes: 512, teacherMetadataBytesPerStudent: 0,
     classSize: 30, teacherPollSeconds: 5, transport: 'http',
-    fallbackFraction: 0, edgePlan: 'payg', proCompatibilityConfirmed: false,
+    fallbackFraction: 0, retransmitFraction: 0, edgePlan: 'payg', proCompatibilityConfirmed: false,
     monthlyBaseline: 233, replacedBaselineEdgeCost: 0,
     connectionsPerDeviceDay: 1, extraHttpRequests: 0,
     additionalComputeCost: 0, storageGrowthCost: 0, monitoringGrowthCost: 0,
@@ -36,11 +36,13 @@ export function estimateClasspilotBudget(input = {}) {
     if (!Number.isFinite(o[key]) || o[key] < 0) throw new Error(`Invalid ${key}`);
   }
   for (const key of ['observedFraction', 'unchangedFraction', 'fallbackFraction', 'redisCrossAzFraction',
-    'changedDeltaFraction', 'deltaPatchRatio', 'teacherDeltaHitFraction', 'viewerImageWireRatio']) {
+    'changedDeltaFraction', 'deltaPatchRatio', 'teacherDeltaHitFraction', 'viewerImageWireRatio', 'retransmitFraction']) {
     if (!Number.isFinite(o[key]) || o[key] < 0 || o[key] > 1) throw new Error(`Invalid ${key}`);
   }
   if (!Number.isInteger(o.students) || o.hoursPerDay > 24 || o.schoolDays > 31
     || o.classSize === 0 || o.teacherPollSeconds === 0 || o.viewerImageWireRatio === 0
+    || typeof o.proCompatibilityConfirmed !== 'boolean'
+    || o.retransmitFraction > o.fallbackFraction || (o.transport !== 'websocket' && o.retransmitFraction > 0)
     || !['http', 'websocket'].includes(o.transport) || !['payg', 'pro'].includes(o.edgePlan)
     || o.replacedBaselineEdgeCost > o.monthlyBaseline) throw new Error('Invalid workload options');
 
@@ -52,7 +54,10 @@ export function estimateClasspilotBudget(input = {}) {
   const fullImageUploads = changedImageUploads - deltaUploads;
   const referenceUploads = screenshots - changedImageUploads;
   const deviceOperations = heartbeats + screenshots;
-  const deviceHttpRequests = deviceOperations * (o.transport === 'http' ? 1 : o.fallbackFraction);
+  // A lost receipt can advance a delta/ref base before HTTP retries it. Budget
+  // the retried request plus one full same-capture recovery for those images.
+  const retransmitRecoveryImages = (deltaUploads + referenceUploads) * o.retransmitFraction;
+  const deviceHttpRequests = deviceOperations * (o.transport === 'http' ? 1 : o.fallbackFraction) + retransmitRecoveryImages;
   const teacherHttpRequests = Math.ceil(o.students / o.classSize) * seconds / o.teacherPollSeconds * o.teacherCopies;
   // Existing sockets still have upgrade requests. Normal protocol keepalives
   // are frames, not recurring HTTP requests.
@@ -70,15 +75,21 @@ export function estimateClasspilotBudget(input = {}) {
   const heartbeatDownload = heartbeats * o.heartbeatResponseBytes;
   const screenshotMetadata = screenshots * o.screenshotMetadataBytes;
   const teacherMetadata = o.students * seconds / o.teacherPollSeconds * o.teacherCopies * o.teacherMetadataBytesPerStudent;
-  const originUpload = imageUpload + heartbeatUpload + screenshotMetadata;
-  const viewerDownload = imageDownload + heartbeatDownload + teacherMetadata;
+  const retransmitUpload = (imageUpload + heartbeatUpload + screenshotMetadata) * o.retransmitFraction
+    + retransmitRecoveryImages * (o.screenshotBytes + o.screenshotMetadataBytes);
+  const retransmitDownload = heartbeatDownload * o.retransmitFraction;
+  const originUpload = imageUpload + heartbeatUpload + screenshotMetadata + retransmitUpload;
+  const viewerDownload = imageDownload + heartbeatDownload + teacherMetadata + retransmitDownload;
   const albProcessed = originUpload + viewerDownload;
   // Every changed target is still stored in full. Each delta additionally reads
   // a full base and stores one patch; Redis bytes do not inherit wire savings.
   // Command envelopes, metadata and heartbeat Redis work remain unmeasured.
   const redisImageWrites = changedImageUploads * o.screenshotBytes + deltaUploads * patchBytes;
   const redisDeltaBaseReads = deltaUploads * o.screenshotBytes;
-  const redisImageCrossAz = (redisImageWrites + redisDeltaBaseReads + imageDownloadBeforeEncoding) * o.redisCrossAzFraction;
+  const redisRetransmitImage = (redisImageWrites + redisDeltaBaseReads) * o.retransmitFraction
+    + retransmitRecoveryImages * o.screenshotBytes;
+  const redisImageCrossAz = (redisImageWrites + redisDeltaBaseReads + imageDownloadBeforeEncoding
+    + redisRetransmitImage) * o.redisCrossAzFraction;
   const pro = o.edgePlan === 'pro';
   const costs = {
     baseline: o.monthlyBaseline - o.replacedBaselineEdgeCost,
@@ -98,6 +109,10 @@ export function estimateClasspilotBudget(input = {}) {
   if (!has(input, 'teacherMetadataBytesPerStudent')) unknowns.push('Teacher metadata bytes are unmeasured.');
   if (!has(input, 'redisCrossAzFraction')) unknowns.push('Redis cross-AZ placement and metadata traffic are unmeasured.');
   if (!has(input, 'changedDeltaFraction')) unknowns.push('Actual delta eligibility across the school workload is unmeasured.');
+  if (o.transport === 'websocket' && o.fallbackFraction > 0 && !has(input, 'retransmitFraction')) {
+    unknowns.push('Post-send retransmission bytes within HTTP fallback are unmeasured.');
+  }
+  if (o.changedDeltaFraction > 0) unknowns.push('Additional delta-base misses and failed teacher patch recovery traffic remain unmeasured.');
   if (o.changedDeltaFraction > 0 && (!has(input, 'deltaPatchRatio') || !has(input, 'teacherDeltaHitFraction'))) {
     unknowns.push('Actual patch sizes and teacher exact-base hit rate are unmeasured.');
   }
@@ -112,9 +127,10 @@ export function estimateClasspilotBudget(input = {}) {
   return {
     assumptions: o,
     counts: { heartbeats, screenshots, changedImageUploads, fullImageUploads, deltaUploads, referenceUploads, deviceOperations,
-      deviceHttpRequests, teacherHttpRequests, connections, edgeRequests },
+      deviceHttpRequests, retransmitRecoveryImages, teacherHttpRequests, connections, edgeRequests },
     bytes: { imageUpload, imageDownload, imageDownloadBeforeEncoding, heartbeatUpload, heartbeatDownload, screenshotMetadata,
-      teacherMetadata, originUpload, viewerDownload, albProcessed, redisImageWrites, redisDeltaBaseReads, redisImageCrossAz },
+      teacherMetadata, retransmitUpload, retransmitDownload, originUpload, viewerDownload, albProcessed,
+      redisImageWrites, redisDeltaBaseReads, redisRetransmitImage, redisImageCrossAz },
     costs, total, remainingBudget: o.budget - total, unknowns,
     budgetStatus: total > o.budget ? 'over-target' : unknowns.length ? 'unverified' : 'within-modeled-target',
     capacityAccepted: false,
@@ -125,6 +141,8 @@ export function estimateClasspilotBudget(input = {}) {
       'Unchanged-image savings depend on real recaptures; animated pages may save zero bytes.',
       'Typing fixture patch ratios are not a measured fleet delta eligibility or teacher base-hit rate.',
       'Delta uploads reconstruct and retain the full target in Redis; they can increase cache traffic.',
+      'Post-send retries budget duplicated upload/heartbeat-response bytes and conservative delta/ref full recovery.',
+      'Other base misses, failed teacher patch recovery, receipts and command envelopes require observed overhead.',
       'This model never establishes production capacity or an actual monthly bill.',
     ],
   };

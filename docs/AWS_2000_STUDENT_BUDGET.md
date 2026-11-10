@@ -10,13 +10,16 @@ account-wide $415.59 includes unusual resource-hours and is not the baseline.
 The coordinated implementation introduces negotiated device WebSocket telemetry,
 cross-transport heartbeat idempotency, scoped exact-image references and smaller
 Redis coordination commands. It preserves HTTP compatibility and recovery.
-Both new capabilities default off. It does not itself change the serving fleet,
+All three new capabilities default off. It does not itself change the serving fleet,
 enroll a CDN plan, release an extension, shrink resources or establish capacity.
 
 SchoolPilot implementation is based on main `71c0352e`; the extension is based
 on main `c0a21a4` (source prepares 3.0.4). Those source observations do not establish
 the currently published extension, an uploaded ZIP or managed-device adoption.
 Recheck all release identities before a coordinated production rollout.
+The second pass integrates SchoolPilot main `6b985954` through `ed32fc78` and
+adds bounded origin gzip, lossless changed-image patches, safe completed
+classification reuse at INSERT and guarded redundant-index retirement.
 
 No paid AWS/Linux capacity environment is used. Normal local Windows checks,
 the existing local database/Redis fixtures and real Chrome are used instead.
@@ -86,6 +89,68 @@ subtracting its already-included current edge/traffic costs. They **exclude
 unverified storage/backup growth, extra compute, monitoring growth and other
 overhead**. They are not quotes. The zero-reference and eight-hour cases must
 remain in every review; do not report only a favorable workload as success.
+
+## Second-pass screenshot and database savings
+
+The new optional delta path preserves the original JPEG bytes and capture
+cadence. On three genuine Chrome worksheet typing captures, the current bounded
+encoder produced 2,058/2,315/2,069-byte patches from
+26,579/26,640/26,684-byte JPEGs, taking 3.8/5.2/3.9 ms. This is about 91–92%
+patch-byte reduction for those fixtures, not an expected school-wide percentage.
+Scrolling and noise were unprofitable and use full fallback. Exact references
+remain the first choice when a fresh capture is byte-identical.
+
+Origin gzip reduces Base64 JSON overhead independently of delta eligibility.
+Compression is bounded and may fall back to identity. It completes before the
+existing final authorization checks. CloudFront's cache-disabled API behavior
+does not automatically compress origin responses; its normalized
+`Accept-Encoding` forwarding permits origin encoding.
+See [CloudFront compression behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/ServingCompressedFiles.html).
+
+The pure model now separates `changedDeltaFraction` (among changed captures),
+`deltaPatchRatio`, `teacherDeltaHitFraction`, `deltaMetadataBytes` and
+`viewerImageWireRatio`. Viewer encoding does not reduce uploads or Redis bytes.
+Every changed target is still stored in full; delta uploads additionally read a
+full base and store one patch. A teacher whose exact base is missing receives
+the full image. Actual cache placement and metadata traffic remain unmeasured.
+`retransmitFraction` distinguishes post-send lost-receipt retries from fallback
+before a WS send. It adds duplicate request/heartbeat-response bytes and
+conservatively budgets an extra full recovery request/cache write for retried
+delta/reference images. Other base misses and failed teacher-patch recovery
+traffic remain unmeasured overhead. Idempotent rows do not make network retries
+free.
+
+The following PAYG sensitivity examples retain the earlier demanding workload,
+$233 baseline and illustrative heartbeat/metadata/AZ assumptions. They assume
+viewer image wire bytes are 75% of the JSON image strings, patches are 10% plus
+256 bytes, and 75% of teacher patch reads have the exact base. These are explicit
+scenario inputs, not fleet observations. No CloudFront subscription savings are
+counted. These rows assume no HTTP fallback/retransmission; real recovery costs
+must be added before treating them as an operating envelope.
+
+| Exact references | Patches among changed captures | Six-hour subtotal | Eight-hour subtotal |
+| ---: | ---: | ---: | ---: |
+| 0% | 0% | $588.94 | $736.58 |
+| 50% | 0% | $382.45 | $461.27 |
+| 50% | 50% | $313.35 | $369.14 |
+| 75% | 50% | $270.40 | $282.86 |
+| 75% | 75% | $263.63 | $273.83 |
+
+The favorable rows show a possible traffic envelope, with little room for
+unverified database/compute/storage costs. They do not establish that the real
+fleet has enough unchanged or patch-friendly content to stay under $300. The
+all-moving case remains above target. Do not substitute the typing fixture's
+91–92% saving for fleet eligibility, teacher base hits or an all-in AWS bill.
+
+Database changes retain every heartbeat and current reporting. Valid completed
+safety-free educational/unknown classification results can populate the original
+INSERT, avoiding a redundant UPDATE, cache patch and broadcast. Unsafe inputs,
+stale/model-changed cache entries and results requiring fresh teacher intent keep
+their existing processing. Two single-column heartbeat indexes are retired only
+after strict catalog attestation of their composite replacements. In an
+80,000-row synthetic local fixture, those two indexes occupied 1,466,368 bytes;
+this is not a live storage or dollar projection. Current history/report/retention
+access paths remained valid. No retention window or history row is removed.
 
 ## CloudFront Pro is conditional
 
@@ -168,7 +233,9 @@ correctness check with synthetic fixtures, not a capacity test.
 Transport savings preserve every successful normal heartbeat. At ten seconds,
 2,000 devices create 4.32 million rows per six-hour school day or 5.76 million
 per eight-hour day. Retention defaults to 720 hours (30 calendar days), and the
-schema declares a primary key plus nine secondary heartbeat indexes. The new
+prior schema declared a primary key plus nine secondary heartbeat indexes, with
+another school/timestamp index in the bootstrap. The guarded second-pass
+migration removes only the two proven prefix duplicates. The new
 nullable 64-character payload hash adds about 6.08/8.11 GB of raw characters per
 22-school-day six/eight-hour workload, without a new index or backfill. These
 figures exclude all PostgreSQL tuple/index/WAL overhead and other row fields.

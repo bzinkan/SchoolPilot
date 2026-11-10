@@ -122,3 +122,22 @@ test('all-moving fallback gets no delta credit and still includes honest unknown
     assert.throws(() => estimateClasspilotBudget({ ...base, ...invalid }), /invalid/i);
   }
 });
+
+test('lost WebSocket receipts include duplicate bytes and conservative same-capture recovery', () => {
+  const options = { ...base, students: 1, hoursPerDay: 1, schoolDays: 1, observedFraction: 1,
+    screenshotBytes: 1000, transport: 'websocket', fallbackFraction: 0.1,
+    changedDeltaFraction: 1, deltaPatchRatio: 0.1, deltaMetadataBytes: 10 };
+  const normal = estimateClasspilotBudget({ ...options, retransmitFraction: 0 });
+  const retry = estimateClasspilotBudget({ ...options, retransmitFraction: 0.1 });
+  assert.equal(retry.counts.deviceHttpRequests, normal.counts.deviceHttpRequests + 72);
+  // A delta's base may have advanced after an accepted upload; budget full
+  // same-capture recovery for every retransmitted screenshot, including refs.
+  assert.equal(retry.bytes.retransmitUpload, 0.1 * (360 * 1024 + 720 * (110 + 512)) + 72 * (1000 + 512));
+  assert.equal(retry.bytes.originUpload, normal.bytes.originUpload + retry.bytes.retransmitUpload);
+  assert.equal(retry.bytes.retransmitDownload, 0.1 * 360 * 2048);
+  assert.equal(retry.bytes.viewerDownload, normal.bytes.viewerDownload + retry.bytes.retransmitDownload);
+  assert.equal(retry.bytes.redisRetransmitImage, 0.1 * (720 * (1000 + 110) + 720 * 1000) + 72 * 1000);
+  assert.ok(estimateClasspilotBudget(options).unknowns.some(x => /retransmission/i.test(x)));
+  assert.throws(() => estimateClasspilotBudget({ ...options, retransmitFraction: 0.2 }), /invalid/i);
+  assert.throws(() => estimateClasspilotBudget({ ...options, proCompatibilityConfirmed: 'false' }), /invalid/i);
+});
