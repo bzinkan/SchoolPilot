@@ -13,6 +13,16 @@ const frame = (extra = {}) => ({ type: "device-telemetry", operationId: randomUU
   studentToken: "synthetic-token", payload: { activeTabUrl: "https://example.invalid/", activeTabTitle: "Lesson" }, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test("a shared school NAT permits the 2000-student cadence with bounded recovery headroom", async () => {
+  const policy = await import("../src/services/classpilotDeviceTelemetry.js");
+  assert.equal(Reflect.get(policy, "DEVICE_TELEMETRY_IP_WINDOW_MS"), 300_000);
+  const exceeded = Reflect.get(policy, "deviceTelemetryIpRateExceeded");
+  assert.equal(typeof exceeded, "function", "the production limiter must use the reviewed shared-NAT bound");
+  assert.equal(exceeded(2_000 * 90), false);
+  assert.equal(exceeded(300_000), false);
+  assert.equal(exceeded(300_001), true);
+});
+
 test("telemetry frame is bounded, strictly typed and never selects a server route", () => {
   assert.ok(parseDeviceTelemetryFrame(frame()));
   for (const value of [frame({ operationId: "not-a-uuid" }), frame({ kind: "delete-school" }),

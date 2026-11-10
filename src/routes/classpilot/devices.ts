@@ -1,4 +1,5 @@
 import { DeviceTelemetryDelivery, heartbeatTelemetryIdentity, validTelemetryOperationId,
+  DEVICE_TELEMETRY_IP_WINDOW_MS, DEVICE_TELEMETRY_IP_MAX_OPERATIONS, deviceTelemetryIpRateExceeded,
   registerClasspilotDeviceTelemetryOperations, type DeviceTelemetryContext, type DeviceTelemetryOutcome,
 } from "../../services/classpilotDeviceTelemetry.js";
 import { parseScreenshotImageRequest, uploadedScreenshotPixelBytes } from "../../services/classpilotScreenshotImageRequest.js";
@@ -636,7 +637,9 @@ const deviceHeartbeatRateStore = redisStore("rl:device:heartbeat:") ?? new Memor
 const deviceScreenshotRateStore = redisStore("rl:device:screenshot:") ?? new MemoryStore();
 const deviceTelemetryIpRateStore = redisStore("rl:device:telemetry-ip:") ?? new MemoryStore();
 // Initialize the same Store contract as HTTP, including its Redis window.
-rateLimit({ windowMs: 300_000, max: 100_000, store: deviceTelemetryIpRateStore,
+// Redis is cross-process; the existing local fallback is per-process during
+// Redis outages. The shared-NAT ceiling preserves the 2,000-device cadence.
+rateLimit({ windowMs: DEVICE_TELEMETRY_IP_WINDOW_MS, max: DEVICE_TELEMETRY_IP_MAX_OPERATIONS, store: deviceTelemetryIpRateStore,
   standardHeaders: false, legacyHeaders: false, passOnStoreError: true });
 const deviceHeartbeatLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -5619,7 +5622,7 @@ async function runWebSocketDeviceOperation(kind: "heartbeat" | "screenshot", con
     const store = kind === "heartbeat" ? deviceHeartbeatRateStore : deviceScreenshotRateStore;
     let limited = false;
     try {
-      limited = (await deviceTelemetryIpRateStore.increment(ipKeyGenerator(context.sourceIp))).totalHits > 100_000
+      limited = deviceTelemetryIpRateExceeded((await deviceTelemetryIpRateStore.increment(ipKeyGenerator(context.sourceIp))).totalHits)
         || (await store.increment(`device:${schoolId}:${context.binding.deviceId}`)).totalHits > 60;
     } catch { /* Preserve the HTTP limiters' passOnStoreError behavior. */ }
     if (limited) return context.reply(429, { error: "Too many telemetry requests", code: kind === "heartbeat"

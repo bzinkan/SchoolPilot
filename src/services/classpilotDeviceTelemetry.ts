@@ -5,6 +5,12 @@ import type { Request } from "express";
 
 export const DEVICE_TELEMETRY_CAPABILITY = "deviceTelemetryTransportV1";
 export const DEVICE_TELEMETRY_MAX_BYTES = 256 * 1024;
+export const DEVICE_TELEMETRY_IP_WINDOW_MS = 300_000;
+export const DEVICE_TELEMETRY_IP_MAX_OPERATIONS = 300_000;
+/** 2,000 devices at the existing observed cadence use 180,000 / five minutes. */
+export function deviceTelemetryIpRateExceeded(totalHits: number): boolean {
+  return totalHits > DEVICE_TELEMETRY_IP_MAX_OPERATIONS;
+}
 export type DeviceTelemetryKind = "heartbeat" | "screenshot";
 export type DeviceTelemetryBinding = Readonly<{
   schoolId: string; deviceId: string; studentId: string; studentSessionId: string;
