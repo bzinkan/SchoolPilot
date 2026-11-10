@@ -14,6 +14,18 @@ Captures keep their existing cadence and quality. References reuse only identica
 image bytes within the exact school/student/login/classroom or supervision binding;
 each capture still supplies fresh metadata and passes current authority checks.
 
+## Observed November 10 rollout
+
+SchoolPilot 6f2b11dc enabled the three capabilities globally on the API and
+worker. ClassPilot 3.0.5 was prepared in `dist`; Store publication and managed
+device adoption are separate and remain unverified here. The separately reviewed
+after-hours full Terraform apply raised only the device-ingest WAF limit to
+300,000 and reconciled two unused cookie-name templates. Complete live inventory,
+encrypted state backups and a zero-change plan verified unchanged serving
+revisions/sizes/schedules and other security rules. Canonical production now
+records the observed limit. These are release/correctness facts, not acceptance
+of 2,000-device performance or a $300 monthly ceiling.
+
 ## Release order
 
 1. Merge and review both repositories. Complete the backend migration through the
@@ -25,11 +37,11 @@ each capture still supplies fresh metadata and passes current authority checks.
    committed backend and extension sources. Preserve their factual outputs in the
    owner-only external evidence directory. Do not claim fleet capacity from these
    checks and do not start Linux/AWS load infrastructure for this rollout.
-4. Prepare and review the existing WAF rule override separately before an entire
-   2,000-device fleet can recover through HTTP. The existing 100,000-request/5-minute
-   WAF setting is below the modeled 180,000 telemetry operations/5 minutes at the
-   all-observed cadence. The proposed 300,000 override requires its own reviewed
-   infrastructure apply. No infrastructure apply is part of this implementation.
+4. Confirm the observed 300,000-request/5-minute device-ingest WAF baseline before
+   an entire 2,000-device fleet recovers through HTTP. Its separately reviewed
+   November 10 apply supersedes the old 100,000 setting, which was below the
+   modeled 180,000 telemetry operations/5 minutes at the all-observed cadence.
+   Do not repeat an activation apply or weaken the generic API/security rules.
 5. Use the governed runtime tool's Plan → review → Apply → verify flow for a
    one-school telemetry pilot, then its global promotion. Activate a references
    pilot afterwards, then promote it globally. Pilot scopes must stay inside each
