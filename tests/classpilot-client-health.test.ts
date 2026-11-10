@@ -49,3 +49,76 @@ test("quiet client health remains observable without creating zero-only CloudWat
   assert.equal(result._aws, undefined);
   assert.equal(result.ClientPreviewUnavailable, 0);
 });
+
+function qualifiedPreview() {
+  return {
+    version: 1,
+    freshnessBuckets: [120, 20, 2, 1, 3, 4],
+    excludedCounts: { readDenied: 2, notObserved: 30, backgroundCadence: 40, monitoringNotCurrent: 24 },
+  };
+}
+
+test("qualified preview diagnostics preserve every legacy metric and add no metric stream", () => {
+  const previewEligibilityV1 = qualifiedPreview();
+  const result = classpilotClientHealthSchema.safeParse({ ...valid, previewEligibilityV1 });
+  assert.equal(result.success, true, "an optional bounded aggregate must be accepted");
+  assert.ok(result.success);
+  const lines: string[] = [];
+  emitClasspilotClientHealth(classpilotClientHealthSchema.parse(valid), line => lines.push(line), () => 123);
+  emitClasspilotClientHealth(result.data, line => lines.push(line), () => 123);
+  const original = JSON.parse(lines[0]!);
+  const { previewEligibilityV1: logged, ...unchanged } = JSON.parse(lines[1]!);
+  assert.deepEqual(logged, previewEligibilityV1);
+  assert.deepEqual(unchanged, original, "legacy counts, EMF names/dimensions and clock stay identical");
+});
+
+test("qualified diagnostics reject identities, unknown cohorts and combined amplification", () => {
+  const q = qualifiedPreview();
+  const invalid: unknown[] = [
+    { ...q, version: 2 },
+    { ...q, studentId: "private-student" },
+    { ...q, url: "https://private.example/" },
+    { ...q, freshnessBuckets: [1, 2] },
+    { ...q, freshnessBuckets: [6_000, 1, 0, 0, 0, 0] },
+    { ...q, freshnessBuckets: [6_000, 0, 0, 0, 0, 0] },
+    { ...q, freshnessBuckets: [0, 0, 0, 0, -1, 0] },
+    { ...q, freshnessBuckets: [0, 0, 0, 0, 0, 0.5] },
+    { ...q, excludedCounts: { ...q.excludedCounts, deviceId: "private-device" } },
+    { ...q, excludedCounts: { ...q.excludedCounts, futureCohort: 1 } },
+    { ...q, excludedCounts: { notObserved: 1, backgroundCadence: 1, monitoringNotCurrent: 1 } },
+    { ...q, excludedCounts: { ...q.excludedCounts, readDenied: -1 } },
+    { ...q, excludedCounts: { ...q.excludedCounts, readDenied: "1" } },
+    { ...q, excludedCounts: { ...q.excludedCounts, readDenied: 6_000 } },
+  ];
+  for (const previewEligibilityV1 of invalid) {
+    assert.equal(classpilotClientHealthSchema.safeParse({ ...valid, previewEligibilityV1 }).success, false);
+  }
+  assert.equal(classpilotClientHealthSchema.safeParse({
+    ...valid, previewEligibilityV1: { ...q, freshnessBuckets: [6_000, 0, 0, 0, 0, 0],
+      excludedCounts: { readDenied: 0, notObserved: 0, backgroundCadence: 0, monitoringNotCurrent: 0 } },
+  }).success, true, "the exact combined observation ceiling is allowed");
+});
+
+test("qualified exclusion diagnostics remain log-only when legacy metrics are quiet", () => {
+  const lines: string[] = [];
+  emitClasspilotClientHealth(classpilotClientHealthSchema.parse({
+    ...valid, freshnessBuckets: [0, 0, 0, 0, 0, 0],
+    counters: { readTimeouts: 0, reconnects: 0, recoveries: 0, eventGapRecoveries: 0 },
+    previewEligibilityV1: { version: 1, freshnessBuckets: [0, 0, 0, 0, 0, 0],
+      excludedCounts: { readDenied: 2, notObserved: 0, backgroundCadence: 0, monitoringNotCurrent: 0 } },
+  }), line => lines.push(line));
+  const result = JSON.parse(lines[0]!);
+  assert.equal(result._aws, undefined);
+  assert.equal(result.previewEligibilityV1.excludedCounts.readDenied, 2);
+});
+
+test("the health emitter allowlists qualified fields even for an internal enriched object", () => {
+  const parsed = classpilotClientHealthSchema.parse({ ...valid, previewEligibilityV1: qualifiedPreview() });
+  assert.ok(parsed.previewEligibilityV1);
+  Object.assign(parsed.previewEligibilityV1, { studentId: "private-student", url: "https://private.example/" });
+  Object.assign(parsed.previewEligibilityV1.excludedCounts, { schoolId: "private-school" });
+  const lines: string[] = [];
+  emitClasspilotClientHealth(parsed, line => lines.push(line));
+  assert.doesNotMatch(lines[0]!, /studentId|schoolId|private-|https?:/);
+  assert.deepEqual(JSON.parse(lines[0]!).previewEligibilityV1, qualifiedPreview());
+});

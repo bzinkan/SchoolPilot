@@ -73,7 +73,7 @@ for (const [status, reason] of failureCases) {
 test("accepted means only transport accepted, preserves opaque replies and ignores untagged coordination operations", async () => {
     const raw = { opaque: "private-reply", notAnObservationStatus: true }, commands = [];
     const f = fixture({ async publish(operation) {
-            return { status: "accepted", value: await operation({ async sendCommand(args) { commands.push(args); return raw; } }) };
+            return { status: "accepted", value: await operation({ async sendCommand(args) { commands.push(args); return raw; } }, { canContinue: () => true }) };
         } });
     const args = ["EVAL", "private-script", "1", "private-key"];
     assert.equal(await f.invoke(args, { diagnosticOperation: "observation_status" }), raw);

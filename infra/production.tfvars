@@ -73,8 +73,9 @@ scheduler_db_pool_max = 5
 enable_container_insights = false
 
 # Shared-school-IP WAF capacity: device ingest is isolated from all other API traffic.
+# Observed 2026-11-10 after the reviewed saved-plan apply and full no-op plan.
 waf_api_rate_limit           = 50000
-waf_device_ingest_rate_limit = 100000
+waf_device_ingest_rate_limit = 300000
 waf_rate_rule_action         = "block"
 
 # Domain — auto-creates ACM cert, DNS records, and derives app URLs

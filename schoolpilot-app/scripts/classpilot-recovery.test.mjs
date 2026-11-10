@@ -300,6 +300,7 @@ test('legacy pong, hidden pause and resume cannot leak duplicate heartbeat inter
 import * as previewRecovery from '../src/products/classpilot/lib/classpilotRecovery.js';
 import { indexTileScreenshots } from '../src/products/classpilot/lib/tileBatchPolling.js';
 import { readFileSync } from 'node:fs';
+import { createPreviewEligibilityV1, recordPreviewEligibilityV1 } from '../src/products/classpilot/lib/classpilotPreviewHealth.js';
 
 const PREVIEW_NOW = Date.parse('2026-10-14T12:00:00.000Z');
 const previewStudent = (studentId = 'preview-student') => ({ studentId, realtimeBinding: 'current-binding',
@@ -311,11 +312,11 @@ const previewState = (student, screenshots) => ({ students: [student], screensho
 function actualPreviewHealthHook() {
   const source = readFileSync(new URL('../src/products/classpilot/hooks/useClasspilotPreviewRecovery.js', import.meta.url), 'utf8');
   const imports = source.match(/^import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];\r?\n/gm);
-  assert.equal(imports?.length, 3);
+  assert.equal(imports?.length, 4);
   const body = source.replace(/^import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];\r?\n/gm, '')
     .replace('export function useClasspilotPreviewRecovery', 'function useClasspilotPreviewRecovery');
   return new Function('useEffect', 'useLayoutEffect', 'useRef', 'apiRequest', 'withClasspilotReadDeadline',
-    'stepClasspilotPreviewRecovery', 'normalizeClasspilotPreviewTimestamp', body + '\nreturn useClasspilotPreviewRecovery;');
+    'stepClasspilotPreviewRecovery', 'normalizeClasspilotPreviewTimestamp', 'createPreviewEligibilityV1', 'recordPreviewEligibilityV1', body + '\nreturn useClasspilotPreviewRecovery;');
 }
 
 async function sampleActualPreviewHealth({ students, screenshots, denied = new Set(), update = () => {}, advanceMs = 0 }) {
@@ -330,7 +331,8 @@ async function sampleActualPreviewHealth({ students, screenshots, denied = new S
   try {
     const hook = actualPreviewHealthHook()(callback => effects.push(callback), callback => callback(),
       current => ({ current }), (method, endpoint, body) => { requests.push({ method, endpoint, body }); return Promise.resolve({ ok: true }); },
-      previewRecovery.withClasspilotReadDeadline, previewRecovery.stepClasspilotPreviewRecovery, previewRecovery.normalizeClasspilotPreviewTimestamp);
+      previewRecovery.withClasspilotReadDeadline, previewRecovery.stepClasspilotPreviewRecovery, previewRecovery.normalizeClasspilotPreviewTimestamp,
+      createPreviewEligibilityV1, recordPreviewEligibilityV1);
     hook({ fastScreenshotStudents: students, screenshotsByStudent: screenshots, screenshotTileReadsEnabled: true,
       deniedScreenshotReadIds: denied, studentView: 'class', claimedStudentObservationStatus: () => 'inactive', observationLeaseStatus: 'observed',
       targetedScreenshotFenceKey: 'exact-current-context', queueTargetedScreenshotRefresh: ids => queued.push(ids),

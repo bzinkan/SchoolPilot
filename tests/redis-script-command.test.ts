@@ -9,7 +9,7 @@ const script = "return ARGV[1]";
 const command = ["EVAL", script, "2", "scope:first", "scope:second", "", "\u00e9", "{\"revision\":7}"];
 const shaCommand = ["EVALSHA", "098e0f0d1448c0a81dafe820f66d460eb09263da", ...command.slice(2)];
 const noScript = () => new ErrorReply("NOSCRIPT No matching script. Please use EVAL.");
-const readyOptions = () => ({ deadlineAt: performance.now() + 1_000, isReady: () => true });
+const readyOptions = () => ({ deadlineAt: performance.now() + 1_000, isReady: () => true, canContinue: () => true });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -99,7 +99,20 @@ test("NOSCRIPT after the absolute deadline never starts an EVAL", async () => {
     attempts++;
     now = 20;
     throw error;
-  }, command, { deadlineAt: 20, now: () => now, isReady: () => true }), error);
+  }, command, { deadlineAt: 20, now: () => now, isReady: () => true, canContinue: () => true }), error);
+  assert.equal(attempts, 1);
+});
+
+test("a closed publication cannot start an EVAL before its absolute deadline", async () => {
+  let attempts = 0;
+  let open = true;
+  const error = noScript();
+  await assert.rejects(executeRedisScriptCommand(async () => {
+    attempts++;
+    open = false;
+    throw error;
+  }, command, { deadlineAt: 20, now: () => 19.5, isReady: () => true,
+    canContinue: () => open }), error);
   assert.equal(attempts, 1);
 });
 
@@ -130,12 +143,12 @@ test("the bounded operation keeps one original budget across SHA miss and EVAL",
   const runtime = new BoundedRedisPublication({ create: () => connection, now: () => now,
     limits: { circuitFailures: 100 } });
   try {
-    const pending = runtime.publish(client => executeRedisScriptCommand(async args => {
+    const pending = runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async args => {
       attempts++;
       assert.deepEqual(args, attempts === 1 ? shaCommand : command);
       if (attempts === 2) fallbackStarted.resolve();
       return attempts === 1 ? first.promise : second.promise;
-    }, command, { deadlineAt: 50, now: () => now, isReady: () => client.isReady }), { budgetMs: 50 });
+    }, command, { deadlineAt: 50, now: () => now, isReady: () => client.isReady, canContinue }), { budgetMs: 50 });
     now = 15;
     t.mock.timers.tick(15);
     first.reject(noScript());
@@ -158,10 +171,10 @@ test("a delayed NOSCRIPT after the bounded caller timed out cannot replay an eff
   const runtime = new BoundedRedisPublication({ create: () => connection, limits: { circuitFailures: 100 } });
   try {
     const deadlineAt = performance.now() + 20;
-    const result = await runtime.publish(client => executeRedisScriptCommand(async () => {
+    const result = await runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async () => {
       attempts++;
       return first.promise;
-    }, command, { deadlineAt, isReady: () => client.isReady }), { budgetMs: 20 });
+    }, command, { deadlineAt, isReady: () => client.isReady, canContinue }), { budgetMs: 20 });
     assert.deepEqual(result, { status: "unknown", reason: "timeout" });
     first.reject(noScript());
     await pause(0);
@@ -170,6 +183,45 @@ test("a delayed NOSCRIPT after the bounded caller timed out cannot replay an eff
   } finally { first.resolve(0); await runtime.dispose(); }
 });
 
+for (const delivery of ["after_return", "during_timeout_diagnostic"] as const) {
+test(`an early caller timer blocks NOSCRIPT continuation ${delivery}`, async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0;
+  let attempts = 0;
+  let destroys = 0;
+  const first = deferred<number>();
+  const events: string[] = [];
+  const connection = { isReady: true, connect: async () => {}, destroy() { destroys++; } };
+  const runtime = new BoundedRedisPublication({ create: () => connection, now: () => now,
+    limits: { circuitFailures: 100 }, onDiagnostic(event) {
+      events.push(event);
+      if (delivery === "during_timeout_diagnostic" && event === "unknown") first.reject(noScript());
+    } });
+  try {
+    const pending = runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async () => {
+      attempts++;
+      return first.promise;
+    }, command, { deadlineAt: 20, now: () => now, isReady: () => client.isReady,
+      canContinue }), { budgetMs: 20 });
+    // Model a timer firing just before a separately sampled monotonic deadline.
+    // The publication has closed even though its clock-only script guard has not.
+    now = 19.5;
+    t.mock.timers.tick(20);
+    assert.deepEqual(await pending, { status: "unknown", reason: "timeout" });
+    if (delivery === "after_return") {
+      assert.equal(runtime.snapshot().active, 1, "the raw command still owns admission after caller timeout");
+      first.reject(noScript());
+    }
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(attempts, 1, "a closed caller must not start a new EVAL effect");
+    assert.equal(runtime.snapshot().active, 0, "late raw rejection releases its original admission");
+    assert.ok(events.includes("late_rejected"));
+    assert.equal(destroys, 0, "ordinary caller timeout never tears down the Redis connection");
+    assert.equal(runtime.snapshot().circuitOpen, false);
+  } finally { first.resolve(0); await runtime.dispose(); }
+});
+}
+
 test("an aborted bounded caller cannot start EVAL when a late NOSCRIPT arrives", async () => {
   const first = deferred<number>();
   const abort = new AbortController();
@@ -177,10 +229,10 @@ test("an aborted bounded caller cannot start EVAL when a late NOSCRIPT arrives",
   const connection = { isReady: true, connect: async () => {}, destroy() { this.isReady = false; } };
   const runtime = new BoundedRedisPublication({ create: () => connection });
   try {
-    const pending = runtime.publish(client => executeRedisScriptCommand(async () => {
+    const pending = runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async () => {
       attempts++;
       return first.promise;
-    }, command, { ...readyOptions(), signal: abort.signal, isReady: () => client.isReady }), { signal: abort.signal });
+    }, command, { ...readyOptions(), signal: abort.signal, isReady: () => client.isReady, canContinue }), { signal: abort.signal });
     abort.abort();
     assert.deepEqual(await pending, { status: "unknown", reason: "aborted" });
     first.reject(noScript());
@@ -189,15 +241,41 @@ test("an aborted bounded caller cannot start EVAL when a late NOSCRIPT arrives",
   } finally { first.resolve(0); await runtime.dispose(); }
 });
 
+test("publisher cancellation closes script continuation independently of its own abort option", async () => {
+  const first = deferred<number>();
+  const abort = new AbortController();
+  let attempts = 0;
+  let destroys = 0;
+  const connection = { isReady: true, connect: async () => {}, destroy() { destroys++; } };
+  const runtime = new BoundedRedisPublication({ create: () => connection });
+  try {
+    const pending = runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async () => {
+      attempts++;
+      return first.promise;
+    }, command, { deadlineAt: 1_000, now: () => 0, isReady: () => client.isReady, canContinue }), { signal: abort.signal });
+    abort.abort();
+    assert.deepEqual(await pending, { status: "unknown", reason: "aborted" });
+    assert.equal(runtime.snapshot().active, 1);
+    first.reject(noScript());
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(attempts, 1);
+    assert.equal(runtime.snapshot().active, 0);
+    assert.equal(runtime.snapshot().circuitOpen, false);
+    assert.equal(destroys, 0);
+  } finally { first.resolve(0); await runtime.dispose(); }
+});
+
 test("shutdown retires the original connection before a delayed NOSCRIPT can start EVAL", async () => {
   const first = deferred<number>();
   let attempts = 0;
-  const connection = { isReady: true, connect: async () => {}, destroy() { this.isReady = false; } };
+  // Retirement itself must close continuation even if an injected client's
+  // readiness flag does not change when destroy is called.
+  const connection = { isReady: true, connect: async () => {}, destroy() {} };
   const runtime = new BoundedRedisPublication({ create: () => connection });
-  const pending = runtime.publish(client => executeRedisScriptCommand(async () => {
+  const pending = runtime.publish((client, { canContinue }) => executeRedisScriptCommand(async () => {
     attempts++;
     return first.promise;
-  }, command, { ...readyOptions(), isReady: () => client.isReady }));
+  }, command, { ...readyOptions(), isReady: () => client.isReady, canContinue }));
   const shutdown = runtime.dispose();
   first.reject(noScript());
   assert.deepEqual(await pending, { status: "unknown", reason: "shutdown" });

@@ -24,13 +24,23 @@ classification reuse at INSERT and guarded redundant-index retirement.
 No paid AWS/Linux capacity environment is used. Normal local Windows checks,
 the existing local database/Redis fixtures and real Chrome are used instead.
 
-The new WebSocket shared-IP limiter permits 300,000 operations per five minutes
-while retaining current per-device limits, admission and frame bounds. The live
-HTTP WAF limit is still 100,000. Before a 2,000-device rollout, separately review
-and apply `infra/production-2000-telemetry.tfvars` with the normal production
-profile so full HTTP recovery also admits 180,000 legitimate operations plus
-navigation/recovery headroom. The observed `production.tfvars` stays unchanged
-until the apply is verified; no Terraform apply is part of this implementation.
+The WebSocket shared-IP limiter permits 300,000 operations per five minutes
+while retaining current per-device limits, admission and frame bounds. The
+separate HTTP WAF device-ingest limit was raised from 100,000 to 300,000 on
+November 10 after 16:00 ET, using a reviewed full saved plan. This covers the
+modeled 180,000 legitimate operations plus navigation/recovery headroom. The
+generic API limit remains 50,000; authentication and all other rules are unchanged.
+The two other plan actions reconciled unused Terraform-owned task templates by
+adding only the canonical cookie name. Serving revisions, sizes, schedules and
+images did not change. Verified encrypted before/after state backups, complete
+live reference inventories and a fresh zero-change plan support the observed
+300,000 baseline now recorded in `production.tfvars`. This removes a recovery
+admission blocker; it does not establish fleet performance or a monthly ceiling.
+
+The earlier 6f2b11dc application release enabled all three efficiency capabilities
+globally on the API and worker. The separate ClassPilot 3.0.5 ZIP was prepared in
+`dist`; actual Chrome Web Store publication and Chromebook adoption remain
+unverified. The following source checkpoints describe implementation history.
 
 ## What changes economically
 
@@ -205,6 +215,49 @@ The $233 baseline has not been independently reconciled to a normal full-month
 ledger. Partial November billing does not justify subtracting all DNS, S3 or
 CloudWatch costs. The model therefore keeps `replacedBaselineEdgeCost=0`.
 
+The November 10 follow-up found no read-only subscription eligibility/dry-run API:
+creating a manual-approval subscription still persists a pending subscription.
+No subscription was created. A Business plan at the listed $200 price plus the
+unreconciled $233 baseline would already be $433 before verified replacement
+savings or growth; neither tier supplies established savings for this budget.
+
+The latest local sensitivity run retains the adverse cases: all 2,000 students
+actively observed with unique images models approximately $634.12 for six hours
+or $797.88 for eight hours. A favorable six-hour case models $270.66 with 50%
+exact reuse, 80% patch eligibility among changed captures, 15% patch size, 90%
+teacher delta hits, 78% viewer wire size, 1% HTTP recovery and 0.1% post-send
+retries. Those are unverified assumptions, not measured fleet percentages.
+Unknown storage/backup, compute and other growth remain excluded. Do not report
+the favorable subtotal as acceptance.
+This follow-up bounds snapshot also leaves unmeasured heartbeat/teacher metadata
+bytes and Redis cross-AZ traffic at zero; those unknowns are not verified savings.
+The separately approved expanded-detail preview adds on-demand larger captures;
+its additional traffic is also unmeasured in these grid-traffic scenarios.
+
+## Preview freshness follow-up
+
+Actual native Dashboard checks with genuine captures, missing notices, idle
+devices and hidden tabs did not reproduce a new online pixel regression.
+Existing Redis reference/delta recaptures retain fresh metadata. The original
+aggregate mixes inactive/unobserved rows with current classroom previews and
+cannot establish active classroom freshness. The additive `previewEligibilityV1`
+diagnostic separates the eligible cohort in existing fixed-size logs, retaining
+online missing/stale frames as failures. Legacy buckets, metric streams, counters,
+recovery requests/timers, pixels and capture cadence remain unchanged. The event
+gap counter is not a count of distinct outages. Real qualified production
+observations are still needed; no paid AWS load testing was performed.
+
+Release CI exposed an existing Redis continuation race: a caller timer can finish
+before a separately sampled script deadline, allowing a delayed `NOSCRIPT` reply
+to start a new `EVAL` after the caller has closed. The publication now supplies a
+required continuation gate to both script adapters and closes it synchronously
+on timeout/cancellation. Deadline/readiness/abort checks, original budgets, raw
+late-reply ownership, admission slots and ordinary connection lifetime remain
+unchanged. Deterministic early-timer and diagnostic-reentry cases exercise the
+race; the original real-time regression and in-budget cold-script recovery stay
+asserted. This improves recovery correctness without claiming fleet capacity.
+See [Node 22 timer semantics](https://nodejs.org/download/release/v22.18.0/docs/api/timers.html#settimeoutcallback-delay-args).
+
 ## What local evidence establishes
 
 The bounded protocol comparison can be run with:
@@ -333,6 +386,8 @@ was not published and no feature flag or production resource was changed.
 
 - [CloudFront PAYG](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)
 - [CloudFront flat-rate plans](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html)
+- [Subscription API operations](https://docs.aws.amazon.com/pricingplanmanager/latest/APIReference/API_Operations.html)
+- [CreateSubscription approval behavior](https://docs.aws.amazon.com/pricingplanmanager/latest/APIReference/API_CreateSubscription.html)
 - [CloudFront function error-response restrictions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-event-structure.html)
 - [CloudFront WebSocket billing](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/billing-and-usage-interpreting.html)
 - [WAF pricing](https://aws.amazon.com/waf/pricing/)

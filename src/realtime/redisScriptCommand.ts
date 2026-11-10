@@ -5,6 +5,7 @@ export type RedisScriptCommandOptions = {
   deadlineAt: number;
   signal?: AbortSignal;
   isReady(): boolean;
+  canContinue(): boolean;
   now?: () => number;
 };
 
@@ -27,7 +28,7 @@ export async function executeRedisScriptCommand<T>(
     return await send(["EVALSHA", digest, ...original.slice(2)]);
   } catch (error) {
     if (!(error instanceof ErrorReply) || !/^NOSCRIPT(?:\s|$)/.test(error.message)
-      || options.signal?.aborted || !options.isReady()
+      || options.signal?.aborted || !options.isReady() || !options.canContinue()
       || (options.now?.() ?? performance.now()) >= options.deadlineAt) {
       throw error;
     }

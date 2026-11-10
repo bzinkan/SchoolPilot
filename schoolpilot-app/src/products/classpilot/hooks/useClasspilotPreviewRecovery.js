@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
 import { withClasspilotReadDeadline, stepClasspilotPreviewRecovery, normalizeClasspilotPreviewTimestamp } from '../lib/classpilotRecovery';
+import { createPreviewEligibilityV1, recordPreviewEligibilityV1 } from '../lib/classpilotPreviewHealth';
 
 export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screenshotsByStudent, screenshotTileReadsEnabled,
   deniedScreenshotReadIds, studentView, claimedStudentObservationStatus, observationLeaseStatus,
@@ -8,6 +9,7 @@ export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screensho
   activeSchoolId, viewerId, token }) {
   const previewRecoverySnapshotRef = useRef(null);
   const previousFastTargets = useRef(new Set());
+  const previewEligibilityRef = useRef(createPreviewEligibilityV1());
   useLayoutEffect(() => {
     previewRecoverySnapshotRef.current = { students: fastScreenshotStudents, screenshots: screenshotsByStudent,
       enabled: screenshotTileReadsEnabled, denied: deniedScreenshotReadIds,
@@ -44,6 +46,7 @@ export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screensho
   }, [targetedScreenshotFenceKey, queueTargetedScreenshotRefresh]);
   useEffect(() => {
     clientHealthRef.current = { freshnessBuckets: [0, 0, 0, 0, 0, 0], counters: { readTimeouts: 0, reconnects: 0, recoveries: 0, eventGapRecoveries: 0 } };
+    previewEligibilityRef.current = createPreviewEligibilityV1();
     if (!activeSchoolId || !viewerId || !token) return undefined;
     const reporter = new AbortController();
     let ticks = 0;
@@ -59,12 +62,15 @@ export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screensho
         const bucket = !Number.isFinite(age) || age < -60_000 ? 5 : age <= 5_000 ? 0 : age <= 10_000 ? 1 : age <= 15_000 ? 2 : age <= 30_000 ? 3 : 4;
         buffer.freshnessBuckets[bucket] += 1;
       }
+      recordPreviewEligibilityV1(previewEligibilityRef.current, current, now);
       ticks += 1;
       if (ticks < 12) return;
       ticks = 0;
       const body = { version: 1, intervalSeconds: 60, freshnessBuckets: buffer.freshnessBuckets,
-        counters: Object.fromEntries(Object.entries(buffer.counters).map(([key, value]) => [key, Math.min(6000, value)])) };
+        counters: Object.fromEntries(Object.entries(buffer.counters).map(([key, value]) => [key, Math.min(6000, value)])),
+        previewEligibilityV1: previewEligibilityRef.current };
       clientHealthRef.current = { freshnessBuckets: [0, 0, 0, 0, 0, 0], counters: { readTimeouts: 0, reconnects: 0, recoveries: 0, eventGapRecoveries: 0 } };
+      previewEligibilityRef.current = createPreviewEligibilityV1();
       void withClasspilotReadDeadline(signal => apiRequest('POST', '/classpilot/monitoring/client-health', body,
         { signal, headers: { 'X-School-Id': activeSchoolId } }), reporter.signal).catch(() => {});
     }, 5_000);
