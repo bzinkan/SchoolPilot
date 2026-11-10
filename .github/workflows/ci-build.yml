@@ -819,7 +819,10 @@ jobs:
   frontend-release-gates:
     name: Frontend release-focused gates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # A cold main runner passed 63/64 Dashboard parents before the old 20m
+    # aggregate cap expired. Keep every per-test deadline and suite intact;
+    # allow bounded headroom for setup plus the complete browser partition.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
