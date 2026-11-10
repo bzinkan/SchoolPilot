@@ -1,4 +1,4 @@
-# Schema 12 controls. Dot-sourced by the governed Plan/Apply tool; no providers.
+# Schema 12 transport/reference and Schema 13 delta controls; no providers.
 $script:TelemetryProfileCapabilities = @{
     'device-telemetry-pilot' = 'deviceTelemetryTransportV1'
     'device-telemetry-global-on' = 'deviceTelemetryTransportV1'
@@ -6,17 +6,21 @@ $script:TelemetryProfileCapabilities = @{
     'screenshot-references-pilot' = 'scopedScreenshotReferencesV1'
     'screenshot-references-global-on' = 'scopedScreenshotReferencesV1'
     'screenshot-references-off' = 'scopedScreenshotReferencesV1'
+    'screenshot-deltas-pilot' = 'scopedScreenshotDeltasV1'
+    'screenshot-deltas-global-on' = 'scopedScreenshotDeltasV1'
+    'screenshot-deltas-off' = 'scopedScreenshotDeltasV1'
 }
-$script:TelemetryPilotModes = @('device-telemetry-pilot', 'screenshot-references-pilot')
-$script:TelemetryGlobalModes = @('device-telemetry-global-on', 'screenshot-references-global-on')
-$script:TelemetryCapabilities = @('deviceTelemetryTransportV1', 'scopedScreenshotReferencesV1')
+$script:TelemetryDeltaModes = @('screenshot-deltas-pilot', 'screenshot-deltas-global-on', 'screenshot-deltas-off')
+$script:TelemetryPilotModes = @('device-telemetry-pilot', 'screenshot-references-pilot', 'screenshot-deltas-pilot')
+$script:TelemetryGlobalModes = @('device-telemetry-global-on', 'screenshot-references-global-on', 'screenshot-deltas-global-on')
+$script:TelemetryCapabilities = @('deviceTelemetryTransportV1', 'scopedScreenshotReferencesV1', 'scopedScreenshotDeltasV1')
 
 function Assert-TelemetryLocalValidation {
     param($Profile)
     $on = [string]$Profile.mode -cin @($script:TelemetryPilotModes + $script:TelemetryGlobalModes)
     $hasValidation = $Profile.PSObject.Properties.Name -ccontains 'localValidation'
     if (-not $on) {
-        if ($hasValidation) { throw 'Only Schema 12 activation profiles may carry local validation; off is evidence-free.' }
+        if ($hasValidation) { throw 'Only telemetry activation profiles may carry local validation; off is evidence-free.' }
         return
     }
     if (-not $hasValidation) { throw 'Telemetry activation requires factual local Windows compatibility validation.' }
@@ -33,6 +37,9 @@ function Assert-TelemetryLocalValidation {
         throw 'Local validation must bind exact backend and extension sources and explicitly decline capacity acceptance.'
     }
     $checks = @('httpWsParity', 'lostReplyIdempotency', 'staleBindingDenied', 'controlLaneIndependent', 'realChromeMv3Passed', 'captureCadenceAndPixelsPreserved')
+    if ([string]$Profile.mode -cin $script:TelemetryDeltaModes) {
+        $checks += @('losslessDeltaBytesPreserved', 'staleBaseRecovery', 'teacherDeltaRecovery')
+    }
     Assert-ExactProperties -Value $record.checks -Allowed $checks -Trail 'localValidation.checks'
     foreach ($check in $checks) {
         if ($record.checks.PSObject.Properties.Name -cnotcontains $check -or
@@ -84,7 +91,8 @@ function Assert-TelemetryRuntimeControls {
         }
         if ([string]$Values.CLASSPILOT_PROTOCOL_V3_ENABLED -cne 'true') { throw 'Telemetry requires the protocol gate.' }
         $parents = @('scopedAuthorityChecksV1')
-        if ($capability -ceq 'scopedScreenshotReferencesV1') { $parents += @('deviceTelemetryTransportV1', $script:TrackingWindowCapability) }
+        if ($capability -cin @('scopedScreenshotReferencesV1', 'scopedScreenshotDeltasV1')) { $parents += @('deviceTelemetryTransportV1', $script:TrackingWindowCapability) }
+        if ($capability -ceq 'scopedScreenshotDeltasV1') { $parents += 'scopedScreenshotReferencesV1' }
         foreach ($parent in $parents) {
             $parentEntry = $Rollouts.$parent
             if ([string]$Values[$script:CapabilityFlags[$parent]] -cne 'true' -or [string]$parentEntry.mode -cne 'on') {

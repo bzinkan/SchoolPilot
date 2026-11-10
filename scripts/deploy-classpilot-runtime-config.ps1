@@ -94,6 +94,7 @@ $script:ScheduledClassroomCapability = "scheduledClassroomV1"
 $script:PollReplayCapability = "pollReplaySafeV1"
 $script:DeviceTelemetryCapability = "deviceTelemetryTransportV1"
 $script:ScreenshotReferencesCapability = "scopedScreenshotReferencesV1"
+$script:ScreenshotDeltasCapability = "scopedScreenshotDeltasV1"
 $script:TransientReplayModes = @("transient-replay-off", "transient-timer-replay-pilot", "transient-poll-replay-pilot")
 $script:TransientReplayEnvironmentNames = @(
     "CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH",
@@ -153,7 +154,7 @@ $script:AdditiveCapabilities = @(
     $script:RestrictionAuthPassThroughCapability,
     $script:ScheduledClassroomCapability,
     $script:PollReplayCapability
-) + @($script:RoadmapCapabilities) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability)
+) + @($script:RoadmapCapabilities) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability)
 # Registry order is fixed: the retired capability keeps the slot it held before
 # kioskLaunchTicketV2, so serialized registries keep their byte order.
 $script:AllCapabilities = @(
@@ -166,9 +167,9 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability, $script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability) }) + @(
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability, $script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability) }) + @(
     "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability
-) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability)
+) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability)
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
     authBoundTelemetryV1          = "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1"
@@ -195,6 +196,7 @@ $script:CapabilityFlags = [ordered]@{
     pollReplaySafeV1             = 'CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1'
     deviceTelemetryTransportV1   = 'CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1'
     scopedScreenshotReferencesV1 = 'CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1'
+    scopedScreenshotDeltasV1 = 'CLASSPILOT_CAP_SCOPED_SCREENSHOT_DELTAS_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -683,7 +685,8 @@ function ConvertTo-RuntimeConfiguration {
     # liveViewIceServersV1 and copies every other control from the source.
     $schemaTenModes = @("live-view-retire")
     $schemaElevenModes = @($script:TransientReplayModes)
-    $schemaTwelveModes = @($script:TelemetryProfileCapabilities.Keys)
+    $schemaTwelveModes = @($script:TelemetryProfileCapabilities.Keys | Where-Object { $_ -cnotin $script:TelemetryDeltaModes })
+    $schemaThirteenModes = @($script:TelemetryDeltaModes)
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -696,7 +699,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 10 -and $mode -cnotin $schemaTenModes) -or
         ($schemaVersion -eq 11 -and $mode -cnotin $schemaElevenModes) -or
         ($schemaVersion -eq 12 -and $mode -cnotin $schemaTwelveModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) {
+        ($schemaVersion -eq 13 -and $mode -cnotin $schemaThirteenModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
     Assert-TelemetryLocalValidation -Profile $Profile
@@ -794,7 +798,7 @@ function ConvertTo-RuntimeConfiguration {
         throw "Live View is retired; runtime profiles must not carry TURN inputs and preserve the existing TURN wiring."
     }
 
-    if ($mode -cin $schemaTwelveModes) {
+    if ($mode -cin @($schemaTwelveModes + $schemaThirteenModes)) {
         return [pscustomobject]@{
             Mode = $mode
             SchoolScopeCount = if ($mode -cin $script:TelemetryPilotModes) { 1 } else { 0 }
