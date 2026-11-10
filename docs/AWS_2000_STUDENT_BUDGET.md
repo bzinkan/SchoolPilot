@@ -1,0 +1,185 @@
+# ClassPilot 2,000-online-student cost target
+
+The operator's normal AWS baseline is approximately **$233/month**. The target
+is **under $300/month before credits**, while retaining current features,
+performance, reporting, retention, capture cadence and image quality. October's
+account-wide $415.59 includes unusual resource-hours and is not the baseline.
+
+## Implementation and release boundary
+
+The coordinated implementation introduces negotiated device WebSocket telemetry,
+cross-transport heartbeat idempotency, scoped exact-image references and smaller
+Redis coordination commands. It preserves HTTP compatibility and recovery.
+Both new capabilities default off. It does not itself change the serving fleet,
+enroll a CDN plan, release an extension, shrink resources or establish capacity.
+
+SchoolPilot implementation is based on main `71c0352e`; the extension is based
+on main `c0a21a4` (source prepares 3.0.4). Those source observations do not establish
+the currently published extension, an uploaded ZIP or managed-device adoption.
+Recheck all release identities before a coordinated production rollout.
+
+No paid AWS/Linux capacity environment is used. Normal local Windows checks,
+the existing local database/Redis fixtures and real Chrome are used instead.
+
+The new WebSocket shared-IP limiter permits 300,000 operations per five minutes
+while retaining current per-device limits, admission and frame bounds. The live
+HTTP WAF limit is still 100,000. Before a 2,000-device rollout, separately review
+and apply `infra/production-2000-telemetry.tfvars` with the normal production
+profile so full HTTP recovery also admits 180,000 legitimate operations plus
+navigation/recovery headroom. The observed `production.tfvars` stays unchanged
+until the apply is verified; no Terraform apply is part of this implementation.
+
+## What changes economically
+
+Without transport changes, 2,000 devices online six hours/day for twenty-two
+school days generate **95.04 million heartbeat requests/month**. Screenshots
+add **31.68 million** at thirty seconds, or **190.08 million** when all students
+remain actively observed at five seconds. WebSocket frames do not each create
+an edge HTTP request; upgrade requests and HTTP recovery still do.
+
+Exact-image references continue actual captures and encoding at the current
+quality/cadence. They avoid repeated pixel transfer and Redis blob rewrites only
+when a fresh capture exactly matches the acknowledged image in the same exact
+authority. Animated/scrolling pages can save zero bytes. Fresh metadata is still
+validated; cache misses recover the full bytes from the same fresh capture.
+
+## Reproduce the model without network access
+
+```powershell
+node scripts/cost/classpilot-budget.mjs --json
+node scripts/cost/classpilot-budget.mjs --options='{"transport":"websocket","edgePlan":"payg","unchangedFraction":0.5}'
+node --test tests/classpilot-budget.test.mjs
+```
+
+`estimateClasspilotBudget(options)` is a pure function. It never calls AWS or
+reads credentials. Unknown overheads remain explicitly unverified; a modeled
+subtotal is not an all-in bill or an AWS performance acceptance result.
+
+The November 9 existing-log observation was approximately **22,342 UTF-8 bytes
+per screenshot string** over seven days. It does not include full envelopes or
+prove compressed wire size, future image sizes, or an unchanged-image ratio.
+
+Illustrative demanding scenario: 2,000 online and five-second-observed students,
+six hours/day, twenty-two days/month; one teacher copy/image; 22,342-byte image
+strings; illustrative heartbeat request/response sizes 1/2 KiB; teacher metadata
+256 bytes/student/read; one-third of Redis image traffic crossing AZs. These byte
+and placement assumptions must be replaced with observations before budgeting.
+
+| Exact-image references | PAYG subtotal | Hypothetical Pro subtotal |
+| ---: | ---: | ---: |
+| 0% | $680.89 | $340.91 |
+| 25% | $554.66 | $318.50 |
+| 50% | $428.42 | $296.09 |
+| 75% | $302.19 | $273.68 |
+
+At eight hours/day, with the other assumptions unchanged:
+
+| Exact-image references | PAYG subtotal | Hypothetical Pro subtotal |
+| ---: | ---: | ---: |
+| 0% | $859.19 | $371.88 |
+| 25% | $690.88 | $342.00 |
+| 50% | $522.57 | $312.12 |
+| 75% | $354.26 | $282.23 |
+
+These conservative subtotals add modeled traffic to the $233 baseline without
+subtracting its already-included current edge/traffic costs. They **exclude
+unverified storage/backup growth, extra compute, monitoring growth and other
+overhead**. They are not quotes. The zero-reference and eight-hour cases must
+remain in every review; do not report only a favorable workload as success.
+
+## CloudFront Pro is conditional
+
+AWS currently lists Pro at $15/month with ten million requests and fifty TB
+transfer, including certain WAF/DNS/edge-logging charges. It is not selected.
+The November 9 read-only review confirmed that the live configuration cannot
+subscribe unchanged:
+
+- All five behaviors use legacy `ForwardedValues`, which flat-rate plans exclude.
+- All five use a custom response-header policy, which requires Business rather
+  than Pro. Its HSTS, framing, content-type, referrer, permissions and CSP report
+  protections must survive any migration, including on errors. A viewer-response
+  function alone is insufficient: CloudFront does not run it on origin errors
+  of 400 or greater.
+- The device-ingest WAF classifier uses regex filtering, which Pro excludes.
+  Its exact POST/path predicate can be represented by four exact URI alternatives
+  in a separately reviewed change without removing its label/rate semantics.
+
+Account paid/active status, one apex domain, five behaviors and the 26-record DNS
+zone fit the reviewed prerequisites. Shield Advanced and Firewall Manager did
+not control the distribution. Managed WAF rule-group quota interpretation,
+subscription-validator acceptance and sustained request allowance remain
+unverified. No subscription or infrastructure change was made. Keep
+`proCompatibilityConfirmed=false`; do not count this column as achievable with
+the unchanged infrastructure. Pro does not include application metrics/alarms
+or database/Redis/ALB charges.
+
+At thirty students/class and one teacher batch every five seconds, the model
+includes roughly 6.37 million teacher requests plus socket upgrades, before
+other API traffic and recovery. That teacher interval is an illustrative
+assumption, not a measured dashboard rate. The existing screenshot-event
+coalescer can trigger targeted reads every 250 ms when captures are staggered;
+history, reconciliation and other endpoints also create requests. Sustained
+four reads/second across 67 classrooms would be about 127.35 million requests
+in the six-hour scenario, exceeding Pro's allowance by itself. Set
+`teacherPollSeconds=0.25` to inspect that request sensitivity. Image references
+reduce returned pixels, not those teacher HTTP requests. Do not accept the
+request budget without real usage evidence. A routine HTTP heartbeat alongside
+healthy WS telemetry would also undermine it and is deliberately absent.
+
+If Pro is not compatible, do not count its savings or drop security features.
+Actual deduplication/traffic observations may support another reviewed option.
+The $233 baseline has not been independently reconciled to a normal full-month
+ledger. Partial November billing does not justify subtracting all DNS, S3 or
+CloudWatch costs. The model therefore keeps `replacedBaselineEdgeCost=0`.
+
+## What local evidence establishes
+
+The bounded protocol comparison can be run with:
+
+```powershell
+node --import tsx scripts/local/device-telemetry-loopback.mjs --clients=2000 --rounds=2 --json
+```
+
+One November 9 Windows run held 2,000 sockets and completed 4,000 HTTP and 4,000
+WebSocket operations. HTTP p95 was approximately 27 ms and reused-WebSocket p95
+approximately 20 ms. The WS operations generated zero recurring HTTP requests;
+there were 2,000 initial upgrades. It completed in approximately six seconds.
+
+This exercises the real telemetry parser/dispatcher and real local HTTP/WS
+transports with synthetic bindings. **It does not exercise PostgreSQL, prove
+Fargate performance, or establish 2,000-device production capacity.** Normal
+database, authority, retry and browser behavior have separate functional tests.
+The registered-router integration also uses real local PostgreSQL and the real
+authenticated WebSocket server: HTTP-to-WS and WS-to-HTTP recovery persist one
+heartbeat each; mismatched replay returns 409, revoked entitlement 403 and
+retired session 401. It exits cleanly without a forced process exit. This is a
+correctness check with synthetic fixtures, not a capacity test.
+
+## Production observations still required
+
+As real schools adopt the reviewed release, observe existing aggregate counters
+and normal AWS metrics: actual online/observed student-hours; full-image vs
+reference/miss counts and bytes; HTTP recovery rate; command/preview latency;
+API CPU/memory; database connections/credits/storage/purge duration; Redis memory/
+evictions; ALB and CDN bytes/requests; gross AWS spend before credits.
+
+The $300 goal is not achieved merely because code compiles or a local simulation
+passes. Confirm the cost envelope and performance through real usage, without
+creating the paid synthetic environment the operator rejected.
+
+The existing `realtime_hot_path_summary` log now includes fixed-size
+`screenshotImages` counters: `fullUploads`, `fullUploadBytes`, `referenceUploads`,
+`referenceMisses` and `metadataOnlyReads`. Use full bytes/full uploads to estimate
+actual full-image size and references/(full uploads+references) for the observed
+reuse rate. These logs contain no image IDs, hashes or student labels and do not
+create additional CloudWatch custom metric streams.
+
+## Rate sources
+
+- [CloudFront PAYG](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)
+- [CloudFront flat-rate plans](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html)
+- [CloudFront function error-response restrictions](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-event-structure.html)
+- [CloudFront WebSocket billing](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/billing-and-usage-interpreting.html)
+- [WAF pricing](https://aws.amazon.com/waf/pricing/)
+- [ALB pricing](https://aws.amazon.com/elasticloadbalancing/pricing/)
+- [ElastiCache transfer pricing](https://aws.amazon.com/elasticache/pricing/)
