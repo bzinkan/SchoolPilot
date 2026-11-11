@@ -25,6 +25,10 @@ const binding = {
   deviceId: "device-a",
 };
 
+const capability305Fixture = JSON.parse(readFileSync(
+  new URL("./fixtures/classpilot-capabilities-305.json", import.meta.url), "utf8"
+)) as { capabilities: string[] };
+
 function heartbeat(overrides: Record<string, unknown> = {}) {
   return {
     ...binding,
@@ -40,6 +44,53 @@ function heartbeat(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ClassPilot cluster-safe realtime status", () => {
+  it("retains the complete 3.0.5 advertisement through shared/local cache and public normalization", async () => {
+    const advertised = capability305Fixture.capabilities;
+    assert.equal(advertised.length, 43);
+    assert.equal(advertised.indexOf("screenOnlyUnlockV1"), 33);
+    let serialized: string | undefined;
+    const store = createClasspilotRealtimeStatusStore(async (args) => {
+      if (args[0] === "EVAL") return serialized = args[5];
+      if (args[0] === "MGET") return [serialized];
+      return undefined;
+    }, () => 1_000_000);
+    const written = await store.write(heartbeat({ extensionCapabilities: advertised, acceptedCapabilities: [] }));
+    assert.equal(written.status, "stored");
+    const shared = (await store.readBatch(binding.schoolId, [binding])).get(binding.studentId);
+    const local = store.readLocal(binding.schoolId, [binding]).get(binding.studentId);
+    for (const result of [shared, local]) {
+      assert.equal(result?.status, "hit");
+      if (result?.status !== "hit") continue;
+      assert.deepEqual(result.snapshot.extensionCapabilities, advertised);
+      const publicCapabilities = normalizeClasspilotPublicCapabilities(result.snapshot.extensionCapabilities);
+      assert.equal(publicCapabilities.includes("screenOnlyUnlockV1"), true);
+      assert.equal(publicCapabilities.includes("durableChatAckV1"), true);
+      assert.equal(result.snapshot.acceptedCapabilities, undefined);
+      assert.equal(result.snapshot.acceptedCapabilitiesEmpty, true);
+    }
+  });
+
+  it("accepts 64 capability names but rejects malformed or oversized fields without manufacturing flags", async () => {
+    const valid = Array.from({ length: 64 }, (_, i) => `capability${i}`);
+    assert.deepEqual(normalizeClasspilotPublicCapabilities(valid), valid);
+    assert.deepEqual(normalizeClasspilotPublicCapabilities([" screenOnlyUnlockV1 ", "screenOnlyUnlockV1"]), ["screenOnlyUnlockV1"]);
+    assert.deepEqual(normalizeClasspilotPublicCapabilities(["x".repeat(64)]), ["x".repeat(64)]);
+    const malformed = [
+      [...valid, "screenOnlyUnlockV1"], Array(65).fill("screenOnlyUnlockV1"),
+      ["screenOnlyUnlockV1", 1], ["screenOnlyUnlockV1", " "],
+      ["screenOnlyUnlockV1", "x".repeat(65)],
+    ];
+    for (const [index, value] of malformed.entries()) {
+      assert.deepEqual(normalizeClasspilotPublicCapabilities(value), []);
+      const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+      const result = await store.write(heartbeat({ heartbeatId: `invalid-${index}`,
+        extensionCapabilities: value, acceptedCapabilities: value }));
+      assert.equal(result.snapshot?.extensionCapabilities, undefined);
+      assert.equal(result.snapshot?.acceptedCapabilities, undefined);
+      assert.equal(result.snapshot?.acceptedCapabilitiesEmpty, undefined, "invalid metadata is not an authoritative empty negotiation");
+    }
+  });
+
   it("stores an already persisted classification in the first complete snapshot", async () => {
     const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
     const classification = { category: "educational", contentCategory: "Education", teacherIntentSource: null, safetyAlert: null };

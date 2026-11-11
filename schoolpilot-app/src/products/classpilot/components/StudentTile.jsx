@@ -516,22 +516,25 @@ function StudentTile({
     }
   };
 
+  const lockActionDisabled = lockControl.disabled || !onLockAction || commandPending;
+  const lockActionDisabledReason = lockControl.disabled ? lockControl.reason
+    : commandPending ? 'Wait for the current student action to finish.' : unavailableActionReason;
   const lockButton = (
     <Button
       type="button"
       variant="ghost"
       size="icon"
-      className="relative h-8 w-8"
-      disabled={lockControl.disabled || !onLockAction || commandPending}
+      className="relative h-8 w-8 disabled:pointer-events-auto"
+      disabled={lockActionDisabled}
       onClick={(event) => {
         event.stopPropagation();
         if (lockControl.disabled || !onLockAction || commandPending) return;
         onLockAction(lockControl.action);
       }}
       aria-label={lockControl.label}
-      aria-describedby={`lock-status-${student.studentId} lock-help-${student.studentId}`}
+      aria-describedby={`lock-status-${student.studentId} lock-help-${student.studentId}${lockActionDisabled ? ` lock-disabled-reason-${student.studentId}` : ''}`}
       aria-busy={lockControl.pending}
-      title={lockControl.disabled ? lockControl.reason : lockControl.label}
+      title={lockActionDisabled ? lockActionDisabledReason : lockControl.label}
       data-testid={`button-lock-toggle-${student.studentId}`}
       data-lock-state={lockControl.locked ? 'locked' : 'unlocked'}
       data-lock-pending={lockControl.pending ? 'true' : 'false'}
@@ -644,6 +647,12 @@ function StudentTile({
             {!monitoringSuppressed ? lockButton : null}
           </div>
         </div>
+
+        {lockActionDisabled && !monitoringSuppressed ? (
+          <p id={`lock-disabled-reason-${student.studentId}`} data-testid={`lock-disabled-reason-${student.studentId}`} className="text-xs text-muted-foreground">
+            {lockActionDisabledReason}
+          </p>
+        ) : null}
 
         {monitoringSuppressed && (
           <div className="rounded-md border border-slate-300 bg-white/80 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">

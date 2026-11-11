@@ -197,7 +197,7 @@ import { chatStudentName, countUnreadByStudent, deriveChatConversations, describ
 import { broadcastButtonLabel, buildMessagingRoster, longestWaitingUnreadId } from '../lib/chatRoster';
 import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
-import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, tabActionFeedback, exactTabPayloadForStudents, exactTabCapability, tileFocusLifecycleObserved, tileFocusTelemetryObservedAt } from '../lib/focusControls';
+import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, tabActionFeedback, exactTabPayloadForStudents, exactTabCapability, tileFocusLifecycleObserved, tileFocusTelemetryObservedAt, focusSelectionHint } from '../lib/focusControls';
 import { runTileLockAction, tileLockAuthorityKey } from '../lib/tileLockActions';
 import {
   classpilotObservationSessionEligible,
@@ -7413,6 +7413,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             />}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Focus selected students on their current website or a specific destination' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Focus</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Stop Focus while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Stop Focus</Button>}
+            {(dashboardCapabilities.allows('lock-screen') || dashboardCapabilities.allows('unlock-screen')) && <p role="status" data-testid="focus-selection-hint" className="basis-full text-xs text-muted-foreground">{focusSelectionHint(explicitlySelectedStudentIds.length,
+              lockScreenMutation.isPending || unlockScreenMutation.isPending ? 'Wait for the current Focus action to finish.'
+                : signOutOnlySelectionActive ? 'Clear the sign-out-only selection before using Focus tools.'
+                  : !exactSelectedUnlockTargetsResolved ? 'Some selected students are unavailable. Refresh the selection before stopping Focus.'
+                    : !selectedTargetsSupportScreenOnlyUnlock ? 'One or more selected browsers have not reported support for Stop Focus. Reconnect or update ClassPilot, then try again.' : '')}</p>}
             {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (
               <div className="inline-flex items-center" role="group" aria-label="Flight Path">
                 {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('flight-path', 'apply-flight-path')} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
@@ -7605,7 +7610,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <label className="text-sm">Class <select aria-label="Filter room by class" className="ml-2 rounded-md border bg-background px-2 py-1" value={roomClassFilter} onChange={event => setRoomClassFilter(event.target.value)}>
                 <option value="">All classes</option>{roomClasses.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
               </select></label>
-              <p className="text-xs text-muted-foreground">Commands target {selectedStudentIds.size ? `${selectedStudentIds.size} selected` : `all ${filteredStudents.length} shown`} students.</p>
+              <p className="text-xs text-muted-foreground">{selectedStudentIds.size ? `Commands target ${selectedStudentIds.size} selected students.` : `Other tools can review all ${filteredStudents.length} shown students. Set Focus and Stop Focus require checkbox selection.`}</p>
             </div>
           </section>
         ) : null}
@@ -8690,11 +8695,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               </Select>
               {selectedFlightPathId && (() => {
                 const fp = flightPaths.find(f => f.id === selectedFlightPathId);
+                const effectiveDomains = fp?.effectiveAllowedDomains ?? fp?.allowedDomains ?? [];
                 return fp ? (
                   <div className="mt-2 p-3 bg-muted/30 rounded-md">
                     <p className="text-xs font-medium mb-1">Description:</p><p className="text-xs text-muted-foreground mb-2">{fp.description || "No description provided"}</p>
-                    <p className="text-xs font-medium mb-1">Allowed Domains ({fp.allowedDomains?.length || 0}):</p>
-                    <div className="flex flex-wrap gap-1">{fp.allowedDomains && fp.allowedDomains.length > 0 ? fp.allowedDomains.map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>)) : <p className="text-xs text-destructive">Add an allowed domain before applying this Flight Path.</p>}</div>
+                    <p className="text-xs font-medium mb-1">Allowed Domains ({effectiveDomains.length}):</p>
+                    <div className="flex flex-wrap gap-1">{effectiveDomains.length > 0 ? effectiveDomains.map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>)) : <p className="text-xs text-destructive">Add an allowed domain before applying this Flight Path.</p>}</div>
+                    {fp.effectiveAllowedDomains?.includes('classroom.google.com') && <p className="mt-2 text-xs text-muted-foreground">Classroom includes Google work apps and all files in those apps. School and teacher block rules still apply.</p>}
                   </div>
                 ) : null;
               })()}

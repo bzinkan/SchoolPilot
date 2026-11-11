@@ -290,16 +290,16 @@ const LOCK_CAPABILITIES = Object.freeze({
   screenOnlyUnlockV1: true,
 });
 const LOCK_SCENARIOS = Object.freeze(['none', 'website', 'legacy', 'both', 'requested', 'releasing',
-  'missing-ref', 'missing-revision', 'unsupported', 'browser-page', 'stale', 'offline-focus', 'offline-website']);
+  'missing-ref', 'missing-revision', 'unsupported', 'missing-unlock', 'browser-page', 'stale', 'offline-focus', 'offline-website']);
 function lockStudent(scenario) {
-  const website = ['website', 'both', 'offline-website', 'releasing'].includes(scenario);
+  const website = ['website', 'both', 'offline-website', 'releasing', 'missing-unlock'].includes(scenario);
   const legacy = ['legacy', 'both', 'offline-focus'].includes(scenario);
   return { ...ONLINE_STUDENT, studentId: LOCK_STUDENT_ID, studentName: 'Lock Control Student',
     realtimeBinding: 'v2:lock-binding',
     activeTabUrl: scenario === 'browser-page' ? 'chrome://settings' : ONLINE_STUDENT.activeTabUrl,
     activeTabRef: scenario === 'missing-ref' ? null : 'lock-current-tab',
     tabSnapshotRevision: scenario === 'missing-revision' ? null : 7,
-    acceptedCapabilities: scenario === 'unsupported' ? { screenOnlyUnlockV1: true } : LOCK_CAPABILITIES,
+    acceptedCapabilities: scenario === 'missing-unlock' ? {} : scenario === 'unsupported' ? { screenOnlyUnlockV1: true } : LOCK_CAPABILITIES,
     screenLocked: website, focus: { state: legacy ? 'active' : 'inactive' },
     classroomState: { revision: 9, restrictions: { focus: { active: legacy },
       screenLock: { active: scenario === 'requested' || (website && scenario !== 'releasing') } } },

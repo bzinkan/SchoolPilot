@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { it, type TestContext } from "node:test";
 import { createClient } from "redis";
 import type { ClasspilotClassroomStateSnapshot } from "../src/services/classpilotClassroomState.js";
@@ -76,6 +77,26 @@ function classroomState(clock: number): ClasspilotClassroomStateSnapshot {
     },
   };
 }
+
+it("native Redis retains the full 3.0.5 legacy capability list and withholds invalid cached evidence", {
+  skip: !redisUrl, timeout: 10_000,
+}, async (t) => {
+  const f = await fixture(t);
+  const advertised = (JSON.parse(readFileSync(new URL("./fixtures/classpilot-capabilities-305.json", import.meta.url), "utf8")) as { capabilities: string[] }).capabilities;
+  await f.writer.write({ ...f.heartbeat, extensionCapabilities: advertised, acceptedCapabilities: [] });
+  const stored = await f.read();
+  assert.deepEqual(stored.extensionCapabilities, advertised);
+  assert.equal(stored.acceptedCapabilities, undefined);
+  assert.equal(stored.acceptedCapabilitiesEmpty, true);
+  await f.client.set(f.key, JSON.stringify({ ...stored,
+    extensionCapabilities: ["screenOnlyUnlockV1", "x".repeat(65)],
+    acceptedCapabilities: ["scopedAuthorityChecksV1", 1], acceptedCapabilitiesEmpty: true }));
+  const invalid = await f.read();
+  assert.equal(invalid.extensionCapabilities, undefined);
+  assert.equal(invalid.acceptedCapabilities, undefined);
+  assert.equal(invalid.acceptedCapabilitiesEmpty, undefined);
+  assert.equal(invalid.studentId, f.binding.studentId, "invalid capability evidence must not erase the exact-bound telemetry");
+});
 
 it("native Redis preserves empty tabs and nested policy arrays through every mutation", {
   skip: !redisUrl, timeout: 10_000,

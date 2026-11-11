@@ -34,6 +34,12 @@ export function exactTabPayloadForStudents(payload, studentIds) {
 
 const CURRENT_PAGE_UNAVAILABLE_REASON = 'Current website unavailable. Wait for a fresh browser update or use Set Focus with a specific URL.';
 
+export function focusSelectionHint(selectedCount, unavailableReason = '') {
+  return selectedCount > 0
+    ? `Focus tools target ${selectedCount} selected student${selectedCount === 1 ? '' : 's'}.${unavailableReason ? ` ${unavailableReason}` : ''}`
+    : 'Select students using their checkboxes for Set Focus or Stop Focus. Clicking a tile opens its preview.';
+}
+
 export function currentPageFocusTarget(student) {
   const unavailable = { enabled: false, reason: CURRENT_PAGE_UNAVAILABLE_REASON, payload: null };
   if (typeof student?.studentId !== 'string' || !student.studentId) return unavailable;
@@ -137,7 +143,7 @@ export function deriveTileLockControl(student, {
   if (busy) reason = statusLabel;
   else if (!actionsDisabled && clearable) {
     disabled = !canStopFocus || !screenOnlyUnlockSupported(student);
-    reason = !canStopFocus ? 'Stop Focus is unavailable in this view' : 'Extension update required for screen-only unlock';
+    reason = !canStopFocus ? 'Stop Focus is unavailable in this view' : 'This browser has not reported support for Stop Focus. Reconnect or update ClassPilot, then try again.';
   } else if (!actionsDisabled) {
     disabled = !canSetFocus || !focusTelemetryCurrent || !focusTarget.enabled;
     reason = !focusTelemetryCurrent || !focusTarget.enabled ? CURRENT_PAGE_UNAVAILABLE_REASON : 'Focus is unavailable in this view';

@@ -1064,8 +1064,11 @@ try {
   assert.equal(await lockButton.getAttribute('data-lock-state'), 'unlocked');
   await expectLockAction('focus-current-page', () => lockButton.click());
   assert.equal(await lockTile.getByText('Focus confirmed', { exact: true }).count(), 0);
-  await lockButton.evaluate(button => button.click());
+  await lockButton.scrollIntoViewIfNeeded();
+  const pendingLockBounds = await lockButton.boundingBox();
+  await page.mouse.click(pendingLockBounds.x + pendingLockBounds.width / 2, pendingLockBounds.y + pendingLockBounds.height / 2);
   assert.deepEqual(await lockActions(), ['focus-current-page']);
+  assert.equal(await page.getByTestId('lock-body-clicks').textContent(), '0');
   await page.getByTestId('lock-confirm-focus').click();
   assert.equal(await lockButton.getAttribute('aria-label'), 'Stop Focus');
   await lockStatus.getByText('Focus confirmed', { exact: true }).waitFor();
@@ -1085,6 +1088,22 @@ try {
     await selectLockScenario(scenario); await lockStatus.getByText(label, { exact: true }).waitFor();
     assert.equal(await lockButton.getAttribute('aria-busy'), 'true');
     assert.equal(await lockTile.getByText('Focus confirmed', { exact: true }).count(), 0);
+  }
+  // Disabled controls must retain their physical hit area. DOM button.click()
+  // does not exercise CSS pointer-events and previously missed preview clicks.
+  for (const scenario of ['missing-unlock', 'browser-page', 'stale']) {
+    await selectLockScenario(scenario);
+    assert.equal(await lockButton.isDisabled(), true);
+    await lockButton.scrollIntoViewIfNeeded();
+    const beforeActions = await lockActions();
+    const bounds = await lockButton.boundingBox();
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    assert.equal(await page.getByTestId('lock-body-clicks').textContent(), '0', 'a physical disabled-padlock click must never open a screenshot');
+    assert.deepEqual(await lockActions(), beforeActions);
+    assert.equal(await page.getByTestId('lock-selection-clicks').textContent(), '0');
+    const reason = page.getByTestId('lock-disabled-reason-lock-control-student');
+    assert.equal(await reason.isVisible(), true);
+    assert.ok((await lockButton.getAttribute('aria-describedby')).includes(await reason.getAttribute('id')));
   }
   for (const scenario of ['browser-page', 'stale']) {
     await selectLockScenario(scenario); assert.equal(await lockButton.isDisabled(), true);

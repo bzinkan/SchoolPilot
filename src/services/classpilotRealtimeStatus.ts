@@ -10,6 +10,7 @@ export const CLASSPILOT_REALTIME_STALE_AFTER_MS = 60_000;
 export const CLASSPILOT_REALTIME_EXPIRED_AFTER_MS = 300_000;
 export const CLASSPILOT_REALTIME_MAX_TABS = 50;
 export const CLASSPILOT_REALTIME_MAX_BYTES = 128 * 1024;
+export const CLASSPILOT_REALTIME_MAX_CAPABILITIES = 64;
 export const CLASSPILOT_REALTIME_BATCH_SIZE = 500;
 
 const REALTIME_REDIS_TIMEOUT_MS = 250;
@@ -459,20 +460,27 @@ export function normalizeClasspilotPublicClassroomControls(
  * Only arrays can advertise capabilities; entries remain identifier-free and
  * are bounded to the same limits as the realtime snapshot schema.
  */
-export function normalizeClasspilotPublicCapabilities(value: unknown): string[] {
+// This bounded metadata parser never negotiates capabilities. Reject an entire
+// malformed field instead of truncating it into apparently supported features.
+// null differs from a valid [] so invalid input cannot invent an empty negotiation.
+function parseClasspilotCapabilityList(value: unknown): string[] | null {
   try {
-    if (!Array.isArray(value) || value.length > 32) return [];
+    if (!Array.isArray(value) || value.length > CLASSPILOT_REALTIME_MAX_CAPABILITIES) return null;
     const capabilities: string[] = [];
     for (const candidate of value) {
-      if (typeof candidate !== "string") return [];
+      if (typeof candidate !== "string") return null;
       const normalized = candidate.trim();
-      if (!normalized || normalized.length > 64) return [];
+      if (!normalized || normalized.length > 64) return null;
       if (!capabilities.includes(normalized)) capabilities.push(normalized);
     }
     return capabilities;
   } catch {
-    return [];
+    return null;
   }
+}
+
+export function normalizeClasspilotPublicCapabilities(value: unknown): string[] {
+  return parseClasspilotCapabilityList(value) ?? [];
 }
 
 function boundedNumber(value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
@@ -852,17 +860,13 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   ) {
     snapshot.clientProtocolVersion = Number(row.clientProtocolVersion);
   }
-  if (Array.isArray(row.extensionCapabilities)) {
-    snapshot.extensionCapabilities = row.extensionCapabilities
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .slice(0, 32)
-      .map((value) => boundedString(value, 64));
+  const extensionCapabilities = parseClasspilotCapabilityList(row.extensionCapabilities);
+  if (extensionCapabilities !== null) {
+    snapshot.extensionCapabilities = extensionCapabilities;
   }
-  if (Array.isArray(row.acceptedCapabilities)) {
-    snapshot.acceptedCapabilities = row.acceptedCapabilities
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .slice(0, 32)
-      .map((value) => boundedString(value, 64));
+  const acceptedCapabilities = parseClasspilotCapabilityList(row.acceptedCapabilities);
+  if (acceptedCapabilities !== null) {
+    snapshot.acceptedCapabilities = acceptedCapabilities;
   }
   // A present malformed list is unknown metadata, not proof of an empty
   // negotiation. A real list already supplies its own capability evidence.
@@ -975,18 +979,8 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   const screenshotHealth = normalizeScreenshotHealth(input.screenshotHealth);
   const extensionVersion = optionalString(input.extensionVersion, 64);
   const clientProtocolVersion = Number(input.clientProtocolVersion);
-  const extensionCapabilities = Array.isArray(input.extensionCapabilities)
-    ? [...new Set(input.extensionCapabilities
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-        .map((value) => value.trim().slice(0, 64)))]
-        .slice(0, 32)
-    : [];
-  const acceptedCapabilities = Array.isArray(input.acceptedCapabilities)
-    ? [...new Set(input.acceptedCapabilities
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-        .map((value) => value.trim().slice(0, 64)))]
-        .slice(0, 32)
-    : [];
+  const extensionCapabilities = parseClasspilotCapabilityList(input.extensionCapabilities);
+  const acceptedCapabilities = parseClasspilotCapabilityList(input.acceptedCapabilities);
   const chromeVersion = optionalString(input.chromeVersion, 128);
   if (favicon) snapshot.favicon = favicon;
   if (activeFlightPathName) snapshot.classroomControls.activeFlightPathName = activeFlightPathName;
@@ -999,9 +993,9 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   ) {
     snapshot.clientProtocolVersion = clientProtocolVersion;
   }
-  if (acceptedCapabilities.length > 0) snapshot.acceptedCapabilities = acceptedCapabilities;
-  else if (Array.isArray(input.acceptedCapabilities)) snapshot.acceptedCapabilitiesEmpty = true;
-  if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
+  if (acceptedCapabilities?.length) snapshot.acceptedCapabilities = acceptedCapabilities;
+  else if (acceptedCapabilities !== null) snapshot.acceptedCapabilitiesEmpty = true;
+  if (extensionCapabilities?.length) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;
   if (input.focus !== undefined) {
