@@ -12,6 +12,9 @@ const COUNTER_NAMES = [
   "dailyRollupSchools", "studentWebSocketAuthAttempt", "studentWebSocketAuthSuccess",
   "studentWebSocketAuthDenied", "studentWebSocketAuthServiceFailure", "studentWebSocketAuthSocketClosed",
   "studentWebSocketRevalidationFailure",
+  "classroomRecoveryAdmitted", "classroomRecoveryCoalesced", "classroomRecoveryCancelledClosed",
+  "classroomRecoveryCancelledSuperseded", "classroomRecoveryDenied", "classroomRecoveryWithheld",
+  "classroomRecoveryTransmitted", "classroomRecoveryServiceFailed", "classroomRecoveryTransportFailed",
   "studentRelayBatchNotAdmitted",
   "safetyAlertsCreated", "safetyObservationsMerged", "safetyExceptionsApplied",
   "safetyEmailsSent", "safetyFollowupsSent", "safetyEmailFailures", "safetyEmailUnknown",
@@ -45,6 +48,7 @@ export type RuntimePerformanceTiming =
   | "importEvidenceMs"
   | "dailyRollupMs"
   | "studentWebSocketAuthMs"
+  | "classroomRecoveryMs"
   | "studentRelayBatchQueueMs";
 
 type Timing = { count: number; totalMs: number; maxMs: number };

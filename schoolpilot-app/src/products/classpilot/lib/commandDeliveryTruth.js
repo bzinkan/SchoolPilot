@@ -133,6 +133,14 @@ function formattedExpiry(expiresAt) {
   }).format(new Date(time));
 }
 
+export function stopFocusUnavailableKind(target) {
+  if (target?.status !== 'unavailable') return null;
+  const reason = target.errorMessage || target.error;
+  if (reason === 'screen_only_unlock_pending_clear') return 'saved_cleanup';
+  return ['screen_only_unlock_requires_capable_online_extension', 'screen_only_unlock_unsupported',
+    'Student signal is unavailable; restriction was not changed'].includes(reason) ? 'not_queued' : null;
+}
+
 function commandDeliverySummaryFeedback(value, commandType) {
   const policy = commandDeliveryPolicy(commandType, value);
   const summary = normalizeCommandSummary(value);
@@ -141,6 +149,31 @@ function commandDeliverySummaryFeedback(value, commandType) {
   const requestFailures = (value?.command?.targets || value?.targets || []).filter((target) => target.requestFailed);
   if (summary.requested > 0 && requestFailures.length === summary.requested) {
     return { title: 'Failed', description: 'No command was accepted for the selected students.', variant: 'destructive' };
+  }
+
+  if (commandType === 'unlock-screen') {
+    const targets = value?.command?.targets || value?.targets || [];
+    const savedCleanup = targets.filter(target => stopFocusUnavailableKind(target) === 'saved_cleanup').length;
+    const notQueued = targets.filter(target => stopFocusUnavailableKind(target) === 'not_queued').length;
+    const notApplied = targets.filter(target => target.status === 'completed'
+      && target.result?.outcome !== undefined && target.result.outcome !== 'applied').length;
+    const confirmed = Math.max(0, summary.completed - notApplied);
+    const awaiting = Math.max(0, summary.requested - summary.completed - summary.failed - summary.unavailable - summary.expired) + savedCleanup;
+    return {
+      title: notQueued === summary.requested && notQueued > 0 ? 'Stop Focus not queued'
+        : awaiting > 0 ? 'Stop Focus awaiting confirmation'
+          : confirmed === summary.requested && confirmed > 0 ? 'Stop Focus confirmed' : 'Stop Focus not confirmed',
+      description: [
+        confirmed > 0 ? `${plural(confirmed, 'student')} confirmed Focus removal.` : null,
+        awaiting > 0 ? `${plural(awaiting, 'student is', 'students are')} awaiting browser confirmation${savedCleanup > 0 ? ' of saved cleanup' : ''}.` : null,
+        notQueued > 0 ? `Stop Focus was not queued for ${plural(notQueued, 'student')}. Reconnect or update ClassPilot, then try again.` : null,
+        summary.unavailable > savedCleanup + notQueued ? `${plural(summary.unavailable - savedCleanup - notQueued, 'student is', 'students are')} unavailable; Focus removal is not confirmed.` : null,
+        summary.failed + summary.expired > 0 ? `${plural(summary.failed + summary.expired, 'student')} failed or expired; Focus removal is not confirmed.` : null,
+        notApplied > 0 ? `${plural(notApplied, 'browser')} did not apply the Focus removal.` : null,
+        'Flight Paths and other independent restrictions stay in place.',
+      ].filter(Boolean).join(' '),
+      variant: notQueued > 0 || notApplied > 0 || summary.failed > 0 || summary.expired > 0 || summary.unavailable > savedCleanup ? 'destructive' : undefined,
+    };
   }
 
   if (policy === 'persistent_control') {
@@ -302,9 +335,12 @@ function commandFailureDescription(value, studentNames) {
   const seen = new Set();
   let omitted = 0;
   for (const target of targets) {
+    const stopKind = stopFocusUnavailableKind(target);
+    if (stopKind === 'saved_cleanup') continue;
     if (!['failed', 'unavailable', 'expired'].includes(target?.status) || typeof target.errorMessage !== 'string') continue;
-    // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
-    const message = target.errorMessage.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+    const message = (stopKind === 'not_queued' ? 'Stop Focus was not queued; reconnect or update ClassPilot and try again.' : target.errorMessage)
+      // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
+      .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (!message) continue;
     const key = `${target.studentId}\u0000${target.sourceRef || ''}\u0000${message}`;
     if (seen.has(key)) continue;

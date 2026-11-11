@@ -56,13 +56,13 @@ export function mergeTeachingResourceOptions(data, key) {
  */
 export function activeFlightPathAllowedDomains(student, flightPaths = EMPTY) {
   const activeName = String(student?.activeFlightPathName || '').trim();
-  if (!flightPaths.some((candidate) => candidate?.fromSchoolLibrary === true)) {
-    if (!activeName) return EMPTY;
-    return flightPaths.find((candidate) => candidate?.flightPathName === activeName)?.allowedDomains || EMPTY;
-  }
   const snapshot = student?.classroomState?.restrictions?.flightPath;
   if (snapshot?.active === true && Array.isArray(snapshot.allowedDomains) && snapshot.allowedDomains.length > 0) {
     return snapshot.allowedDomains;
+  }
+  if (!flightPaths.some((candidate) => candidate?.fromSchoolLibrary === true)) {
+    if (!activeName) return EMPTY;
+    return flightPaths.find((candidate) => candidate?.flightPathName === activeName)?.allowedDomains || EMPTY;
   }
   const activeId = String(snapshot?.id || student?.activeFlightPathId || '').trim();
   if (activeId) return flightPaths.find((candidate) => candidate?.id === activeId)?.allowedDomains || EMPTY;

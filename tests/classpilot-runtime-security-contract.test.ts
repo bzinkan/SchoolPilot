@@ -871,9 +871,10 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
   });
 
   it("establishes one school-scoped exact public student binding on every auth and recovery response", async () => {
-    const [devices, websocket] = await Promise.all([
+    const [devices, websocket, recovery] = await Promise.all([
       source("src/routes/classpilot/devices.ts"),
       source("src/realtime/websocket.ts"),
+      source("src/realtime/classpilotClassroomRecovery.ts"),
     ]);
     const login = devices.slice(
       devices.indexOf("async function completeStudentDeviceLogin"),
@@ -924,11 +925,20 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       websocket.indexOf('message.type === "command-ack"')
     );
     assert.match(classroomStateRecovery, /type: "classroom-state-sync"/);
-    assert.match(classroomStateRecovery, /studentId: client\.studentId/);
-    assert.match(classroomStateRecovery, /studentSessionId: client\.studentSessionId/);
+    const recoveryIdentity = websocket.slice(
+      websocket.indexOf("const classroomRecovery = new ClasspilotClassroomRecoveryCoordinator"),
+      websocket.indexOf("const telemetryLanes = createDeviceTelemetryLanes()")
+    );
+    assert.match(recoveryIdentity, /identity: \(\) => getWsClient\(ws\) === client && client\.authenticated && client\.role === "student"/);
+    assert.match(recoveryIdentity, /schoolId: client\.schoolId, studentId: client\.studentId, studentSessionId: client\.studentSessionId/);
+    assert.match(recoveryIdentity, /deviceId: client\.deviceId, generation: client\.sessionSubscriptionIdentityGeneration/);
+    assert.match(recovery, /const frozen = Object\.freeze\(\{ \.\.\.identity, acceptedCapabilities: Object\.freeze\(\[\.\.\.identity\.acceptedCapabilities\]\) \}\)/);
+    assert.match(recovery, /new ClasspilotRecoveryAttempt\(frozen, \(\) => this\.assertCurrent\(frozen\)\)/);
+    assert.match(classroomStateRecovery, /const \{ schoolId, studentId, studentSessionId, deviceId, acceptedCapabilities \} = attempt\.identity;\s+const binding = \{ schoolId, studentId, studentSessionId, deviceId \}/);
+    assert.match(classroomStateRecovery, /attempt\.assertCurrent\(\);\s+return withClasspilotStudentControlDeliveryAuthority\(binding,/);
     assert.match(
       classroomStateRecovery,
-      /classpilotClassroomStatePushFrame\(\{[\s\S]*?binding: \{[\s\S]*?schoolId:[\s\S]*?deviceId:[\s\S]*?controlRevision:/
+      /\(_claimed, delivery\) => \{\s+attempt\.assertCurrent\(\);[\s\S]*?attempt\.send\(classpilotClassroomStatePushFrame\(\{[\s\S]*?binding: \{\s+\.\.\.binding,\s+controlRevision: delivered\?\.revision \?\? 0/
     );
   });
 

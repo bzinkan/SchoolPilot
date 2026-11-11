@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   hydrateClasspilotCoverageStatuses,
@@ -8,6 +9,21 @@ import {
 import { markClasspilotRealtimeSignedOut, writeClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
 
 describe("ClassPilot coverage bulk hydration", () => {
+  it("projects Stop Focus from the full 3.0.5 raw advertisement without granting negotiated capabilities", async () => {
+    const fixture = JSON.parse(readFileSync(new URL("./fixtures/classpilot-capabilities-305.json", import.meta.url), "utf8")) as { capabilities: string[] };
+    const now = Date.now(), schoolId = "coverage-full-capabilities";
+    const target = { studentId: "full-cap-student", studentSessionId: "full-cap-session", deviceId: "full-cap-device" };
+    await writeClasspilotRealtimeStatus({ schoolId, ...target, heartbeatId: "full-cap-heartbeat", observedAt: now,
+      trackingStatus: "ACTIVE", extensionCapabilities: fixture.capabilities, acceptedCapabilities: [] });
+    const result = await hydrateClasspilotCoverageStatuses({ schoolId, studentIds: [target.studentId], now,
+      knownSessions: [{ id: target.studentSessionId, studentId: target.studentId, deviceId: target.deviceId, lastSeenAt: new Date(now) }] });
+    const row = result.get(target.studentId);
+    assert.equal(row?.capabilities.screenOnlyUnlockV1, true);
+    assert.equal(row?.acceptedCapabilities?.focusTabV1, false);
+    assert.equal(row?.acceptedCapabilities?.scopedAuthorityChecksV1, false);
+    assert.equal(JSON.stringify(row).includes("deviceId"), false);
+  });
+
   it("hydrates 500 known exact bindings with no SQL and one Redis batch", async () => {
     const now = Date.now();
     const studentIds = Array.from({ length: 500 }, (_, index) => `student-${index}`);

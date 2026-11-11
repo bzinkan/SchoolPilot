@@ -29,7 +29,7 @@ delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 
 const LEGACY_FLIGHT_PATH_KEYS = [
   "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
+  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt", "effectiveAllowedDomains",
 ];
 
 const VIDEO = {
@@ -167,6 +167,25 @@ after(async () => {
 });
 
 describe("precise Flight Path resources while the capability is off", () => {
+  it("reads the Google work bundle without storing generated websites", async () => {
+    const created = await requestJson("POST", "/classpilot/flight-paths", teacherA, {
+      flightPathName: `${TAG} Classroom work`, allowedDomains: ["ixl.com", "classroom.google.com"],
+    });
+    assert.equal(created.status, 201);
+    const effective = ["ixl.com", "classroom.google.com", "docs.google.com", "drive.google.com", "sheets.google.com", "slides.google.com", "forms.google.com", "forms.gle"];
+    assert.deepEqual(created.body.flightPath.effectiveAllowedDomains, effective);
+    assert.deepEqual((await storedPath(created.body.flightPath.id)).allowedDomains, ["ixl.com", "classroom.google.com"]);
+    const read = await requestJson("GET", `/classpilot/flight-paths/${created.body.flightPath.id}`, teacherA);
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.flightPath.effectiveAllowedDomains, effective);
+    const preview = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "flight_path", allowedDomains: ["ixl.com", "classroom.google.com"],
+    });
+    assert.equal(preview.status, 200);
+    assert.deepEqual(preview.body.effectiveAllowedDomains, effective);
+    assert.deepEqual(preview.body.authoring.allowedDomains, ["ixl.com", "classroom.google.com"]);
+  });
+
   it("keeps today's response shape and refuses precise authoring", async () => {
     const created = await requestJson("POST", "/classpilot/flight-paths", teacherA, {
       flightPathName: `${TAG} Off`,

@@ -137,7 +137,7 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   assert.match(websocket, /deviceId: client\.deviceId/);
   assert.match(
     websocket,
-    /classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?binding: \{[\s\S]*?schoolId: client\.schoolId!?,[\s\S]*?deviceId: client\.deviceId!?,[\s\S]*?studentId: client\.studentId!?,[\s\S]*?studentSessionId: client\.studentSessionId!?,[\s\S]*?controlRevision: delivered\?\.revision \?\? 0,[\s\S]*?classroomState: delivered/
+    /const \{ schoolId, studentId, studentSessionId, deviceId, acceptedCapabilities \} = attempt\.identity;[\s\S]*?const binding = \{ schoolId, studentId, studentSessionId, deviceId \};[\s\S]*?classpilotClassroomStatePushFrame\(\{[\s\S]*?type: "classroom-state-sync",[\s\S]*?binding: \{[\s\S]*?\.\.\.binding,[\s\S]*?controlRevision: delivered\?\.revision \?\? 0,[\s\S]*?classroomState: delivered/
   );
   // Login is checked above. Safety closure delegates the exact-bound command
   // and passes the delivered revision separately from server ownership.

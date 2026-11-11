@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { after, before, beforeEach, describe, test } from "node:test";
 import pg from "pg";
 import { sql } from "drizzle-orm";
 import { WebSocket, WebSocketServer } from "ws";
 import { focusRecord, focusServerOrigin, readFocusAssignment, readFocusOpenIntent, readFocusRestriction, withoutClasspilotFocus } from "../src/services/classpilotFocus.js";
+import { ClasspilotClassroomRecoveryCoordinator } from "../src/realtime/classpilotClassroomRecovery.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
@@ -42,9 +44,9 @@ const issue = (commandType: string, rawCommandPayload: Record<string, unknown>, 
   contextAuthorityRevision: String(context.classroomAuthorityRevision), targetScope: "students",
   commandType, rawCommandPayload, targets: indexes.map(target),
 }));
-const refresh = async (index: number, acceptedCapabilities: string[] = capabilities) => realtime.writeClasspilotRealtimeStatus({
+const refresh = async (index: number, acceptedCapabilities: string[] = capabilities, extensionCapabilities = acceptedCapabilities) => realtime.writeClasspilotRealtimeStatus({
   schoolId: ids.school, studentId: ids.students[index]!, studentSessionId: sessions[index]!, deviceId: ids.devices[index]!,
-  heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities, extensionCapabilities: acceptedCapabilities, tabSnapshotRevision: 9,
+  heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities, extensionCapabilities, tabSnapshotRevision: 9,
   activeTabUrl: "https://example.org/current?private=not-durable",
   allOpenTabs: [{ tabRef: refs[index]!, url: "https://example.org/lesson", title: "Exact tab" }],
 });
@@ -162,7 +164,7 @@ after(async () => {
   if (!admin) return;
   realtime?.setClasspilotRealtimeStatusCommandForTests(undefined);
   for (const table of ["audit_logs", "classpilot_tool_history", "classpilot_routine_runs", "classpilot_tool_templates", "classpilot_chat_deliveries", "chat_messages", "classpilot_active_hands", "session_settings",
-    "classpilot_classroom_states", "classpilot_command_targets", "classpilot_commands", "classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "devices", "students", "settings"])
+    "classpilot_classroom_states", "classpilot_command_targets", "classpilot_commands", "classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "flight_paths", "devices", "students", "settings"])
     await admin.query(`DELETE FROM ${table} WHERE school_id=$1`, [ids.school]);
   await admin.query("DELETE FROM student_sessions WHERE student_id=ANY($1::varchar[])", [ids.students]);
   await admin.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
@@ -226,6 +228,66 @@ test("offline retirement preserves every independent control and records an exac
   assert.deepEqual(again?.desiredState, retired.desiredState);
 });
 
+test("closed recovery rolls retirement back and a fresh connection retires and queues cleanup exactly once", async () => {
+  const source = await seedLegacyFocus();
+  const binding = { schoolId: ids.school, studentId: ids.students[0]!, studentSessionId: sessions[0]!, deviceId: ids.devices[0]! };
+  const snapshot = async () => ({ state: await control(), target: await sourceTarget(source.command.id),
+    counts: (await admin.query<{ commands: string; targets: string; audits: string }>(`SELECT
+      (SELECT count(*) FROM classpilot_commands WHERE school_id=$1) AS commands,
+      (SELECT count(*) FROM classpilot_command_targets WHERE school_id=$1) AS targets,
+      (SELECT count(*) FROM audit_logs WHERE school_id=$1 AND action='classpilot.legacy_tab_focus.retired') AS audits`, [ids.school])).rows[0]!,
+  });
+  const before = await snapshot();
+  let open = true, generation = 1, cancelDelivery = true;
+  const failures: unknown[] = [], counters: string[] = [], frames: string[] = [], writes: Promise<unknown>[] = [];
+  const coordinator = new ClasspilotClassroomRecoveryCoordinator({
+    identity: () => ({ ...binding, generation, acceptedCapabilities: capabilities }),
+    open: () => open, accepting: () => true, counter: name => { counters.push(name); }, timing: () => {},
+    failure: error => { failures.push(error); }, track: work => { writes.push(work); },
+  });
+  const recover = async () => {
+    const attempt = coordinator.admit(); assert.ok(attempt);
+    await coordinator.run(attempt, async current => {
+      const result = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding,
+        async scoped => {
+          const state = await (await import("../src/services/classpilotFocusRetirement.js")).retireLegacyTabFocusForStudentLocked(scoped,
+            { ...binding, reason: "reconnect" });
+          assert.ok(state && state.revision > before.state.revision);
+          if (cancelDelivery) open = false;
+          return state;
+        }, (_claimed, state) => {
+          current.assertCurrent(); // Throws while the real DB transaction owns retirement.
+          current.send({ type: "classroom-state-sync", revision: state?.revision }, (payload, callback) => {
+            frames.push(payload); callback();
+          });
+          current.stage = "commit";
+          return "transmitted" as const;
+        }));
+      assert.equal(result.authorized, true);
+      return result.authorized ? result.value : "denied";
+    });
+    await Promise.all(writes);
+  };
+  await recover();
+  assert.deepEqual(await snapshot(), before, "Control, target, commands and audit writes all roll back");
+  assert.equal(frames.length, 0);
+  assert.deepEqual(failures, []);
+  assert.ok(counters.includes("classroomRecoveryCancelledClosed"));
+
+  open = true; generation++; cancelDelivery = false;
+  await recover();
+  const retired = await snapshot();
+  assert.equal(retired.state.revision, before.state.revision + 1);
+  assert.equal(Number(retired.counts.commands), Number(before.counts.commands) + 1);
+  assert.equal(Number(retired.counts.targets), Number(before.counts.targets) + 1);
+  assert.equal(Number(retired.counts.audits), Number(before.counts.audits) + 1);
+  assert.equal(frames.length, 1);
+  await recover();
+  assert.deepEqual(await snapshot(), retired, "A later recovery reuses the durable cleanup instead of retiring twice");
+  assert.equal(frames.length, 2);
+  assert.deepEqual(failures, []);
+});
+
 test("retirement removes saved legacy Focus without altering current destination controls", async () => {
   await seedLegacyFocus();
   const original = await control();
@@ -287,6 +349,21 @@ test("queued old-server frames are refused by stored command authority while Bri
   assert.equal(readFocusRestriction(focusRecord(newState.desiredState).restrictions), null);
   assert.equal(focusRecord(activate.command.targets[0]?.result).frozenControlRevision, newState.revision);
   assert.ok(await relayAllowed({ commandId: activate.command.id, authority }));
+});
+
+test("the full 3.0.5 raw advertisement authorizes narrow Stop Focus and retains the independent Flight Path", async () => {
+  const advertised = (JSON.parse(readFileSync(new URL("./fixtures/classpilot-capabilities-305.json", import.meta.url), "utf8")) as { capabilities: string[] }).capabilities;
+  await refresh(0, capabilities, advertised);
+  const path = await inSchool(() => storage.createFlightPath({ schoolId: ids.school, teacherId: ids.teacher,
+    allowedDomains: ["example.org"], blockedDomains: [], flightPathName: "Retained lesson" }));
+  await issue("apply-flight-path", { flightPathId: path.id });
+  await issue("lock-screen", { url: "https://example.org/focus" });
+  const stopped = await issue("unlock-screen", { screenOnly: true });
+  assert.notEqual(stopped.command.targets[0]?.status, "unavailable");
+  const restrictions = focusRecord(focusRecord((await control()).desiredState).restrictions);
+  assert.equal(focusRecord(restrictions.screenLock).active, false);
+  assert.equal(focusRecord(restrictions.flightPath).active, true);
+  assert.deepEqual(focusRecord(restrictions.flightPath).allowedDomains, ["example.org"]);
 });
 
 test("Set and Stop website Focus retire old tab holding in the same persistence operation", async () => {

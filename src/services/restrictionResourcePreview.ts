@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { effectiveFlightPathAllowedDomains } from "./classpilotFlightPathDomains.js";
 import {
   classroomImportLinkUrls,
   classroomImportResourceEntries,
@@ -42,6 +43,7 @@ export type RestrictionResourcePreview = {
   purpose: "flight_path" | "waypoint" | "classroom";
   boundary?: "website" | "resource";
   scopes: RestrictionScopePreview[];
+  effectiveAllowedDomains: string[];
   warnings: Array<{ code: "BROADER_WEBSITE"; hostname: string; message: string }>;
   skipped: Array<{ url: string; code: string }>;
   /** Canonical authoring inputs, not a command or client-supplied wire resource. */
@@ -71,7 +73,8 @@ function buildPreview(
   purpose: RestrictionResourcePreview["purpose"], hosts: string[], resources: PreciseAllowedResource[],
 ): RestrictionResourcePreview {
   const allowedDomains = [...new Set(hosts.map(websiteHostname))];
-  const scopes: RestrictionScopePreview[] = allowedDomains.map(hostname => ({
+  const effectiveAllowedDomains = purpose === "waypoint" ? [...allowedDomains] : effectiveFlightPathAllowedDomains(allowedDomains);
+  const scopes: RestrictionScopePreview[] = effectiveAllowedDomains.map(hostname => ({
     type: "website", hostname, url: `https://${hostname}`, label: "Entire website",
     description: `Every page on ${hostname} and its subdomains is allowed.`,
   }));
@@ -82,7 +85,7 @@ function buildPreview(
       ? `${resource.hostname}${resource.pathPrefix} and paths below that section; other sections and subdomains are excluded.`
       : `Only this ${providerLabels[resource.provider].toLowerCase()} is allowed.`,
   });
-  const warnings = allowedDomains.map(hostname => {
+  const warnings = effectiveAllowedDomains.map(hostname => {
     const overlaps = resources.some(resource => {
       const family = resource.type === "resource" && resource.provider === "youtube"
         ? ["youtube.com", "m.youtube.com", "youtube-nocookie.com", "youtu.be"] : [resource.hostname];
@@ -96,7 +99,7 @@ function buildPreview(
     };
   });
   return {
-    schemaVersion: 1, purpose, scopes, warnings, skipped: [],
+    schemaVersion: 1, purpose, scopes, effectiveAllowedDomains, warnings, skipped: [],
     authoring: { allowedDomains, resources: resources.map(resource => ({ url: canonicalUrlForResource(resource) })) },
   };
 }
@@ -155,6 +158,8 @@ export async function previewRestrictionResources(
     preview.skipped = skipped;
   }
   preview.boundary = input.boundary;
-  preview.authoring.resourceLinks = preview.scopes.map(scope => scope.url);
+  preview.authoring.resourceLinks = preview.scopes
+    .filter(scope => scope.type !== "website" || preview.authoring.allowedDomains.includes(scope.hostname))
+    .map(scope => scope.url);
   return preview;
 }

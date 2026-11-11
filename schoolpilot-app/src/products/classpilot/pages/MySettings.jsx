@@ -729,8 +729,8 @@ function TeachingToolsContent({ currentUser, logout, school }) {
                             <p className="text-sm text-muted-foreground mb-2">{fp.description}</p>
                           )}
                           <div className="flex flex-wrap gap-1">
-                            {fp.allowedDomains && fp.allowedDomains.length > 0 ? (
-                              fp.allowedDomains.map((domain, idx) => (
+                            {(fp.effectiveAllowedDomains ?? fp.allowedDomains)?.length > 0 ? (
+                              (fp.effectiveAllowedDomains ?? fp.allowedDomains).map((domain, idx) => (
                                 <Badge key={idx} variant="outline" className="text-xs">
                                   {domain}
                                 </Badge>
@@ -954,7 +954,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
                           {fp.ownerName && <p className="text-xs text-muted-foreground mb-1">From {fp.ownerName}</p>}
                           {fp.description && <p className="text-sm text-muted-foreground mb-2">{fp.description}</p>}
                           <div className="flex flex-wrap gap-1">
-                            {fp.allowedDomains?.length > 0 ? fp.allowedDomains.map((domain, idx) => (
+                            {(fp.effectiveAllowedDomains ?? fp.allowedDomains)?.length > 0 ? (fp.effectiveAllowedDomains ?? fp.allowedDomains).map((domain, idx) => (
                               <Badge key={idx} variant="outline" className="text-xs">{domain}</Badge>
                             )) : <span className="text-xs text-muted-foreground">No domains configured</span>}
                           </div>
@@ -1312,10 +1312,11 @@ function TeachingToolsContent({ currentUser, logout, school }) {
                 <p>Comma-separated domains. Use specific subdomains for best control.</p>
                 <p className="font-medium text-primary">Google Services Examples:</p>
                 <ul className="ml-3 space-y-0.5">
-                  <li>• <code className="text-xs bg-muted px-1 rounded">classroom.google.com</code> - Google Classroom only</li>
+                  <li>• <code className="text-xs bg-muted px-1 rounded">classroom.google.com</code> - Classroom plus Google work apps and all files in those apps</li>
                   <li>• <code className="text-xs bg-muted px-1 rounded">docs.google.com</code> - Forms, Docs, Sheets, Slides</li>
                   <li>• <code className="text-xs bg-muted px-1 rounded">drive.google.com</code> - Google Drive only</li>
                 </ul>
+                <p>Classroom automatically includes Docs, Sheets, Slides, Forms, and Drive. School and teacher block rules still apply. Saved paths receive this access the next time they are applied.</p>
                 <p className="text-amber-600 dark:text-amber-500 pt-1 flex items-start gap-1">
                   <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
                   <span><code className="text-xs bg-muted px-1 rounded">google.com</code> allows that website and its subdomains, including Docs and Gmail. YouTube uses the separate <code className="text-xs bg-muted px-1 rounded">youtube.com</code> website.</span>

@@ -1,4 +1,5 @@
 import { classroomCommands, waitForClassroomTargets } from './classroomActions.js';
+import { stopFocusUnavailableKind } from './commandDeliveryTruth.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'unavailable', 'expired']);
 const ACTIONS = new Set(['focus-current-page', 'stop-focus']);
@@ -6,8 +7,10 @@ const ACTIONS = new Set(['focus-current-page', 'stop-focus']);
 export function tileLockCommandOutcome(target, commandType, commandId) {
   const notApplied = target.status === 'completed'
     && target.result?.outcome !== undefined && target.result.outcome !== 'applied';
-  return { status: notApplied ? 'failed' : target.status, commandType, commandId, result: target.result,
-    error: target.errorMessage || target.error
+  const reportedError = target.errorMessage || target.error;
+  const stopKind = commandType === 'unlock-screen' ? stopFocusUnavailableKind(target) : null;
+  return { status: notApplied ? 'failed' : stopKind === 'saved_cleanup' ? 'pending' : target.status, commandType, commandId, result: target.result,
+    error: stopKind === 'saved_cleanup' ? undefined : (stopKind === 'not_queued' ? "Stop Focus was not queued. Reconnect or update the student's ClassPilot browser, then try again." : reportedError)
       || (notApplied ? `The device did not apply this change (${target.result.outcome}).` : undefined) };
 }
 

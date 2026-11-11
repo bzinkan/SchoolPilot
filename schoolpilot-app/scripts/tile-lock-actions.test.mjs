@@ -1,10 +1,46 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runTileLockAction, tileLockAuthorityKey } from '../src/products/classpilot/lib/tileLockActions.js';
+import { runTileLockAction, tileLockAuthorityKey, tileLockCommandOutcome } from '../src/products/classpilot/lib/tileLockActions.js';
+import { commandDeliveryFeedback } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
 const response = (commandType, status = 'completed', result = { outcome: 'applied' }) => ({
   command: { id: 'command-a', commandType, teachingSessionId: 'class-a', targets: [{ studentId: 'a', status, result }] },
 });
 const noRead = async () => assert.fail('Unexpected status read');
+
+test('refused Stop Focus is explicitly not queued and pending cleanup remains unconfirmed', () => {
+  const refused = tileLockCommandOutcome({ status: 'unavailable', errorMessage: 'screen_only_unlock_requires_capable_online_extension' }, 'unlock-screen', 'stop-a');
+  assert.equal(refused.status, 'unavailable');
+  assert.match(refused.error, /Stop Focus was not queued/);
+  assert.match(refused.error, /reconnect/i);
+  const pending = tileLockCommandOutcome({ status: 'received', result: { outcome: 'applied' } }, 'unlock-screen', 'stop-b');
+  assert.equal(pending.status, 'received');
+  assert.equal(pending.error, undefined);
+  const saved = tileLockCommandOutcome({ status: 'unavailable', errorMessage: 'screen_only_unlock_pending_clear' }, 'unlock-screen', 'saved-clear');
+  assert.equal(saved.status, 'pending');
+  assert.equal(saved.error, undefined);
+});
+
+test('toolbar Stop Focus distinguishes unavailable students from acknowledgements still pending', () => {
+  const refused = response('unlock-screen', 'unavailable', {});
+  refused.command.targets[0].errorMessage = 'screen_only_unlock_requires_capable_online_extension';
+  const feedback = commandDeliveryFeedback(refused, 'unlock-screen');
+  assert.equal(feedback.title, 'Stop Focus not queued');
+  assert.match(feedback.description, /not queued/);
+  assert.doesNotMatch(feedback.description, /signed out/);
+  assert.doesNotMatch(feedback.description, /screen_only_unlock/);
+  const awaiting = commandDeliveryFeedback(response('unlock-screen', 'received', {}), 'unlock-screen');
+  assert.match(awaiting.title, /awaiting confirmation/);
+  assert.doesNotMatch(awaiting.description, /not queued/);
+  const saved = response('unlock-screen', 'unavailable', {});
+  saved.command.targets[0].errorMessage = 'screen_only_unlock_pending_clear';
+  const savedFeedback = commandDeliveryFeedback(saved, 'unlock-screen');
+  assert.match(savedFeedback.title, /awaiting confirmation/);
+  assert.match(savedFeedback.description, /saved cleanup/);
+  assert.doesNotMatch(savedFeedback.description, /not queued/);
+  const stale = commandDeliveryFeedback(response('unlock-screen', 'completed', { outcome: 'stale' }), 'unlock-screen');
+  assert.equal(stale.title, 'Stop Focus not confirmed');
+  assert.match(stale.description, /did not apply/);
+});
 test('tile Focus and Stop Focus each send one narrow student-scoped website command', async () => {
   for (const [action, type, payload] of [['focus-current-page', 'lock-screen', { url: 'CURRENT_URL' }], ['stop-focus', 'unlock-screen', { screenOnly: true }]]) {
     const posts = [];

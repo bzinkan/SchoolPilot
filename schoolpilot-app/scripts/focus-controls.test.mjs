@@ -2,10 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, exactTabCapability,
   exactTabPayloadForStudents, tabActionFeedback, tileFocusLifecycleObserved } from '../src/products/classpilot/lib/focusControls.js';
+import * as focusControls from '../src/products/classpilot/lib/focusControls.js';
 const row = (studentId = 'a', tabRef = 'opaque-a') => ({ studentId, tabRef, observedRevision: 7, acceptedCapabilities: ['scopedAuthorityChecksV1', 'focusTabV1'] });
 const student = (extra = {}) => ({ studentId: 'a', activeTabUrl: 'https://lesson.example.test/page', screenLocked: false,
   acceptedCapabilities: { screenOnlyUnlockV1: true }, classroomState: { revision: 1, restrictions: { screenLock: { active: false }, focus: { active: false } } }, ...extra });
 const focused = (extra = {}) => student({ screenLocked: true, classroomState: { revision: 2, restrictions: { screenLock: { active: true } } }, ...extra });
+
+test('Focus tools explain explicit checkbox selection without changing tile preview behavior', () => {
+  const { focusSelectionHint } = focusControls;
+  assert.equal(typeof focusSelectionHint, 'function');
+  assert.equal(focusSelectionHint(0), 'Select students using their checkboxes for Set Focus or Stop Focus. Clicking a tile opens its preview.');
+  assert.equal(focusSelectionHint(1), 'Focus tools target 1 selected student.');
+  assert.equal(focusSelectionHint(2), 'Focus tools target 2 selected students.');
+  assert.equal(focusSelectionHint(2, 'Reconnect the selected browsers.'), 'Focus tools target 2 selected students. Reconnect the selected browsers.');
+});
 
 test('Bring Forward retains exact opaque identity, revisions and negotiated capabilities', () => {
   const payload = exactTabPayload([row('a'), row('b', 'opaque-b')]);

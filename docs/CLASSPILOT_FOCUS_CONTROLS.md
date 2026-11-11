@@ -15,6 +15,13 @@ unsupported or offline recipient never receives a broader website fallback.
 The student tile's open padlock starts current-website Focus directly for that
 student and requires a fresh HTTP(S) page.
 
+Use each student's checkbox to select recipients for the toolbar's Set Focus
+and Stop Focus actions. Clicking the tile body opens its screenshot preview;
+it does not select the student. The toolbar shows its explicit selection count
+and explains unavailable Focus controls. A disabled tile padlock remains inert
+when clicked, with its reason visible beside the tile's status and available to
+assistive technology; it must never open the screenshot instead.
+
 **Stop Focus** is one action. It clears the destination restriction and any
 remaining tab Focus from earlier controls. It preserves Flight Paths, block
 lists, Attention, and tab limits. Remove Flight Path and an automatic preset's
@@ -42,9 +49,13 @@ actions must not be widened or substituted for unavailable students.
 The unified Stop Focus action uses `unlock-screen { screenOnly: true }`. The
 canonical server state change also clears retired `restrictions.focus`,
 including restorable state, without deleting an independent Flight Path.
-Offline cleanup stays pending until the browser receives the newer state or
-the existing restriction expires. The screen-only capability and exact current
-authority checks remain in force.
+Accepted, persisted cleanup stays pending until the browser receives the newer
+state or the existing restriction expires. An unavailable active browser does
+not automatically authorize a new queued clear: a refused request explicitly
+says that Stop Focus was not queued and retains the reported restriction.
+The existing eligible signed-out pending-clear path remains separate. Received
+acknowledgements and saved cleanup are not confirmation of browser removal.
+The screen-only capability and exact current authority checks remain in force.
 
 Retain the legacy `stop-focus` cleanup command and strict empty
 `command.data: {}` for compatible old clients and saved tab Focus. Command IDs
@@ -60,6 +71,21 @@ extension advertisements cannot override capability withdrawal. Observe has no
 classroom commands.
 
 ## Outcomes and release boundary
+
+Realtime capability metadata accepts at most 64 entries, each a nonempty trimmed
+string of at most 64 characters, with stable deduplication. Invalid or oversized
+fields provide no capability evidence; neither lists nor names are truncated
+into supported flags. The cache writer, reader and public projections use the
+same parser. Raw legacy declarations remain separate from server-negotiated
+capabilities; extension version never substitutes for either. The independent
+32-entry presence, kiosk-ticket and device-continuity request contracts retain
+their purpose-specific limits.
+
+Existing schema-2 realtime cache keys, byte limits and expiration stay compatible.
+An older truncated entry needs a fresh browser advertisement to recover missing
+flags; do not infer them or flush the shared cache. Older API processes can
+still truncate these fields during a mixed deployment. This correction requires
+the SchoolPilot API/web release only, not a new extension package or Store upload.
 
 Desired state is requested, not confirmation. Received acknowledgements remain
 pending, and partial results identify the students still awaiting cleanup or
