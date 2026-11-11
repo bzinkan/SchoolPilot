@@ -338,8 +338,8 @@ function commandFailureDescription(value, studentNames) {
     const stopKind = stopFocusUnavailableKind(target);
     if (stopKind === 'saved_cleanup') continue;
     if (!['failed', 'unavailable', 'expired'].includes(target?.status) || typeof target.errorMessage !== 'string') continue;
-    // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
     const message = (stopKind === 'not_queued' ? 'Stop Focus was not queued; reconnect or update ClassPilot and try again.' : target.errorMessage)
+      // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
       .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (!message) continue;
     const key = `${target.studentId}\u0000${target.sourceRef || ''}\u0000${message}`;
