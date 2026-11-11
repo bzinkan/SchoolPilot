@@ -1,4 +1,5 @@
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import { effectiveFlightPathAllowedDomains } from "./classpilotFlightPathDomains.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   RestrictionResourceError,
@@ -60,10 +61,9 @@ function flightPathError(message: string, code: string): Error {
 
 /**
  * The apply-flight-path payload for a stored Flight Path. Website hosts ride
- * in `allowedDomains` (today's list, unchanged in order and content when the
- * path has no resources); section and resource entries ride in `resources`,
- * which is omitted when there are none so website-only paths stay
- * byte-identical. A stored list that no longer validates is refused (409),
+ * in `allowedDomains`, with Classroom's Google work companion sites appended
+ * without changing the saved list or first landing. Section and resource entries
+ * ride in `resources`, omitted when empty. A stored list that no longer validates is refused (409),
  * never dropped to its websites.
  */
 export function classpilotFlightPathApplyPayload(options: {
@@ -93,6 +93,13 @@ export function classpilotFlightPathApplyPayload(options: {
   for (const hostname of legacyHostProjection(resources)) {
     if (!allowedDomains.includes(hostname)) allowedDomains.push(hostname);
   }
+  const effectiveAllowedDomains = effectiveFlightPathAllowedDomains(allowedDomains);
+  if (effectiveAllowedDomains.length > 1_000) {
+    throw flightPathError(
+      "This Flight Path exceeds 1,000 websites including Google Classroom work apps; remove some websites before applying it",
+      "CLASSROOM_RULE_LIMIT_EXCEEDED"
+    );
+  }
   const precise = preciseRestrictionResources(resources);
   if (allowedDomains.length === 0 && precise.length === 0) {
     throw flightPathError("Flight Path has no allowed domains", "FLIGHT_PATH_EMPTY");
@@ -101,7 +108,7 @@ export function classpilotFlightPathApplyPayload(options: {
   return {
     flightPathId: options.flightPath.id,
     flightPathName: options.flightPath.flightPathName,
-    allowedDomains,
+    allowedDomains: effectiveAllowedDomains,
     ...(precise.length > 0 ? { resources: precise } : {}),
   };
 }
@@ -136,13 +143,18 @@ export function classpilotPreciseCommandPayloadValid(commandType: string, payloa
  * holds entries (for example after a rollout was turned off) always shows
  * them, so its owner is never misled about what it contains.
  */
-export function withFlightPathResourcesVisibility<Row extends { resources?: unknown }>(
+export function withFlightPathResourcesVisibility<Row extends { resources?: unknown; allowedDomains?: string[] | null }>(
   row: Row,
   preciseActive: boolean
-): Row | Omit<Row, "resources"> {
-  if (preciseActive || (Array.isArray(row.resources) && row.resources.length > 0)) return row;
+): (Row | Omit<Row, "resources">) & { effectiveAllowedDomains: string[] } {
+  const domains = [...(row.allowedDomains ?? [])];
+  for (const host of legacyHostProjection(validateAllowedResourceList(row.resources ?? []) ?? [])) {
+    if (!domains.includes(host)) domains.push(host);
+  }
+  const effectiveAllowedDomains = effectiveFlightPathAllowedDomains(domains);
+  if (preciseActive || (Array.isArray(row.resources) && row.resources.length > 0)) return { ...row, effectiveAllowedDomains };
   const { resources: _resources, ...rest } = row;
-  return rest;
+  return { ...rest, effectiveAllowedDomains };
 }
 
 /**
