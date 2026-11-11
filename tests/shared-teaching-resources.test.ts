@@ -239,15 +239,16 @@ describe("School Library copies", () => {
 });
 
 describe("School Library projections", () => {
-  it("keeps the previous response shape when the library is off", () => {
+  it("keeps publication metadata private and adds effective websites when the library is off", () => {
     const row = flightPath({ visibility: "school", official: true, publishedAt: PUBLISHED, publishedBy: ADMIN });
     // Routes also omit the empty precise-resource list while that capability
     // is off for the school (roadmap PR 2).
     const legacy = withFlightPathResourcesVisibility(withoutTeachingResourcePublication(row), false);
     assert.deepEqual(Object.keys(legacy), [
       "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-      "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
+      "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt", "effectiveAllowedDomains",
     ]);
+    assert.deepEqual(legacy.effectiveAllowedDomains, ["science.example"]);
     assert.deepEqual(Object.keys(withoutTeachingResourcePublication(blockList())), [
       "id", "schoolId", "teacherId", "name", "description", "blockedDomains", "isDefault", "createdAt",
     ]);
