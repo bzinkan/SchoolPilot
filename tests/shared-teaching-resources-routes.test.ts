@@ -26,7 +26,7 @@ process.env.NODE_ENV = "test";
 
 const LEGACY_FLIGHT_PATH_KEYS = [
   "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
+  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt", "effectiveAllowedDomains",
 ];
 const LEGACY_BLOCK_LIST_KEYS = ["id", "schoolId", "teacherId", "name", "description", "blockedDomains", "isDefault", "createdAt"];
 const PROVENANCE_KEYS = ["sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "teacherId", "publishedBy", "schoolId"];
@@ -221,8 +221,12 @@ after(async () => {
 
 describe("ClassPilot School Library routes", { concurrency: false }, () => {
   it("keeps today's exact Flight Path and Block List payloads while the library is off", async () => {
+    const selectedDomains = ["ixl.com", "classroom.google.com"];
+    const effectiveDomains = [...selectedDomains, "docs.google.com", "drive.google.com", "sheets.google.com",
+      "slides.google.com", "forms.google.com", "forms.gle"];
     const ownPath = await createPath(teacherA, "Off own path", {
       sourceType: "google_classroom", sourceCourseId: "course-off", sourceResourceIds: ["r-1"], sourceUpdatedAt: new Date(),
+      allowedDomains: selectedDomains,
     });
     const sharedByOther = await createPath(teacherB, "Off shared path", { visibility: "school", official: true });
     const ownList = await createList(teacherA, "Off own list");
@@ -234,6 +238,8 @@ describe("ClassPilot School Library routes", { concurrency: false }, () => {
       assert.deepEqual(Object.keys(paths.body), ["flightPaths"], `${mode}/${schoolIds}`);
       assert.deepEqual(ids(paths.body.flightPaths), [ownPath.id]);
       assert.deepEqual(Object.keys(paths.body.flightPaths[0]), LEGACY_FLIGHT_PATH_KEYS);
+      assert.deepEqual(paths.body.flightPaths[0].allowedDomains, selectedDomains);
+      assert.deepEqual(paths.body.flightPaths[0].effectiveAllowedDomains, effectiveDomains);
       assert.equal(paths.body.flightPaths[0].sourceCourseId, "course-off");
       assert.doesNotMatch(paths.text, /"(?:visibility|official|publishedAt|publishedBy|library|features|canEdit|canShare|canMarkOfficial)"/);
 
@@ -249,11 +255,18 @@ describe("ClassPilot School Library routes", { concurrency: false }, () => {
     assert.equal(created.status, 201, created.text);
     assert.deepEqual(Object.keys(created.body), ["flightPath"]);
     assert.deepEqual(Object.keys(created.body.flightPath), LEGACY_FLIGHT_PATH_KEYS);
+    assert.deepEqual(created.body.flightPath.allowedDomains, ["a.example.edu"]);
+    assert.deepEqual(created.body.flightPath.effectiveAllowedDomains, ["a.example.edu"]);
     const detail = await requestJson("GET", `/flight-paths/${ownPath.id}`, teacherA);
     assert.deepEqual(Object.keys(detail.body.flightPath), LEGACY_FLIGHT_PATH_KEYS);
+    assert.deepEqual(detail.body.flightPath.allowedDomains, selectedDomains);
+    assert.deepEqual(detail.body.flightPath.effectiveAllowedDomains, effectiveDomains);
     const patched = await requestJson("PATCH", `/flight-paths/${ownPath.id}`, teacherA, { description: "Updated" });
     assert.equal(patched.status, 200, patched.text);
     assert.deepEqual(Object.keys(patched.body.flightPath), LEGACY_FLIGHT_PATH_KEYS);
+    assert.deepEqual(patched.body.flightPath.allowedDomains, selectedDomains);
+    assert.deepEqual(patched.body.flightPath.effectiveAllowedDomains, effectiveDomains);
+    assert.deepEqual((await storedPath(ownPath.id)).allowedDomains, selectedDomains, "Read projections never rewrite saved selections");
     const listCreated = await requestJson("POST", "/block-lists", teacherA, { name: `${TAG} Off created list`, blockedDomains: ["x.example.com"] });
     assert.deepEqual(Object.keys(listCreated.body.blockList), LEGACY_BLOCK_LIST_KEYS);
 
