@@ -9328,4 +9328,73 @@ test('expanded detail preview recovers from a temporarily unavailable observatio
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('expanded detail preview retries a timed-out grant with a fresh viewer and cleans up its late response', { timeout: 60_000 }, async context => {
+  let finishFirst;
+  const held = new Promise(resolve => { finishFirst = resolve; });
+  context.after(() => finishFirst({ studentId: STUDENT_ID, detailPreview: null, screenshot: null }));
+  let reads = 0;
+  const responseFor = async (body, width = 1280) => ({ studentId: body.studentId,
+    bindingVersion: 'detail-v1:timeout-binding', detailPreview: {
+      leaseId: 'abcdefghijklmnopqrstuvwx12345678', expiresInSeconds: 20, renewAfterSeconds: 10,
+    }, screenshot: { screenshot: sizedPreview(width), resolution: 'detail', timestamp: await page.evaluate(() => Date.now()),
+      bindingVersion: 'detail-v1:timeout-binding' },
+  });
+  const { page, harness } = await expandedDetailFixture(context, body => ++reads === 1 ? held : responseFor(body));
+  const grants = () => harness.detailPreviewRequests.filter(request => !request.pathname.endsWith('/release'));
+  const releases = () => harness.detailPreviewRequests.filter(request => request.pathname.endsWith('/release'));
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await waitUntil(() => reads === 1, 'The initial detail grant starts');
+  const firstViewer = grants()[0].body.viewerInstanceId;
+  await page.clock.fastForward(8100);
+  await page.getByTestId('expanded-screenshot-quality').filter({ hasText: 'currently unavailable' }).waitFor();
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 640);
+  await page.clock.runFor(4000);
+  assert.equal(reads, 1, 'timeout retries retain the five-second delay');
+  await page.clock.runFor(1100);
+  await waitUntil(() => reads >= 2, 'A visible detail preview must retry after a timeout without reopening', 5000);
+  const nextViewer = grants()[1].body.viewerInstanceId;
+  assert.notEqual(nextViewer, firstViewer, 'the outstanding grant must never share its successor viewer ID');
+  await page.waitForFunction(() => document.querySelector('[data-testid="expanded-screenshot-image"]')?.naturalWidth === 1280);
+  finishFirst(await responseFor({ studentId: STUDENT_ID }, 1920));
+  await waitUntil(() => releases().some(request => request.body.viewerInstanceId === firstViewer
+    && request.body.leaseId === 'abcdefghijklmnopqrstuvwx12345678'), 'Late cleanup targets the retired viewer');
+  assert.equal(releases().some(request => request.body.viewerInstanceId === nextViewer), false,
+    'a late grant cannot revoke its visible successor even when their binding lease is shared');
+  assert.equal(await page.getByTestId('expanded-screenshot-image').evaluate(image => image.naturalWidth), 1280,
+    'late pixels cannot replace the current detail frame');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+for (const transition of ['close', 'hide']) {
+  test(`expanded detail preview cancels a pending timeout retry on ${transition}`, { timeout: 60_000 }, async context => {
+    let finishFirst;
+    const held = new Promise(resolve => { finishFirst = resolve; });
+    context.after(() => finishFirst({ studentId: STUDENT_ID, detailPreview: null, screenshot: null }));
+    const { page, harness } = await expandedDetailFixture(context, () => held);
+    const grants = () => harness.detailPreviewRequests.filter(request => !request.pathname.endsWith('/release'));
+    await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+    await waitUntil(() => grants().length === 1, 'The detail grant starts before its timeout');
+    const retiredViewer = grants()[0].body.viewerInstanceId;
+    await page.clock.fastForward(8100);
+    await page.getByTestId('expanded-screenshot-quality').filter({ hasText: 'currently unavailable' }).waitFor();
+    if (transition === 'close') {
+      await page.keyboard.press('Escape');
+      await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'hidden' });
+    } else {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    }
+    await page.clock.runFor(6000);
+    assert.equal(grants().length, 1, 'a retired or hidden viewer cannot start the scheduled retry');
+    finishFirst({ studentId: STUDENT_ID, detailPreview: {
+      leaseId: 'abcdefghijklmnopqrstuvwx12345678', expiresInSeconds: 20, renewAfterSeconds: 10,
+    }, screenshot: null });
+    await waitUntil(() => harness.detailPreviewRequests.some(request => request.pathname.endsWith('/release')
+      && request.body.viewerInstanceId === retiredViewer), 'The retired request still releases a late lease');
+    assert.deepEqual(harness.pageErrors, []);
+  });
+}
+
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
