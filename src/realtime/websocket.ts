@@ -104,6 +104,7 @@ import {
 } from "../services/runtimePerformanceMetrics.js";
 import { getRuntimeMetadata } from "../services/runtimeMetadata.js";
 import { WebSocketWorkTracker } from "./websocketWork.js";
+import { ClasspilotClassroomRecoveryCoordinator, type ClasspilotRecoveryAttempt } from "./classpilotClassroomRecovery.js";
 import { ClasspilotPlainOpenTabRelay } from "./classpilotPlainOpenTabRelay.js";
 import {
   resolveActiveStudentTokenSession,
@@ -905,6 +906,27 @@ export function setupWebSocket(
       return;
     }
     const client = registerWsClient(ws);
+    const classroomRecovery = new ClasspilotClassroomRecoveryCoordinator({
+      identity: () => getWsClient(ws) === client && client.authenticated && client.role === "student"
+        && client.schoolId && client.studentId && client.studentSessionId && client.deviceId
+        ? { schoolId: client.schoolId, studentId: client.studentId, studentSessionId: client.studentSessionId,
+            deviceId: client.deviceId, generation: client.sessionSubscriptionIdentityGeneration,
+            acceptedCapabilities: client.acceptedCapabilities ?? [] } : undefined,
+      open: () => ws.readyState === WebSocket.OPEN,
+      accepting: () => webSocketWork.canStart(),
+      counter: recordRuntimePerformanceCounter,
+      timing: duration => recordRuntimePerformanceTiming("classroomRecoveryMs", duration),
+      track: work => { void webSocketWork.track(work); },
+      failure: (error, stage) => {
+        console.error("[WebSocket] Classroom recovery failed:", { stage, ...safeErrorMetadata(error) });
+        if (!wasTenantPoolAcquisitionFailureReported(error)) {
+          emitWebSocketMetric("WebSocketError");
+          errorMonitor.trackError("websocket_error", error as Error, {
+            messageType: "classroom-state-request", component: `classroom_recovery_${stage}`,
+          });
+        }
+      },
+    });
     const telemetryLanes = createDeviceTelemetryLanes();
     const telemetryAbort = new AbortController();
     const telemetrySourceIp = deviceTelemetrySourceIp(request, Number(process.env.TRUST_PROXY_HOPS ??
@@ -1138,7 +1160,14 @@ export function setupWebSocket(
       });
     });
 
-    const handleMessage = async (data: RawData): Promise<void> => {
+    const handleMessage = async (data: RawData, recoveryAttempt?: ClasspilotRecoveryAttempt): Promise<void> => {
+      if (recoveryAttempt) {
+        try { recoveryAttempt.assertCurrent(); }
+        catch {
+          await classroomRecovery.run(recoveryAttempt, async () => {});
+          return;
+        }
+      }
       if (!webSocketWork.canStart()) return;
       let messageType = "unknown";
       try {
@@ -1640,7 +1669,7 @@ export function setupWebSocket(
         // Every post-authentication message requires a current persisted role;
         // a cached teacher role must not survive demotion or deactivation.
         if (!client.authenticated) return;
-        if (client.role === "student" && client.schoolId
+        if (client.role === "student" && client.schoolId && !recoveryAttempt
           && (await getClasspilotMonitoringPolicy(client.schoolId)).policyMode !== "full") {
           removeWsClient(ws);
           client.authenticated = false;
@@ -1691,7 +1720,9 @@ export function setupWebSocket(
         // student ends the backing device session, so every subsequent
         // student-originating message must prove that exact binding is still
         // active before any chat/classroom/ack/WebRTC mutation can run.
-        if (client.role === "student" && message.type !== "auth") {
+        // Recovery performs this fresh check inside its locked authority path,
+        // with an immutable identity and cancellation checks around its awaits.
+        if (client.role === "student" && message.type !== "auth" && !recoveryAttempt) {
           try {
             const authorized = passiveMessage
               ? await validatePassiveAuthorization()
@@ -2048,89 +2079,91 @@ export function setupWebSocket(
           && client.deviceId
           && message.type === "classroom-state-request"
         ) {
-          const reconciliation = await runWithTenantContext(
-            { schoolId: client.schoolId },
-            () => withClasspilotStudentControlDeliveryAuthority(
-              {
-                schoolId: client.schoolId!,
-                studentId: client.studentId!,
-                studentSessionId: client.studentSessionId!,
-                deviceId: client.deviceId!,
-              },
-              async (transactionDb) => {
-                await lockClasspilotSsoPolicyDeliveryAuthority(
-                  client.schoolId!,
-                  transactionDb
-                );
-                const [storedState, ssoPolicy] = await Promise.all([
-                  getClasspilotStudentControlState(
-                    client.schoolId!,
-                    client.studentId!,
-                    transactionDb
-                  ),
-                  getClasspilotSsoPolicyForSchool(client.schoolId!, transactionDb),
-                ]);
-                const state = await retireLegacyTabFocusForStudentLocked(transactionDb,
-                  { schoolId: client.schoolId!, studentId: client.studentId!, state: storedState ?? null, reason: "reconnect" });
-                const delivery = state
-                  ? serializeClasspilotStudentControlStateForDelivery({
-                      state,
-                      gateActive: isClasspilotCapabilityActive(
-                        "lateSignInRestrictionSsoV1",
-                        { schoolId: client.schoolId! }
-                      ),
-                      acceptedCapabilities: client.acceptedCapabilities ?? [],
-                      exactBinding: {
-                        schoolId: client.schoolId!,
-                        studentId: client.studentId!,
-                        studentSessionId: client.studentSessionId!,
-                        deviceId: client.deviceId!,
-                      },
-                      authPassThrough: {
-                        gateActive: isClasspilotCapabilityActive(
-                          "restrictionAuthPassThroughV1",
-                          { schoolId: client.schoolId! }
-                        ),
-                        policyRevision: ssoPolicy.revision,
-                        policy: ssoPolicy.policy,
-                      },
-                    })
-                  : { classroomState: null, withheld: false };
-                const focusCleanup = delivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
-                  state, { schoolId: client.schoolId!, studentId: client.studentId!, studentSessionId: client.studentSessionId!,
-                    deviceId: client.deviceId! }, client.acceptedCapabilities ?? []) : null;
-                return { ...delivery, focusCleanup };
-              },
-              (_claimed, delivery) => {
-                if (ws.readyState !== WebSocket.OPEN) {
-                  throw new Error("Student WebSocket closed during classroom-state recovery");
-                }
-                if (delivery.focusCleanup) ws.send(JSON.stringify(delivery.focusCleanup));
-                if (delivery.withheld) return;
-                const delivered = delivery.classroomState;
-                // Queue the authoritative frame synchronously while the same
-                // student-control lock used by correct-PIN transfer remains
-                // held. Transfer cannot retire this binding after the final
-                // database-clock check but before this send.
-                ws.send(JSON.stringify(classpilotClassroomStatePushFrame({
-                  type: "classroom-state-sync",
-                  binding: {
-                    schoolId: client.schoolId!,
-                    deviceId: client.deviceId!,
-                    studentId: client.studentId!,
-                    studentSessionId: client.studentSessionId!,
-                    controlRevision: delivered?.revision ?? 0,
+          if (!recoveryAttempt) return;
+          await classroomRecovery.run(recoveryAttempt, async attempt => {
+            const { schoolId, studentId, studentSessionId, deviceId, acceptedCapabilities } = attempt.identity;
+            const binding = { schoolId, studentId, studentSessionId, deviceId };
+            const monitoringPolicy = await getClasspilotMonitoringPolicy(schoolId);
+            attempt.assertCurrent();
+            if (monitoringPolicy.policyMode !== "full") {
+              removeWsClient(ws);
+              client.authenticated = false;
+              ws.close(1008, "Monitoring outside school hours");
+              return "denied";
+            }
+            const reconciliation = await runWithTenantContext(
+              { schoolId },
+              () => {
+                attempt.assertCurrent();
+                return withClasspilotStudentControlDeliveryAuthority(binding,
+                  async (transactionDb) => {
+                    attempt.assertCurrent();
+                    attempt.stage = "projection";
+                    await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
+                    attempt.assertCurrent();
+                    const [storedState, ssoPolicy] = await Promise.all([
+                      getClasspilotStudentControlState(schoolId, studentId, transactionDb),
+                      getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
+                    ]);
+                    attempt.assertCurrent();
+                    const state = await retireLegacyTabFocusForStudentLocked(transactionDb,
+                      { schoolId, studentId, state: storedState ?? null, reason: "reconnect" });
+                    attempt.assertCurrent();
+                    const delivery = state
+                      ? serializeClasspilotStudentControlStateForDelivery({
+                          state,
+                          gateActive: isClasspilotCapabilityActive(
+                            "lateSignInRestrictionSsoV1",
+                            { schoolId }
+                          ),
+                          acceptedCapabilities,
+                          exactBinding: binding,
+                          authPassThrough: {
+                            gateActive: isClasspilotCapabilityActive(
+                              "restrictionAuthPassThroughV1",
+                              { schoolId }
+                            ),
+                            policyRevision: ssoPolicy.revision,
+                            policy: ssoPolicy.policy,
+                          },
+                        })
+                      : { classroomState: null, withheld: false };
+                    const focusCleanup = delivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
+                      state, binding, acceptedCapabilities) : null;
+                    attempt.assertCurrent();
+                    return { ...delivery, focusCleanup };
                   },
-                  classroomState: delivered,
-                })));
+                  (_claimed, delivery) => {
+                    attempt.assertCurrent();
+                    if (delivery.focusCleanup) attempt.send(delivery.focusCleanup, (frame, callback) => ws.send(frame, callback));
+                    if (delivery.withheld) { attempt.stage = "commit"; return "withheld" as const; }
+                    const delivered = delivery.classroomState;
+                    // Queue the authoritative frame synchronously while the same
+                    // student-control lock used by correct-PIN transfer remains
+                    // held. Transfer cannot retire this binding after the final
+                    // database-clock check but before this send.
+                    attempt.send(classpilotClassroomStatePushFrame({
+                      type: "classroom-state-sync",
+                      binding: {
+                        ...binding,
+                        controlRevision: delivered?.revision ?? 0,
+                      },
+                      classroomState: delivered,
+                    }), (frame, callback) => ws.send(frame, callback));
+                    attempt.stage = "commit";
+                    return "transmitted" as const;
+                  }
+                );
               }
-            )
-          );
-          if (!reconciliation.authorized) {
-            ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
-            ws.close();
-            return;
-          }
+            );
+            if (!reconciliation.authorized) {
+              attempt.send({ type: "auth-error", message: "Student session is no longer active" },
+                (frame, callback) => ws.send(frame, callback));
+              ws.close();
+              return "denied";
+            }
+            return reconciliation.value;
+          });
           return;
         }
 
@@ -2635,7 +2668,15 @@ export function setupWebSocket(
         }).finally(() => { ws.off("close", closeDelivery); }));
         return;
       }
+      // Admission happens before the serial frame queue. An in-handler flag
+      // would allow duplicate requests to accumulate behind its current work.
+      const recoveryAttempt = telemetry && typeof telemetry === "object"
+        && (telemetry as { type?: unknown }).type === "classroom-state-request"
+        ? classroomRecovery.admit() : undefined;
+      if (telemetry && typeof telemetry === "object"
+        && (telemetry as { type?: unknown }).type === "classroom-state-request" && !recoveryAttempt) return;
       if (pendingFrames >= CLASSPILOT_WS_MAX_PENDING_FRAMES) {
+        if (recoveryAttempt) classroomRecovery.release(recoveryAttempt);
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "rate-limit", code: "WS_FRAME_QUEUE_EXCEEDED" }));
           ws.close(1008, "WebSocket frame queue exceeded");
@@ -2643,13 +2684,17 @@ export function setupWebSocket(
         return;
       }
       pendingFrames += 1;
-      const processFrame = () => handleMessage(data);
+      const processFrame = () => handleMessage(data, recoveryAttempt);
       frameQueue = webSocketWork.track(frameQueue
         .then(processFrame, processFrame)
-        .finally(() => { pendingFrames -= 1; }));
+        .finally(() => {
+          pendingFrames -= 1;
+          if (recoveryAttempt) classroomRecovery.release(recoveryAttempt);
+        }));
     });
 
     ws.on("close", () => {
+      classroomRecovery.invalidate();
       telemetryLanes.stop();
       telemetryAbort.abort();
       stopPingInterval(ws);
@@ -2661,6 +2706,7 @@ export function setupWebSocket(
     });
 
     ws.on("error", (error) => {
+      classroomRecovery.invalidate();
       console.error("[WebSocket] Error:", safeErrorMetadata(error));
       emitWebSocketMetric("WebSocketError");
       errorMonitor.trackError("websocket_error", error);

@@ -278,10 +278,11 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
     'message.type === "command-ack"',
   );
   assert.match(wsRequest, /serializeClasspilotStudentControlStateForDelivery/);
-  assert.match(wsRequest, /acceptedCapabilities: client\.acceptedCapabilities \?\? \[\]/);
+  assert.match(wsRequest, /acceptedCapabilities \} = attempt\.identity/);
+  assert.match(wsRequest, /acceptedCapabilities,\s*exactBinding: binding/);
   assert.match(
     wsRequest,
-    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, delivery\) => \{[\s\S]*ws\.send\(JSON\.stringify\(classpilotClassroomStatePushFrame/,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, delivery\) => \{[\s\S]*attempt\.assertCurrent\(\)[\s\S]*attempt\.send\(classpilotClassroomStatePushFrame/,
   );
   assert.match(wsRequest, /controlRevision: delivered\?\.revision \?\? 0/);
   assert.match(wsRequest, /classroomState: delivered/);
