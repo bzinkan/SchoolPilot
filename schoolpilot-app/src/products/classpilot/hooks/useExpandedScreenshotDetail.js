@@ -26,6 +26,7 @@ export function useExpandedScreenshotDetail({ privacyKey, schoolId, request }) {
     const { body, revision } = JSON.parse(requestKey);
     const headers = activityRequestHeaders(schoolId, revision);
     let active = null;
+    let retryTimer = null;
     let mounted = true;
     const isCurrent = generation => mounted && active === generation && currentKeyRef.current === privacyKey
       && document.visibilityState === 'visible';
@@ -36,6 +37,8 @@ export function useExpandedScreenshotDetail({ privacyKey, schoolId, request }) {
       }, { headers }).catch(() => {});
     };
     const stop = () => {
+      clearTimeout(retryTimer);
+      retryTimer = null;
       const generation = active;
       active = null;
       if (!generation) return;
@@ -108,10 +111,14 @@ export function useExpandedScreenshotDetail({ privacyKey, schoolId, request }) {
           }
           setState(previous => ({ key: privacyKey,
             screenshot: previous?.key === privacyKey ? previous.screenshot : null, status: 'unavailable' }));
-          // A timed-out grant may still be in flight. Do not overlap it with a
-          // new grant under the same viewer ID; its late cleanup is exact.
+          // Retire a timed-out grant before retrying with a fresh viewer ID.
+          // Its raw promise still cleans up only that retired viewer's lease.
           if (error?.code === 'CLASSPILOT_READ_TIMEOUT') {
             stop();
+            retryTimer = setTimeout(() => {
+              retryTimer = null;
+              if (mounted && currentKeyRef.current === privacyKey && document.visibilityState === 'visible') start();
+            }, POLL_MS);
             return;
           }
         }
