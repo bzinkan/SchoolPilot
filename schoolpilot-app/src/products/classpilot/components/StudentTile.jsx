@@ -649,7 +649,7 @@ function StudentTile({
         </div>
 
         {lockActionDisabled && !monitoringSuppressed ? (
-          <p id={`lock-disabled-reason-${student.studentId}`} data-testid={`lock-disabled-reason-${student.studentId}`} className="text-xs text-muted-foreground">
+          <p id={`lock-disabled-reason-${student.studentId}`} data-testid={`lock-disabled-reason-${student.studentId}`} className={effectiveMonitoringDisplay.kind === 'signed_out' && !lockControl.locked ? 'sr-only' : 'text-xs text-muted-foreground'}>
             {lockActionDisabledReason}
           </p>
         ) : null}

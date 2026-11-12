@@ -44,6 +44,7 @@ import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest as unboundedApiRequest, queryClient } from '../../../lib/queryClient';
 import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
@@ -7191,6 +7192,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
       <main className={showSidebar ? 'lg:ml-80' : ''}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
+        <SchoolDayClosureNotice product="classpilot" />
         {/* Remote Control Toolbar */}
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
@@ -7392,7 +7394,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
-          <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
+          <div data-class-tools-toolbar className="mb-4 min-w-0 max-w-full">
+            <div role="region" aria-label="Classroom controls" tabIndex={0} className="flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto p-1 [&>*]:shrink-0">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('open-tab', 'open-tab', { url: '' })} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('open-tab') && <ClassroomActions
@@ -7413,11 +7416,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             />}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Focus selected students on their current website or a specific destination' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Focus</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Stop Focus while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Stop Focus</Button>}
-            {(dashboardCapabilities.allows('lock-screen') || dashboardCapabilities.allows('unlock-screen')) && <p role="status" data-testid="focus-selection-hint" className="basis-full text-xs text-muted-foreground">{focusSelectionHint(explicitlySelectedStudentIds.length,
-              lockScreenMutation.isPending || unlockScreenMutation.isPending ? 'Wait for the current Focus action to finish.'
-                : signOutOnlySelectionActive ? 'Clear the sign-out-only selection before using Focus tools.'
-                  : !exactSelectedUnlockTargetsResolved ? 'Some selected students are unavailable. Refresh the selection before stopping Focus.'
-                    : !selectedTargetsSupportScreenOnlyUnlock ? 'One or more selected browsers have not reported support for Stop Focus. Reconnect or update ClassPilot, then try again.' : '')}</p>}
             {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (
               <div className="inline-flex items-center" role="group" aria-label="Flight Path">
                 {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('flight-path', 'apply-flight-path')} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
@@ -7481,6 +7479,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 Student Sign Out
               </Button>
             )}
+            </div>
+            {(dashboardCapabilities.allows('lock-screen') || dashboardCapabilities.allows('unlock-screen')) && <p role="status" data-testid="focus-selection-hint" className="mt-1 text-xs text-muted-foreground">{focusSelectionHint(explicitlySelectedStudentIds.length,
+              lockScreenMutation.isPending || unlockScreenMutation.isPending ? 'Wait for the current Focus action to finish.'
+                : signOutOnlySelectionActive ? 'Clear the sign-out-only selection before using Focus tools.'
+                  : !exactSelectedUnlockTargetsResolved ? 'Some selected students are unavailable. Refresh the selection before stopping Focus.'
+                    : !selectedTargetsSupportScreenOnlyUnlock ? 'One or more selected browsers have not reported support for Stop Focus. Reconnect or update ClassPilot, then try again.' : '')}</p>}
           </div>
         )}
 

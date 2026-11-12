@@ -369,6 +369,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
     onSuccess: (verified) => {
       if (!mounted.current) return;
       adoptProjection(verified);
+      void queryClient.invalidateQueries({ queryKey: ["school-day-status", schoolId] });
       void queryClient.invalidateQueries({ queryKey: ["classpilot-school-scheduling"] });
       void queryClient.invalidateQueries({ queryKey: ["classpilot-schedule-profiles"] });
       toast({

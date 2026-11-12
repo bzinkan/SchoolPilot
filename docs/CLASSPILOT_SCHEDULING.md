@@ -127,6 +127,20 @@ For **Delete from history**, deploy the compatible API and scheduler worker befo
 
 Verify a regular weekday, early-release day, closed day, A/B holiday reflow, weekend makeup with mapped weekday, explicit override, co-teacher collision and an already-frozen occurrence. The preview lists at most 150 occurrence changes; validation also checks approved reservations and explicit exceptions beyond the displayed calendar horizon. This release does not change the one-occurrence-per-day invariant.
 
+## Dashboard school-closure notice
+
+ClassPilot, PassPilot and GoPilot staff dashboards show **School is closed
+today.** when the shared school calendar explicitly closes the current date in
+the school's timezone. An empty class or time outside a class does not trigger
+the notice. This message is informational; it does not change scheduling or
+prevent manual actions otherwise permitted by the product.
+
+ClassPilot explains when an instructional-day override opens a shared closed
+date. A ClassPilot-only closed override instead says its classes are not
+scheduled today. It does not label the entire school closed in other products.
+The notice refreshes after a verified calendar save, on return to the page or
+reconnect, at school midnight, and periodically while the dashboard is visible.
+
 ## Automatic Dashboard Class transitions
 
 The optional scheduled Class rollout presents regular classes, applied schedule changes, testing and scheduled-class coverage in Class, with offline students included. Ad hoc supervision remains in Claimed. It retains the same authoritative occurrences and supervision/reporting boundaries while introducing full scheduled-testing tools and a due-boundary worker. This rollout requires additive database migrations and a separate compatible extension release; it is distinct from the earlier profile-only changes above. See [Automatic Class rollout and rollback](CLASSPILOT_AUTOMATIC_CLASS.md).

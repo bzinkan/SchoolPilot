@@ -457,6 +457,14 @@ export function responseBodyFor(
       next: null,
       nextBoundaryAt: null,
     },
+    '/api/classpilot/school-day-status': {
+      schoolLocalDate: schoolDate,
+      schoolTimezone,
+      evaluatedAt: now.toISOString(),
+      validUntil: fromZonedTime(`${resumesOn}T00:00:00`, schoolTimezone).toISOString(),
+      calendarClosed: false,
+      classpilotInstructionalOverride: null,
+    },
     '/api/classpilot/groups/manual-today': {
       schoolDate,
       timezone: schoolTimezone,

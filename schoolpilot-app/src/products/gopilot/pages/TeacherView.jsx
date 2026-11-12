@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
+import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { useNative } from '../../../contexts/NativeContext';
 import { useSocket } from '../../../contexts/SocketContext';
@@ -496,6 +497,7 @@ export default function TeacherView() {
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Card className="max-w-md mx-auto">
           <div className="p-6 text-center">
+            <SchoolDayClosureNotice product="gopilot" />
             <AlertCircle className={`w-12 h-12 mx-auto mb-4 ${isNoGoPilotHomeroom ? 'text-amber-500' : 'text-red-500'}`} />
             <h2 className="text-lg font-semibold text-gray-900 mb-2">
               {isNoGoPilotHomeroom ? 'No GoPilot Homeroom Assigned' : 'Unable to Load'}
@@ -696,6 +698,7 @@ export default function TeacherView() {
 
         {/* CENTER PANEL - Dismissal queue */}
         <main className="flex-1 overflow-y-auto p-4">
+          <SchoolDayClosureNotice product="gopilot" />
           {/* Checked-in Students - waiting for office call */}
           {Object.keys(waitingByReason).length > 0 && (
             <div className="mb-6">

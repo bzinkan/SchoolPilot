@@ -4,6 +4,7 @@ import myDeskRoutes from "./mydesk.js";
 import schoolDisciplineRoutes from "./schoolDiscipline.js";
 import authRoutes from "./auth.js";
 import schoolRoutes from "./schools.js";
+import { createSchoolDayStatusRouter } from "./schoolDayStatus.js";
 import studentRoutes from "./students.js";
 import userRoutes from "./users.js";
 import staffAssignmentLifecycleRoutes from "./staffAssignmentLifecycle.js";
@@ -370,6 +371,11 @@ router.use("/auth", authRoutes);
 
 // School management (CRUD, settings, licenses, grades)
 router.use("/schools", schoolRoutes);
+
+// Bounded current-day calendar notice, authorized separately for each product.
+router.use("/classpilot/school-day-status", createSchoolDayStatusRouter("classpilot"));
+router.use("/passpilot/school-day-status", createSchoolDayStatusRouter("passpilot"));
+router.use("/gopilot/school-day-status", createSchoolDayStatusRouter("gopilot"));
 
 // Student management (CRUD, bulk, CSV import)
 router.use("/students", studentRoutes);

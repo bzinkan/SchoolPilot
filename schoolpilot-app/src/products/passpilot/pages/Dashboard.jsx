@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
+import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import AppShell from '../components/AppShell';
 import PassesTab from '../components/tabs/PassesTab';
 import MyClassTab from '../components/tabs/MyClassTab';
@@ -68,6 +69,7 @@ export default function Dashboard() {
 
   return (
     <AppShell currentTab={currentTab}>
+      <SchoolDayClosureNotice product="passpilot" />
       {renderTabContent()}
     </AppShell>
   );

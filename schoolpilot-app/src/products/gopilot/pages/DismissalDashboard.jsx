@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
+import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 import {
@@ -1058,6 +1059,7 @@ export default function DismissalDashboard() {
         </nav>
 
         <main className="flex-1 p-3 sm:p-4 pb-20 sm:pb-4">
+          <SchoolDayClosureNotice product="gopilot" />
           {selectedView === 'queue' && (
             <div className="flex flex-col lg:grid lg:grid-cols-3 gap-3 sm:gap-4">
               {/* Car Number Input - shows first on mobile */}

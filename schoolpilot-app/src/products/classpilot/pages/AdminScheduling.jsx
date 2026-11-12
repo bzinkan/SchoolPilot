@@ -72,7 +72,7 @@ function SchedulingEditor({ initial, onDirtyChange, section, disabled, calendarM
       setBaseline(committed); setConfig(saved.config); setPreview(null); setError(""); setNotice("School schedule saved.");
       queryClient.setQueryData([...KEY, activeSchoolId, user?.id], committed);
       // The acknowledged write is authoritative even if a subsequent refresh fails.
-      void Promise.all([KEY, ["classpilot-admin-classes"], ["classpilot-schedule-profiles"]].map(queryKey => queryClient.invalidateQueries({ queryKey })));
+      void Promise.all([KEY, ["classpilot-admin-classes"], ["classpilot-schedule-profiles"], ["school-day-status", activeSchoolId]].map(queryKey => queryClient.invalidateQueries({ queryKey })));
     },
     onError: (err) => { if (mounted.current) { setError(`${message(err)} Your draft is still here.`); setPreview(null); if (err?.response?.status === 409) void onRefresh(); } },
   });

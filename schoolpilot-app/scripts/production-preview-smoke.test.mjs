@@ -92,6 +92,40 @@ test('Dashboard activity fixture preserves strict read, school, and persona boun
   );
 });
 
+test('school-day status preview fixture is an open day bounded by school-local midnight', () => {
+  const url = `${baseUrl}/api/classpilot/school-day-status`;
+  const schoolId = personas.classpilotTeacher.schoolId;
+  assert.deepEqual(respond(personas.classpilotTeacher, { url, schoolId }), {
+    schoolLocalDate: '2026-07-24',
+    schoolTimezone: 'America/New_York',
+    evaluatedAt: '2026-07-24T16:00:00.000Z',
+    validUntil: '2026-07-25T04:00:00.000Z',
+    calendarClosed: false,
+    classpilotInstructionalOverride: null,
+  });
+  const dstDay = responseBodyFor({ requestedPath: '/test', persona: personas.classpilotTeacher },
+    request({ url, schoolId }), { now: new Date('2026-11-01T04:30:00.000Z') });
+  assert.equal(dstDay.schoolLocalDate, '2026-11-01');
+  assert.equal(dstDay.validUntil, '2026-11-02T05:00:00.000Z');
+});
+
+test('school-day status fixture retains exact route, origin, method, query, school and persona boundaries', () => {
+  const url = `${baseUrl}/api/classpilot/school-day-status`;
+  const schoolId = personas.classpilotTeacher.schoolId;
+  assert.throws(() => respond(personas.classpilotTeacher, { url, method: 'POST', schoolId }), /preview_api_method_invalid/);
+  assert.throws(() => respond(personas.classpilotTeacher, { url: 'https://example.invalid/api/classpilot/school-day-status', schoolId }), /preview_api_origin_invalid/);
+  for (const invalidSchoolId of [undefined, 'preview-other-school']) {
+    assert.throws(() => respond(personas.classpilotTeacher, { url, schoolId: invalidSchoolId }), /preview_api_school_binding_invalid/);
+  }
+  assert.throws(() => respond(personas.classpilotTeacher, { url: `${url}?schoolDate=2026-07-24`, schoolId }), /preview_api_query_invalid/);
+  for (const unlistedUrl of [`${url}/extra`, `${baseUrl}/api/passpilot/school-day-status`, `${baseUrl}/api/gopilot/school-day-status`]) {
+    assert.throws(() => respond(personas.classpilotTeacher, { url: unlistedUrl, schoolId }), /preview_api_request_not_allowlisted/);
+  }
+  assert.throws(() => respond(personas.anonymous, { url }), /preview_api_request_not_allowlisted/);
+  assert.throws(() => respond(personas.gopilotHistoricalParent, { url, schoolId: personas.gopilotHistoricalParent.schoolId }), /preview_api_request_not_allowlisted/);
+  assert.throws(() => respond(personas.unlicensedTeacher, { url, schoolId: personas.unlicensedTeacher.schoolId }), /preview_api_persona_invalid/);
+});
+
 test('manual-today status fixture uses the active school date and next midnight with teacher adjustments disabled', () => {
   const url = `${baseUrl}/api/classpilot/groups/manual-today`;
   assert.deepEqual(respond(personas.classpilotTeacher, {
