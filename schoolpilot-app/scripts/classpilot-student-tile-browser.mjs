@@ -154,6 +154,12 @@ try {
   await page.getByTestId('toggle-tiles').click();
 
   const signedOutTile = page.getByTestId('card-student-signed-out-student');
+  const signedOutLockReason = page.getByTestId('lock-disabled-reason-signed-out-student');
+  const signedOutReasonBounds = await signedOutLockReason.boundingBox();
+  assert.ok(signedOutReasonBounds.height <= 1 && signedOutReasonBounds.width <= 1,
+    'a signed-out tile must not show an extra disabled-control message above Not logged in');
+  assert.ok((await page.getByTestId('button-lock-toggle-signed-out-student').getAttribute('aria-describedby'))
+    .includes(await signedOutLockReason.getAttribute('id')), 'the unavailable reason remains available to assistive technology');
   assert.equal(await signedOutTile.getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1,
     'a pending preview transition must not hide explicit sign-out truth');
   assert.equal(await signedOutTile.getByText('Updating preview', { exact: true }).count(), 0);

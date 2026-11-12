@@ -5449,6 +5449,51 @@ test('unified Focus: toolbar Stop freezes selected students and survives lost mo
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('classroom command buttons stay on one scrollable row without hiding Focus guidance', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  const toolbar = page.locator('[data-class-tools-toolbar]');
+  const buttonIds = ['button-open-tab', 'button-tabs', 'button-classroom-assignments', 'button-lock-screen',
+    'button-unlock-screen', 'button-apply-flight-path', 'button-flight-path-menu',
+    'button-apply-block-list', 'button-block-list-menu', 'button-sign-out-students'];
+  for (const width of [1849, 1440, 900, 640, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await toolbar.scrollIntoViewIfNeeded();
+    const layout = await toolbar.evaluate((node, ids) => {
+      const buttons = ids.map(id => node.querySelector(`[data-testid="${id}"]`).getBoundingClientRect().toJSON());
+      return { buttons, hint: node.querySelector('[data-testid="focus-selection-hint"]').getBoundingClientRect().toJSON(),
+        viewport: innerWidth, documentWidth: document.documentElement.scrollWidth, toolbar: node.getBoundingClientRect().toJSON() };
+    }, buttonIds);
+    assert.ok(layout.buttons.every(button => Math.abs(button.top - layout.buttons[0].top) < 1),
+      `All classroom commands must share one row at ${width}px: ${layout.buttons.map(button => button.top).join(', ')}`);
+    assert.ok(layout.hint.top >= Math.max(...layout.buttons.map(button => button.bottom)), 'Focus selection guidance stays below the complete button row');
+    assert.ok(layout.toolbar.right <= layout.viewport + 1, 'Toolbar remains within the viewport');
+    assert.ok(layout.documentWidth <= layout.viewport + 1, `Toolbar must not widen the page at ${width}px`);
+    if (width >= 1440) assert.ok(layout.buttons.at(-1).right <= layout.toolbar.right + 1, 'All commands fit the desktop row without scrolling');
+  }
+  const scrollRegion = toolbar.getByRole('region', { name: 'Classroom controls', exact: true });
+  assert.equal(await scrollRegion.getAttribute('tabindex'), '0', 'Overflow controls can be scrolled with the keyboard');
+  await scrollRegion.focus();
+  await scrollRegion.press('ArrowRight');
+  await waitUntil(async () => await scrollRegion.evaluate(node => node.scrollLeft > 0), 'Keyboard scrolling reaches overflow controls');
+  await page.getByTestId('button-sign-out-students').scrollIntoViewIfNeeded();
+  const finalButtonVisible = await scrollRegion.evaluate(node => {
+    const bounds = node.getBoundingClientRect();
+    const last = node.querySelector('[data-testid="button-sign-out-students"]').getBoundingClientRect();
+    return node.scrollLeft > 0 && last.left >= bounds.left - 1 && last.right <= bounds.right + 1;
+  });
+  assert.equal(finalButtonVisible, true, 'The final command stays reachable on a narrow screen');
+  for (const [trigger, item] of [['button-flight-path-menu', 'button-flight-path-status'], ['button-block-list-menu', 'button-block-list-status']]) {
+    await page.getByTestId(trigger).click();
+    assert.equal(await page.getByTestId(item).isVisible(), true, 'Split-menu actions remain visible outside the scrolling row');
+    await page.keyboard.press('Escape');
+  }
+  await page.getByTestId('checkbox-select-student-' + STUDENT_ID).click();
+  assert.match(await page.getByTestId('focus-selection-hint').innerText(), /1 selected student/);
+  assert.deepEqual(posts, [], 'Scrolling, menus, and checkbox selection must not send commands');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('Bring Forward discard a late command response after the assignment changes and fit a narrow viewport', { timeout: 60_000 }, async context => {
   const { page, harness } = await focusBrowserFixture(context);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -6779,8 +6824,17 @@ test('Class tools integrates support, activities and manual routines without cov
   assert.equal(await page.getByTestId('class-tools-panel').getAttribute('data-docked'),'true');
   const geometry = async () => page.evaluate(() => {
     const panel=document.querySelector('[data-testid="class-tools-panel"]').getBoundingClientRect();
-    const buttons=[...document.querySelector('[data-class-tools-toolbar]').querySelectorAll('button')].filter(node=>node.getBoundingClientRect().width>0);
-    return {panel:panel.toJSON(),covered:buttons.filter(node=>{const rect=node.getBoundingClientRect();return rect.right>panel.left&&rect.left<panel.right&&rect.bottom>panel.top&&rect.top<panel.bottom;}).map(node=>node.textContent)};
+    const toolbar=document.querySelector('[data-class-tools-toolbar]');
+    const clip=toolbar.querySelector('[role="region"][aria-label="Classroom controls"]').getBoundingClientRect();
+    const buttons=[...toolbar.querySelectorAll('button')];
+    // Overflow commands are clipped by their scroll region, so only the
+    // rendered part of each button can overlap the floating/pinned panel.
+    return {panel:panel.toJSON(),covered:buttons.filter(node=>{
+      const rect=node.getBoundingClientRect();
+      const left=Math.max(rect.left,clip.left),right=Math.min(rect.right,clip.right);
+      const top=Math.max(rect.top,clip.top),bottom=Math.min(rect.bottom,clip.bottom);
+      return right>left&&bottom>top&&right>panel.left&&left<panel.right&&bottom>panel.top&&top<panel.bottom;
+    }).map(node=>node.textContent)};
   });
   await waitUntil(async()=>!(await geometry()).covered.length,'Pinned toolbar must remain outside panel');
   await page.getByRole('button',{name:'Unpin Class tools',exact:true}).click();
