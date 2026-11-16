@@ -22,6 +22,74 @@ page covers capacity, the terminal states, and manual recovery.
 - Plan and Apply belong to one sitting: a merge to `main` in between changes the tool
   SHA and forces a new plan.
 
+## Classroom Focus scope — prepared, default off
+
+`classroomFocusScopeV1` uses
+`CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1` and a separate rollout entry. Existing
+profiles leave both controls off; deploying the API/web source does not activate
+it. The registry appends this capability after the existing entries without
+changing their order. ClassPilot 3.0.6 and the historical 2.9.7 package/managed
+waiver do not qualify for this new contract.
+
+The source-preserving schema-14 profiles are:
+
+```json
+{ "schemaVersion": 14, "mode": "classroom-focus-off" }
+```
+
+```json
+{
+  "schemaVersion": 14,
+  "mode": "classroom-focus-pilot",
+  "pilotSchoolId": "<one canonical school UUID>",
+  "classroomFocusEvidence": "<reviewed successor evidence object described below>"
+}
+```
+
+The second example is a template, not an activation-ready profile. No successor
+ZIP identity or managed-device acceptance is established by this source change.
+There is no Classroom Focus global-on profile. A pilot requires the completed
+global repaired-capability runtime, including `scopedAuthorityChecksV1`, and
+active `preciseRestrictionResourcesV1` whose scope includes that same school.
+The profile changes only the new leaf capability; every other capability,
+school scope, TURN setting and image remains preserved on both API and worker.
+Turn off Classroom Focus before withdrawing its precise-resource parent.
+
+The evidence object follows the existing private-profile packaged-release
+pattern used by poll replay. It requires these string fields:
+
+- `validatedAt`: fresh exact ISO-8601 validation timestamp.
+- `pilotSchoolId`: the profile's exact school UUID.
+- `extensionVersion` and `releaseTag`: a separately reviewed three-part version
+  strictly newer than `3.0.6`, and its matching `v<version>` tag.
+- `sourceCommit`, `zipSha256`, `testEvidenceSha256`: the exact reviewed source
+  commit, packaged ZIP and retained test-evidence hashes; never a relabeled
+  historical 2.9.7 source or ZIP.
+- `extensionId`: `iggbfegfcjkfieoemeolfmfnapepalca`.
+- `contractFixtureSha256`: the SHA-256 of the byte-identical cross-repository
+  `tests/fixtures/classroom-focus-scope-cases.json` contract exercised by that
+  exact package.
+
+Its strict `checks` object requires all nine values to be boolean `true`:
+`packagedChromePassed`, `managedChromebookPassed`,
+`crossRepositoryContractPassed`, `classroomFocusCapabilityAdvertised`,
+`sourceAuthorizationPassed`, `outsideAssignmentLinksPassed`,
+`restartAndCrashPassed`, `mixedFleetPassed`, and `independentStopFocusPassed`.
+Missing, stale, partial or synthetic-only waiver evidence is rejected before
+production reads. The existing private profile snapshot and plan hash bind the
+evidence bytes; Apply revalidates the planned copy. No new receipt path or
+production approval switch is introduced.
+
+Withdrawal needs no release evidence. An image projection onto a pre-Classroom
+image omits both new controls only while they are off; it refuses to drop an
+active pilot. An older task with both controls absent reads as default off,
+while a partially missing pair fails closed. Capability withdrawal alone does
+not prove that installed browser restrictions have cleared. Follow the
+coordinated state-cleanup and compatible-image rollback procedure in
+[the rollout runbook](CLASSPILOT_ROADMAP_RUNTIME_ROLLOUT.md) before reverting an
+image. Runtime activation, exact ZIP preparation, Chrome Web Store publication
+and managed-device adoption remain separate actions.
+
 ## Live View ICE is retired
 
 Live View was retired as a product feature on 2026-09-29, and its legacy TURN

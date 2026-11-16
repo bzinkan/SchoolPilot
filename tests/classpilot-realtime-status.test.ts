@@ -735,7 +735,7 @@ describe("ClassPilot cluster-safe realtime status", () => {
     // The dashboard gates every scheduled-classroom tile, tool and Live View on
     // the student having ACCEPTED these two. They must come from the negotiated
     // set: an advertisement-only device is exactly the one that must stay off.
-    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1"]) {
+    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1", "classroomFocusScopeV1"]) {
       assert.ok(
         contract.includes(`${capability}: acceptedCapabilities.has("${capability}")`),
         `${capability} must be projected from the accepted set`,
@@ -760,7 +760,7 @@ describe("ClassPilot cluster-safe realtime status", () => {
     // The heartbeat frame replaces the dashboard's acceptedCapabilities wholesale,
     // so it must carry the same two flags or a tile lights on load and goes dark
     // on the next heartbeat.
-    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1"]) {
+    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1", "classroomFocusScopeV1"]) {
       assert.ok(
         deviceProjection.includes(`${capability}: acceptedCapabilities.has("${capability}")`),
         `${capability} must reach the heartbeat frame from the accepted set`,

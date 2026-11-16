@@ -367,7 +367,7 @@ const classpilotStudentAuthGatePresenceRequestSchema = z
     // A syntactically valid but unsupported protocol is negotiated below and
     // receives 426. Malformed or missing protocol input remains a 400.
     clientProtocolVersion: z.number().int().min(1).max(1_000),
-    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(64),
   })
   .strict();
 
@@ -1090,6 +1090,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
       scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
       preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
+      classroomFocusScopeV1: acceptedCapabilities.has("classroomFocusScopeV1"),
       focusTabV1: acceptedCapabilities.has("focusTabV1"),
     },
     activityFresh,
@@ -4517,6 +4518,7 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
               classification = { ...classification, teacherIntentSource: classpilotTeacherIntentForUrl(activeTabUrl, {
                 allowedDomains: await schoolAllowedDomainsForTaskIntent(schoolId),
                 flightPath: classroomState?.restrictions?.flightPath,
+                screenLock: classroomState?.restrictions?.screenLock,
               }) };
             }
 

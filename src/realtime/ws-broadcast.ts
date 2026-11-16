@@ -8,6 +8,8 @@ import {
 } from "../services/classpilotClassroomState.js";
 import { PRECISE_RESTRICTION_RESOURCES_CAPABILITY } from "../services/restrictionResources.js";
 import { classpilotPreciseCommandPayloadValid } from "../services/classpilotPreciseRestrictions.js";
+import { CLASSROOM_FOCUS_SCOPE_CAPABILITY } from "../services/classroomFocusScope.js";
+import { isClasspilotCapabilityActive } from "../services/classpilotProtocol.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -99,8 +101,19 @@ export function classpilotStudentPreciseFrameDeliverable(message: unknown): bool
     && classpilotPreciseRestrictionPayload(classroomState.restrictions ?? classroomState).state !== "valid"
   ) return false;
   const command = preciseCommand(message);
+  if (command && plainObject(command.data) && command.data.classroomScope !== undefined) {
+    const policy = classpilotPreciseRestrictionPayload(classroomState.restrictions ?? classroomState);
+    if (policy.state !== "valid" || !policy.classroomScope) return false;
+  }
   if (!command) return true;
   return preciseState && classpilotPreciseCommandPayloadValid(command.type, command.data);
+}
+
+function classroomScopeCapabilities(message: unknown): string[] {
+  if (!plainObject(message) || !plainObject(message.classroomState)) return [];
+  const policy = classpilotPreciseRestrictionPayload(message.classroomState.restrictions ?? message.classroomState);
+  return policy.state === "valid" && policy.classroomScope
+    ? [CLASSROOM_FOCUS_SCOPE_CAPABILITY, "scopedAuthorityChecksV1"] : [];
 }
 
 function requiredStudentCapabilities(message: unknown): string[] {
@@ -517,11 +530,13 @@ export function hasStudentBindingSocketLocal(
   options: { requiredCapability?: string; requiredCapabilities?: readonly string[] } = {},
 ): boolean {
   if (!validExactStudentSocketBinding(binding)) return false;
+  if (classroomScopeCapabilities(message).length && !isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, binding)) return false;
   const precise = classpilotStudentFrameCarriesPreciseRestriction(message);
   if (precise && !classpilotStudentPreciseFrameDeliverable(message)) return false;
   const required = [...new Set([
     ...(options.requiredCapabilities ?? (options.requiredCapability ? [options.requiredCapability] : requiredStudentCapabilities(message))),
     ...(precise ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
+    ...classroomScopeCapabilities(message),
     ...(plainObject(message) && message.type === "teacher-message" && message.privateChatLifecycle != null ? ["privateChatLifecycleV1"] : []),
   ])];
   return [...(studentSocketsBySchool.get(binding.schoolId) ?? [])].some(ws => {
@@ -553,6 +568,7 @@ export function sendToStudentBindingLocal(
     return false;
   }
   const preciseRestriction = classpilotStudentFrameCarriesPreciseRestriction(message);
+  if (classroomScopeCapabilities(message).length && !isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, binding)) return false;
   if (preciseRestriction && !classpilotStudentPreciseFrameDeliverable(message)) {
     console.log(`[WS-Local] Withheld precise restriction ${msgType}`);
     return false;
@@ -571,6 +587,7 @@ export function sendToStudentBindingLocal(
         ? [options.requiredCapability]
         : requiredStudentCapabilities(message))),
     ...(preciseRestriction ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
+    ...classroomScopeCapabilities(message),
     // A caller's explicit capability list may narrow a private frame's audience,
     // but cannot send a stamped lifecycle message to a legacy local socket.
     ...(plainObject(message) && message.type === "teacher-message" && message.privateChatLifecycle != null

@@ -57,6 +57,22 @@ function New-TestRoadmapReleaseEvidence {
     }
 }
 
+function New-TestClassroomFocusEvidence {
+    param([string]$SchoolId, [DateTimeOffset]$Now)
+    # Synthetic receipt data tests the gate; these are not approved artifacts.
+    return [pscustomobject]@{
+        validatedAt = $Now.ToString('o'); pilotSchoolId = $SchoolId
+        extensionVersion = '3.0.7'; releaseTag = 'v3.0.7'; sourceCommit = ('a' * 40); zipSha256 = ('b' * 64)
+        testEvidenceSha256 = ('e' * 64); extensionId = $script:ClassPilotExtensionId
+        contractFixtureSha256 = Get-FileSha256 -Path (Join-Path $repositoryRoot 'tests/fixtures/classroom-focus-scope-cases.json')
+        checks = [pscustomobject]@{
+            packagedChromePassed = $true; managedChromebookPassed = $true; crossRepositoryContractPassed = $true
+            classroomFocusCapabilityAdvertised = $true; sourceAuthorizationPassed = $true; outsideAssignmentLinksPassed = $true
+            restartAndCrashPassed = $true; mixedFleetPassed = $true; independentStopFocusPassed = $true
+        }
+    }
+}
+
 function New-TestTaskResponse {
     param(
         [ValidateSet("api", "worker")][string]$Role,
@@ -302,6 +318,13 @@ try {
     }
     . $helperPath
 
+    $classroomFocusOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 14; mode = 'classroom-focus-off'
+    })
+    Assert-Condition ($classroomFocusOffIntent.Mode -ceq 'classroom-focus-off' -and
+        $classroomFocusOffIntent.RequiresSourceRuntime -and $classroomFocusOffIntent.Environment.Count -eq 0) `
+        'Classroom Focus withdrawal must have a source-preserving off profile.'
+
     Assert-Condition ((Get-ApiFamilyFromTaskDefinitionArn `
         -TaskDefinitionArn "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:190") `
         -ceq "schoolpilot-production-api") "The guarded helper must accept the normal production API family."
@@ -455,7 +478,7 @@ try {
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
         "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', 'pollReplaySafeV1',
-        'deviceTelemetryTransportV1', 'scopedScreenshotReferencesV1', 'scopedScreenshotDeltasV1'
+        'deviceTelemetryTransportV1', 'scopedScreenshotReferencesV1', 'scopedScreenshotDeltasV1', 'classroomFocusScopeV1'
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
@@ -1673,6 +1696,91 @@ try {
         -TargetRuntimeConfiguration $legacyRoadmapTarget
     Assert-Condition ($legacyRoadmapTarget.Environment.CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1 -ceq "false") `
         "Admitting one roadmap capability from legacy state must materialize the other as explicitly off."
+
+    # Classroom Focus is a new default-off leaf. Existing 2.9.7 precise/Focus
+    # waivers cannot authorize it, and its pilot preserves the parent controls.
+    $classroomNow = [DateTimeOffset]::Parse('2026-08-23T12:30:00Z')
+    $classroomEvidence = New-TestClassroomFocusEvidence -SchoolId $testSchoolId -Now $classroomNow
+    $classroomProfile = [pscustomobject]@{ schemaVersion = 14; mode = 'classroom-focus-pilot';
+        pilotSchoolId = $testSchoolId; classroomFocusEvidence = $classroomEvidence }
+    Assert-Condition ($globalRuntime.Environment.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 -ceq 'false' -and
+        $globalRollouts.classroomFocusScopeV1.mode -ceq 'off' -and $script:AllCapabilities[-1] -ceq 'classroomFocusScopeV1') `
+        'Every older profile must leave Classroom Focus off and preserve the existing registry order.'
+    Assert-Throws { ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 14; mode = 'classroom-focus-pilot'; pilotSchoolId = $testSchoolId }) -Now $classroomNow } `
+        'Missing successor evidence must refuse a Classroom Focus pilot.'
+    foreach ($version in @('2.9.7', '3.0.6')) {
+        $invalid = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+        $invalid.classroomFocusEvidence.extensionVersion = $version; $invalid.classroomFocusEvidence.releaseTag = "v$version"
+        Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } 'An older extension receipt cannot authorize Classroom Focus.'
+    }
+    foreach ($property in @('sourceCommit', 'zipSha256', 'testEvidenceSha256', 'contractFixtureSha256', 'pilotSchoolId', 'extensionId')) {
+        $invalid = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+        $invalid.classroomFocusEvidence.$property = 'wrong'
+        Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } "Classroom Focus evidence must bind $property."
+    }
+    foreach ($property in @('sourceCommit', 'zipSha256')) {
+        $invalid = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+        $invalid.classroomFocusEvidence.$property = if ($property -ceq 'sourceCommit') { $script:PreciseRestrictionRequiredMergeSha } else { $script:PreciseRestrictionRequiredZipSha256 }
+        Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } 'Relabeling the historical 2.9.7 package as a successor must still fail.'
+    }
+    foreach ($check in @($classroomEvidence.checks.PSObject.Properties.Name)) {
+        foreach ($value in @($false, 'true')) {
+            $invalid = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+            $invalid.classroomFocusEvidence.checks.$check = $value
+            Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } "A real boolean passed check is required for $check."
+        }
+    }
+    $invalid = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+    $invalid.classroomFocusEvidence | Add-Member -NotePropertyName validationLevel -NotePropertyValue 'synthetic_only'
+    Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } 'The old synthetic-only managed waiver cannot authorize this new capability.'
+    Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $classroomProfile -Now $classroomNow.AddDays(1) } 'Classroom Focus release evidence must be fresh at Plan and Apply.'
+    foreach ($invalid in @(
+        [pscustomobject]@{ schemaVersion = 7; mode = 'classroom-focus-off' },
+        [pscustomobject]@{ schemaVersion = 14; mode = 'classroom-focus-global-on' },
+        [pscustomobject]@{ schemaVersion = 14; mode = 'classroom-focus-off'; classroomFocusEvidence = $classroomEvidence }
+    )) { Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $invalid -Now $classroomNow } 'Only the reviewed schema-14 pilot/off shapes are permitted.' }
+    $classroomPilotIntent = ConvertTo-RuntimeConfiguration -Profile $classroomProfile -Now $classroomNow
+    Assert-Throws { Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $classroomPilotIntent -SourceTaskDefinition (New-TransitionSourceTask $globalRuntime) -ContainerName 'api' } `
+        'Classroom Focus cannot enable its precise-resource parent implicitly.'
+    $classroomParentRuntime = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = 'global-on' })
+    $classroomParentRollouts = ConvertFrom-StrictJsonText -Text $classroomParentRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
+    $classroomParentRollouts.preciseRestrictionResourcesV1 = [pscustomobject]@{ mode = 'on'; schoolIds = @($testSchoolId) }
+    $classroomParentRuntime.Environment.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = 'true'
+    $classroomParentRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $classroomParentRollouts | ConvertTo-Json -Depth 10 -Compress
+    $classroomParentSource = New-TransitionSourceTask $classroomParentRuntime
+    $classroomPilot = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $classroomPilotIntent -SourceTaskDefinition $classroomParentSource -ContainerName 'api'
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $classroomParentSource -ContainerName 'api' -TargetRuntimeConfiguration $classroomPilot
+    $classroomPilotSource = New-TransitionSourceTask $classroomPilot
+    $classroomSourceControls = Get-RuntimeCapabilityControls -Environment $classroomParentSource.containerDefinitions[0].environment
+    $classroomPilotControls = Get-RuntimeCapabilityControls -Environment $classroomPilotSource.containerDefinitions[0].environment
+    Assert-Condition ($classroomPilotControls.classroomFocusScopeV1.flag -ceq 'true' -and
+        $classroomPilotControls.classroomFocusScopeV1.mode -ceq 'on' -and @($classroomPilotControls.classroomFocusScopeV1.schoolIds).Count -eq 1 -and
+        [string]$classroomPilotControls.classroomFocusScopeV1.schoolIds[0] -ceq $testSchoolId) 'Classroom Focus pilot must turn on exactly one school.'
+    foreach ($capability in @($script:AllCapabilities | Where-Object { $_ -cne 'classroomFocusScopeV1' })) {
+        Assert-Condition ((Get-CanonicalJsonSha256 $classroomSourceControls[$capability]) -ceq (Get-CanonicalJsonSha256 $classroomPilotControls[$capability])) `
+            "Classroom Focus must preserve every other $capability control and school scope."
+    }
+    $wrongSchoolProfile = $classroomProfile | ConvertTo-Json -Depth 15 | ConvertFrom-Json -Depth 15 -DateKind String
+    $wrongSchoolProfile.pilotSchoolId = '223e4567-e89b-42d3-a456-426614174000'
+    $wrongSchoolProfile.classroomFocusEvidence.pilotSchoolId = $wrongSchoolProfile.pilotSchoolId
+    $wrongSchoolIntent = ConvertTo-RuntimeConfiguration -Profile $wrongSchoolProfile -Now $classroomNow
+    Assert-Throws { Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $wrongSchoolIntent -SourceTaskDefinition $classroomParentSource -ContainerName 'api' } `
+        'The Classroom Focus pilot must remain inside the precise-resource parent school scope.'
+    Assert-Throws { Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $classroomPilotIntent -SourceTaskDefinition $classroomPilotSource -ContainerName 'api' } `
+        'A second Classroom Focus activation cannot discard its rollback point.'
+    $classroomOff = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $classroomFocusOffIntent -SourceTaskDefinition $classroomPilotSource -ContainerName 'api'
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $classroomPilotSource -ContainerName 'api' -TargetRuntimeConfiguration $classroomOff
+    $classroomOffSource = New-TransitionSourceTask $classroomOff
+    $classroomOffControls = Get-RuntimeCapabilityControls -Environment $classroomOffSource.containerDefinitions[0].environment
+    Assert-Condition ((Get-CanonicalJsonSha256 $classroomSourceControls) -ceq (Get-CanonicalJsonSha256 $classroomOffControls)) `
+        'Classroom Focus withdrawal must restore only its leaf controls, retaining precise resources and all unrelated policies.'
+    $preClassroomCapabilities = @($script:AllCapabilities | Where-Object { $_ -cne 'classroomFocusScopeV1' })
+    $classroomProjected = Select-ServingRuntimeConfiguration -RuntimeConfiguration $classroomOff -KnownCapabilities $preClassroomCapabilities
+    Assert-Condition (-not $classroomProjected.Environment.Contains('CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1') -and
+        -not ((ConvertFrom-StrictJsonText $classroomProjected.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON).PSObject.Properties.Name -ccontains 'classroomFocusScopeV1')) `
+        'A pre-Classroom image projection must omit both new off controls so the old image can boot.'
+    Assert-Throws { Select-ServingRuntimeConfiguration -RuntimeConfiguration $classroomPilot -KnownCapabilities $preClassroomCapabilities } `
+        'An older image projection cannot drop an active Classroom Focus pilot.'
 
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)

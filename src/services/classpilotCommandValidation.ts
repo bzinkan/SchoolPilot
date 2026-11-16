@@ -2,6 +2,7 @@ import { timerCommand, lessonCommand, promptStart, toolId } from "./classpilotTo
 import { z } from "zod";
 import { normalizePreciseWaypointResource, waypointLandingUrl } from "./restrictionResources.js";
 import { assertLegacyTabFocusNotRetired, exactTabTargetSchema } from "./classpilotFocus.js";
+import { isClassroomFocusWebsiteUrl } from "./classroomFocusScope.js";
 
 const id = z.string().trim().min(1).max(128);
 const message = z.string().trim().min(1).max(2_000);
@@ -113,7 +114,15 @@ export function validateClasspilotCommandPayload(
         const value = strictObject({
           url: z.unknown(),
           boundary: z.enum(["website", "resource"]).optional(),
+          classroomFocus: strictObject({ courseId: id, reviewToken: z.string().min(1).max(8_192) }).optional(),
         }).parse(raw);
+        if (value.classroomFocus) {
+          const url = value.url === "CURRENT_URL" ? "CURRENT_URL" : persistentWaypointUrl(value.url);
+          if (value.boundary === "resource" || !isClassroomFocusWebsiteUrl(url)) {
+            throw new z.ZodError([{ code: "custom", path: ["classroomFocus"], message: "Classroom materials require an explicit Classroom website destination" }]);
+          }
+          return { url, classroomFocus: value.classroomFocus };
+        }
         if (value.boundary === "resource") {
           // "This resource only" (preciseRestrictionResourcesV1): one literal
           // link, never the current page and never a whole site. The server

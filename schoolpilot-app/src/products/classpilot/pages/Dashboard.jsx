@@ -46,12 +46,15 @@ import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
+import { useClassroomFocusPreview } from '../hooks/useClassroomFocusPreview';
+import { classroomFocusPayload, isClassroomFocusUrl, supportsClassroomFocus } from '../lib/classroomFocus';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
 import AutomaticFlightPathStatus from '../components/AutomaticFlightPathStatus';
 import { useAutomaticFlightPathSession } from '../hooks/useAutomaticFlightPathSession';
 import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
+import ClassroomFocusScopeReview from '../components/ClassroomFocusScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { MANUAL_TODAY_QUERY, useManualToday } from '../hooks/useManualToday';
@@ -6105,9 +6108,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const lockScreenMutation = useMutation({
     // The Entire website payload stays exactly { url }; only This resource
     // only adds a boundary, and the server derives the resource itself.
-    mutationFn: async ({ url, studentIds, boundary, recipients }) => postActiveCommand(
+    mutationFn: async ({ url, studentIds, boundary, classroomFocus, recipients }) => postActiveCommand(
       'lock-screen',
-      boundary === 'resource' ? { url, boundary } : { url },
+      classroomFocus ? { url, classroomFocus } : boundary === 'resource' ? { url, boundary } : { url },
       recipients ? snapshotRecipientOptions(recipients) : { studentIds },
     ),
     onSuccess: (data, variables) => {
@@ -6122,7 +6125,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       // Auto-allow an explicit lock domain so on-task students aren't flagged.
       // A This-resource-only Waypoint never allows its whole domain: the
       // off-task check matches the resource itself.
-      if (variables.url !== 'CURRENT_URL' && variables.boundary !== 'resource') {
+      if (variables.url !== 'CURRENT_URL' && variables.boundary !== 'resource' && !variables.classroomFocus) {
         try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       }
       setLockScreenUrl("");
@@ -6250,20 +6253,44 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setShowLockScreenDialog(true);
   };
 
+  const lockScreenEffectiveBoundary = preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website';
+  const classroomFocusRequested = lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl(lockScreenUrl);
+  const classroomFocusTargetIds = recipientSnapshot?.kind === 'lock-screen'
+    ? recipientSnapshot.confirmIds || recipientSnapshot.snapshot.ids : EMPTY_LIST;
+  const classroomFocusRows = recipientSnapshotRows('lock-screen').filter(student => classroomFocusTargetIds.includes(student.studentId));
+  const classroomFocusContexts = studentView === 'claimed'
+    ? [...new Set(classroomFocusRows.map(student => student.contextId || student.supervisionContext?.id).filter(Boolean))] : EMPTY_LIST;
+  const classroomFocusAuthority = studentView === 'claimed'
+    ? classroomFocusContexts.length === 1 && classroomFocusRows.length === classroomFocusTargetIds.length
+      ? { supervisionContextId: classroomFocusContexts[0] } : null
+    : effectiveAuthority;
+  const classroomFocusRevision = studentView === 'claimed'
+    ? claimedPreviewContextById.get(classroomFocusContexts[0])?.contextAuthorityRevision
+      ?? classroomFocusRows[0]?.contextAuthorityRevision ?? classroomFocusRows[0]?.supervisionContext?.contextAuthorityRevision
+    : contextAuthorityRevision;
+  const classroomFocusUnsupportedNames = classroomFocusTargetIds.filter(id => !supportsClassroomFocus(classroomFocusRows.find(student => student.studentId === id)))
+    .map(id => recipientSnapshot?.snapshot.names[recipientSnapshot.snapshot.ids.indexOf(id)] || 'Student unavailable');
+  const classroomFocusPreview = useClassroomFocusPreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
+    authority: classroomFocusAuthority, contextAuthorityRevision: classroomFocusRevision, targetStudentIds: classroomFocusTargetIds,
+    url: lockScreenUrl.trim(), scopeKey: commandControlScopeKey,
+    enabled: showLockScreenDialog && classroomFocusRequested && Boolean(classroomFocusAuthority),
+  });
   const waypointPreview = useRestrictionScopePreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
-    enabled: showLockScreenDialog && lockScreenMode === 'url',
-    input: { purpose: 'waypoint', boundary: preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website', url: lockScreenUrl.trim() },
+    enabled: showLockScreenDialog && lockScreenMode === 'url' && !classroomFocusRequested,
+    input: { purpose: 'waypoint', boundary: lockScreenEffectiveBoundary, url: lockScreenUrl.trim() },
     context: [preciseRestrictionResourcesEnabled, recipientSnapshot?.snapshot?.ids, activityScopeKey, effectiveAuthorityKey],
   });
-  const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled;
+  const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled && !classroomFocusRequested;
+  const classroomFocusApplyUnavailable = classroomFocusRequested && (!classroomFocusAuthority
+    || classroomFocusUnsupportedNames.length > 0 || classroomFocusPreview.pending || !classroomFocusPreview.preview);
   const handleConfirmLockScreen = (event) => {
     if (lockScreenMutation.isPending || recipientSendBusyRef.current === 'lock-screen') return;
-    if (waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
+    if (classroomFocusApplyUnavailable || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
     let url = 'CURRENT_URL';
     let skippedSignedOutCount = 0;
     if (lockScreenMode === "url") {
       if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set for Focus" }); return; }
-      url = waypointPreview.preview?.authoring.url || lockScreenUrl.trim();
+      url = classroomFocusRequested ? 'https://classroom.google.com/' : waypointPreview.preview?.authoring.url || lockScreenUrl.trim();
       if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
     } else {
       const partition = partitionCurrentPageWaypointTargets(
@@ -6279,12 +6306,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         return;
       }
     }
-    const boundary = lockScreenMode === "url" && preciseRestrictionResourcesEnabled ? lockScreenBoundary : "website";
-    const payload = boundary === 'resource' ? { url, boundary } : { url };
+    const boundary = lockScreenMode === "url" ? lockScreenEffectiveBoundary : "website";
+    let payload;
+    try {
+      payload = classroomFocusRequested ? classroomFocusPayload(classroomFocusPreview.preview)
+        : boundary === 'resource' ? { url, boundary } : { url };
+    } catch (error) {
+      classroomFocusPreview.invalidate();
+      toast({ variant: 'destructive', title: 'Review Classroom scope again', description: error.message });
+      return;
+    }
     const recipients = takeSnapshotRecipients('lock-screen', 'lock-screen', payload, { repeatGesture: event?.detail > 1 });
     if (!recipients) return;
     recipientSendBusyRef.current = 'lock-screen';
-    lockScreenMutation.mutate({ url, recipients, skippedSignedOutCount, boundary });
+    lockScreenMutation.mutate({ url, recipients, skippedSignedOutCount, boundary, ...(payload.classroomFocus ? { classroomFocus: payload.classroomFocus } : {}) });
 
   };
 
@@ -8562,7 +8597,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.repeat) return; if (recipientConfirmPending('lock-screen')) focusRecipientSendButton(e); else handleConfirmLockScreen(e); } }} data-testid="input-lock-screen-url" />
-                <p className="text-xs text-muted-foreground">{preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
+                <p className="text-xs text-muted-foreground">{classroomFocusRequested ? 'Classroom includes the reviewed course materials and assigned websites below.' : preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
                   ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
                   : DOMAIN_RESTRICTION_URL_HELP}</p>
                 {preciseRestrictionResourcesEnabled && (
@@ -8578,13 +8613,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </label>
                   </fieldset>
                 )}
-                <RestrictionScopeReview review={waypointPreview} disabled={!lockScreenUrl.trim() || lockScreenMutation.isPending} />
+                {classroomFocusRequested ? <>
+                  {!classroomFocusAuthority && <p role="alert" className="text-sm text-destructive">Choose students from one supervision group and open Focus again to review their Classroom course.</p>}
+                  {classroomFocusUnsupportedNames.length > 0 && <p role="alert" className="text-sm text-destructive" data-testid="classroom-focus-extension-required">
+                    ClassPilot extension update required for {classroomFocusUnsupportedNames.join(', ')} before Classroom Focus can be applied. Their current restrictions stay in place.
+                  </p>}
+                  {classroomFocusAuthority && <ClassroomFocusScopeReview review={classroomFocusPreview} disabled={lockScreenMutation.isPending} />}
+                </> : <RestrictionScopeReview review={waypointPreview} disabled={!lockScreenUrl.trim() || lockScreenMutation.isPending} />}
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => closeRecipientDialog('lock-screen')} data-testid="button-cancel-lock-screen">Cancel</Button>
-            <Button onClick={handleConfirmLockScreen} onKeyDown={ignoreHeldEnter} data-recipient-send="" disabled={lockScreenMutation.isPending || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />{recipientSendLabel('lock-screen', 'Set Focus')}</Button>
+            <Button onClick={handleConfirmLockScreen} onKeyDown={ignoreHeldEnter} data-recipient-send="" disabled={lockScreenMutation.isPending || classroomFocusApplyUnavailable || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />{recipientSendLabel('lock-screen', 'Set Focus')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

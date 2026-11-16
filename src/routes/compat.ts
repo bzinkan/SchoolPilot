@@ -244,6 +244,7 @@ function publicClasspilotExtensionContract(
       // Precise Waypoints and Flight Paths reach only students whose extension
       // negotiated this; the dashboard counts the rest as needing the update.
       preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
+      classroomFocusScopeV1: acceptedCapabilities.has("classroomFocusScopeV1"),
       // Both exact Bring Forward and persistent Focus require this negotiated
       // capability. The extension's raw advertisement never enables controls.
       focusTabV1: acceptedCapabilities.has("focusTabV1"),
@@ -1250,6 +1251,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         "preciseRestrictionResourcesV1",
         { schoolId }
       ),
+      classroomFocusScopeV1: isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId }),
     };
     const aggregated = dbStudents.map((student) => {
       const snapshot = snapshotByStudent.get(student.id);

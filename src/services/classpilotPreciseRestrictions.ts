@@ -1,5 +1,6 @@
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import { effectiveFlightPathAllowedDomains } from "./classpilotFlightPathDomains.js";
+import { isClassroomFocusWebsiteUrl, validateClassroomFocusScope } from "./classroomFocusScope.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   RestrictionResourceError,
@@ -123,6 +124,8 @@ export function classpilotPreciseCommandPayloadValid(commandType: string, payloa
     ? payload as Record<string, unknown>
     : {};
   if (commandType === "lock-screen") {
+    if (data.classroomScope !== undefined) return !Object.prototype.hasOwnProperty.call(data, "resource")
+      && isClassroomFocusWebsiteUrl(data.url) && !!validateClassroomFocusScope(data.classroomScope);
     const resource = validateAllowedResource(data.resource);
     return !!resource && resource.type !== "website" && isWaypointLandingUrl(data.url, resource);
   }

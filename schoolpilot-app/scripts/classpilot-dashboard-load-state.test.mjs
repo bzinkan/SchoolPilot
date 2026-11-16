@@ -5036,6 +5036,202 @@ async function refreshFocusStudent(fixture, row) {
   });
 }
 
+function classroomFocusReview(courseId = 'course-science', reviewToken = 'review-science') {
+  return { schemaVersion: 1, purpose: 'classroom', boundary: 'website',
+    course: { id: courseId, name: courseId === 'course-science' ? 'Science with Ms Example' : 'History with Ms Example' },
+    itemCount: 4, linkCount: 7, reviewToken, expiresAt: Date.parse('2026-08-25T13:02:00Z'),
+    effectiveAllowedDomains: ['classroom.google.com', 'docs.google.com', 'reading.example.test'],
+    scopes: [{ type: 'website', hostname: 'reading.example.test', label: 'Entire reading.example.test website',
+      url: 'https://reading.example.test', description: 'This whole website and its subdomains are allowed.' },
+    { type: 'resource', hostname: 'youtube.com', label: 'Assigned video', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      description: 'Only this YouTube video is allowed.' }],
+    warnings: [{ hostname: 'reading.example.test', message: 'Outside assignment websites allow the whole website and its subdomains.' }],
+    skipped: [], authoring: { allowedDomains: ['classroom.google.com', 'docs.google.com', 'reading.example.test'], resources: [] } };
+}
+
+test('Classroom website Focus reviews the mapped course and sends only the signed scope for frozen students', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
+  const { page, posts, harness } = fixture;
+  const previews = [];
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+    previews.push({ body: route.request().postDataJSON(), school: route.request().headers()['x-school-id'] });
+    await route.fulfill({ json: classroomFocusReview() });
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  await page.getByText('Science with Ms Example', { exact: true }).waitFor({ timeout: 8_000 });
+  assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /All published assignments and materials in this course/);
+  assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /Google work apps and all files/);
+  assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /whole website and its subdomains/);
+  assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student']);
+  assert.deepEqual(previews, [{ body: { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID] }, school: SCHOOL_ID }]);
+  assert.equal(harness.scopePreviewRequests.length, 0, 'Classroom scope must never use the unsigned generic website preview');
+  await page.getByTestId('button-confirm-lock-screen').click();
+  await waitUntil(() => posts.length === 1, 'Reviewed Classroom Focus must send its signed course scope');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'lock-screen', commandPayload: { url: 'https://classroom.google.com/',
+      classroomFocus: { courseId: 'course-science', reviewToken: 'review-science' } } });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom website Focus refuses old extensions without substituting a legacy website lock', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, { extensionVersion: '3.0.6',
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true } });
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', route => route.fulfill({ json: classroomFocusReview() }));
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('https://classroom.google.com/');
+  await page.getByTestId('classroom-focus-extension-required').waitFor({ timeout: 8_000 });
+  assert.match(await page.getByTestId('classroom-focus-extension-required').innerText(), /Ada Student/);
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true);
+  assert.deepEqual(posts, []);
+  assert.equal(harness.scopePreviewRequests.length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom website Focus selects an unmapped own course and expires its review without replaying it', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
+  const previews = [], courseReads = [];
+  await page.route('**/api/classroom/courses?purpose=classroom_resources', async route => {
+    courseReads.push(route.request().headers()['x-school-id']);
+    await route.fulfill({ json: { courses: [{ id: 'course-science', name: 'Science with Ms Example' }, { id: 'course-history', name: 'History with Ms Example' }] } });
+  });
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+    const body = route.request().postDataJSON(); previews.push(body);
+    if (!body.courseId) return route.fulfill({ status: 409,
+      json: { code: 'CLASSROOM_FOCUS_COURSE_REQUIRED', error: 'Choose a Classroom course.' } });
+    const review = classroomFocusReview(body.courseId, `review-${body.courseId}`);
+    review.expiresAt = await page.evaluate(() => Date.now() + 60_000);
+    await route.fulfill({ json: review });
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  const coursePicker = page.getByLabel('Google Classroom course', { exact: true });
+  await coursePicker.selectOption('course-science');
+  await page.getByTestId('classroom-focus-course-summary').getByText('Science with Ms Example', { exact: true }).waitFor();
+  await coursePicker.selectOption('course-history');
+  await page.getByTestId('classroom-focus-course-summary').getByText('History with Ms Example', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isEnabled(), true);
+  await page.clock.fastForward(60_100);
+  await page.getByRole('alert').getByText(/Classroom scope review expired/).waitFor();
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true);
+  assert.equal(previews.length, 3, 'expiry is not permission to replay a review or a command');
+  assert.deepEqual(courseReads, [SCHOOL_ID]);
+  assert.deepEqual(posts, []);
+  assert.deepEqual(previews.map(body => body.courseId), [undefined, 'course-science', 'course-history']);
+  assert.ok(previews.every(body => body.teachingSessionId === OWN_SESSION_ID
+    && body.targetScope === 'students' && JSON.stringify(body.targetStudentIds) === JSON.stringify([STUDENT_ID])));
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom website Focus discards a late scope after editing the URL and preserves ordinary website Focus', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
+  let releasePreview, enteredPreview;
+  const held = new Promise(resolve => { releasePreview = resolve; });
+  const entered = new Promise(resolve => { enteredPreview = resolve; });
+  context.after(() => releasePreview());
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+    enteredPreview(); await held;
+    await route.fulfill({ json: classroomFocusReview() }).catch(() => {});
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  await entered;
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true);
+  await page.getByTestId('input-lock-screen-url').fill('ixl.com');
+  releasePreview();
+  await page.getByTestId('classroom-focus-review').waitFor({ state: 'detached' });
+  await page.getByTestId('button-confirm-lock-screen').click();
+  await waitUntil(() => posts.length === 1, 'Ordinary website Focus still uses its existing exact student contract');
+  assert.deepEqual(posts[0].commandPayload, { url: 'https://ixl.com' });
+  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom website Focus never revives a reviewed token after leaving and returning to the same URL', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
+  let previewCount = 0, releasePreview, enteredPreview;
+  const held = new Promise(resolve => { releasePreview = resolve; });
+  const entered = new Promise(resolve => { enteredPreview = resolve; });
+  context.after(() => releasePreview());
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+    previewCount += 1;
+    if (previewCount === 2) { enteredPreview(); await held; }
+    await route.fulfill({ json: classroomFocusReview('course-science', `proof-${previewCount}`) }).catch(() => {});
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('input-lock-screen-url').fill('ixl.com');
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  await entered;
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true, 'the first review was retired by the URL edit');
+  assert.equal(await page.getByTestId('classroom-focus-course-summary').count(), 0);
+  releasePreview();
+  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('button-confirm-lock-screen').click();
+  await waitUntil(() => posts.length === 1, 'Only the fresh course proof may be sent');
+  assert.equal(posts[0].commandPayload.classroomFocus.reviewToken, 'proof-2');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom website Focus survives precise-feature withdrawal without falling back to a legacy website lock', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
+  let preciseEnabled = true, releasePreview;
+  const held = new Promise(resolve => { releasePreview = resolve; });
+  context.after(() => releasePreview());
+  await page.route('**/api/flight-paths', route => route.fulfill({ json: { flightPaths: [], features: { preciseRestrictionResources: preciseEnabled } } }));
+  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+    await held; await route.fulfill({ json: classroomFocusReview() }).catch(() => {});
+  });
+  const refreshFeature = () => page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.refetchQueries({ queryKey: ['/api/flight-paths'] });
+  });
+  await refreshFeature();
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-lock-screen').click();
+  await page.getByTestId('radio-lock-screen-specific').check();
+  await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
+  await page.getByTestId('radio-lock-screen-boundary-resource').check();
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true);
+  preciseEnabled = false;
+  await refreshFeature();
+  await page.getByTestId('lock-screen-boundary').waitFor({ state: 'detached' });
+  assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true,
+    'the effective website boundary must still require signed Classroom review after its resource radio is hidden');
+  await page.getByTestId('classroom-focus-review').waitFor();
+  assert.deepEqual(posts, []);
+  releasePreview();
+  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('button-confirm-lock-screen').click();
+  await waitUntil(() => posts.length === 1, 'Only reviewed Classroom scope may be sent after feature withdrawal');
+  assert.deepEqual(posts[0].commandPayload, { url: 'https://classroom.google.com/',
+    classroomFocus: { courseId: 'course-science', reviewToken: 'review-science' } });
+  assert.equal(harness.scopePreviewRequests.length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('tab-close failures show the roster name and actual error for initial and later device ACKs', { timeout: 60_000 }, async context => {
   const { page, harness, posts } = await focusBrowserFixture(context, {
     studentName: 'Taylor Example', activeTabRef: 'opaque-little-alchemy',

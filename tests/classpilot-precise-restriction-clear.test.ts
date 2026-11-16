@@ -171,16 +171,20 @@ describe("precise restriction rollback precheck", () => {
     const paths = [...PRECISE_CONTROL_STATE_PREDICATE_SQL.matchAll(/desired_state @\? 'strict ([^']+)'/g)].map((match) => match[1]);
     assert.deepEqual(paths, [
       "$.restrictions.screenLock.resource",
+      "$.restrictions.screenLock.classroomScope",
       "$.restrictions.flightPath.resources",
       "$.screenLock.resource",
+      "$.screenLock.classroomScope",
       "$.flightPath.resources",
       "$.restorableClassState.desiredState.restrictions.screenLock.resource",
+      "$.restorableClassState.desiredState.restrictions.screenLock.classroomScope",
       "$.restorableClassState.desiredState.restrictions.flightPath.resources",
       "$.restorableClassState.desiredState.screenLock.resource",
+      "$.restorableClassState.desiredState.screenLock.classroomScope",
       "$.restorableClassState.desiredState.flightPath.resources",
     ]);
     assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /^cleared_at IS NULL\n/);
-    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'screen-lock' AND payload \? 'resource'/);
+    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'screen-lock' AND \(payload \? 'resource' OR payload \? 'classroomScope'\)/);
     assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'flight-path' AND payload \? 'resources'/);
     assert.doesNotMatch(PRECISE_RESTRICTION_ROLLBACK_PRECHECK_SQL, /\b(?:UPDATE|DELETE|INSERT|ALTER|DROP)\b/i, "the precheck is read-only");
   });

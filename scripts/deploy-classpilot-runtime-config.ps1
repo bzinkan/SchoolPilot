@@ -95,6 +95,8 @@ $script:PollReplayCapability = "pollReplaySafeV1"
 $script:DeviceTelemetryCapability = "deviceTelemetryTransportV1"
 $script:ScreenshotReferencesCapability = "scopedScreenshotReferencesV1"
 $script:ScreenshotDeltasCapability = "scopedScreenshotDeltasV1"
+$script:ClassroomFocusCapability = "classroomFocusScopeV1"
+$script:ClassroomFocusModes = @('classroom-focus-pilot', 'classroom-focus-off')
 $script:TransientReplayModes = @("transient-replay-off", "transient-timer-replay-pilot", "transient-poll-replay-pilot")
 $script:TransientReplayEnvironmentNames = @(
     "CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH",
@@ -130,21 +132,23 @@ $script:RoadmapProfileCapabilities = @{
     "private-chat-lifecycle-off" = "privateChatLifecycleV1"
     "private-chat-lifecycle-global-on" = "privateChatLifecycleV1"
     "private-chat-lifecycle-global-off" = "privateChatLifecycleV1"
+    "classroom-focus-pilot" = "classroomFocusScopeV1"
+    "classroom-focus-off" = "classroomFocusScopeV1"
 }
 $script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
 $script:RoadmapGlobalModes = @('after-hours-safety-only-global-on', 'school-website-block-global-on', "precise-restriction-resources-global-on", "focus-tab-global-on", 'private-chat-lifecycle-global-on')
 $script:RoadmapGlobalCapabilities = @('afterHoursSafetyOnlyV1', 'schoolWebsiteBlockEnforcementV1', "preciseRestrictionResourcesV1", "focusTabV1", 'privateChatLifecycleV1')
 $script:RoadmapCapabilities = @(
     "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
-    $script:PreciseRestrictionCapability, "focusTabV1", 'privateChatLifecycleV1'
+    $script:PreciseRestrictionCapability, "focusTabV1", 'privateChatLifecycleV1', $script:ClassroomFocusCapability
 )
 $script:RoadmapPilotModes = @(
     "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
-    "precise-restriction-resources-pilot", "focus-tab-pilot", 'private-chat-lifecycle-pilot'
+    "precise-restriction-resources-pilot", "focus-tab-pilot", 'private-chat-lifecycle-pilot', 'classroom-focus-pilot'
 )
 $script:RoadmapOffModes = @(
     "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
-    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-off', 'private-chat-lifecycle-global-off'
+    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-off', 'private-chat-lifecycle-global-off', 'classroom-focus-off'
 )
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
@@ -167,9 +171,9 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability, $script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability) }) + @(
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability, $script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability, $script:ClassroomFocusCapability) }) + @(
     "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability
-) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability)
+) + @($script:DeviceTelemetryCapability, $script:ScreenshotReferencesCapability, $script:ScreenshotDeltasCapability, $script:ClassroomFocusCapability)
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
     authBoundTelemetryV1          = "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1"
@@ -197,6 +201,7 @@ $script:CapabilityFlags = [ordered]@{
     deviceTelemetryTransportV1   = 'CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1'
     scopedScreenshotReferencesV1 = 'CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1'
     scopedScreenshotDeltasV1 = 'CLASSPILOT_CAP_SCOPED_SCREENSHOT_DELTAS_V1'
+    classroomFocusScopeV1 = 'CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -258,6 +263,43 @@ function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
 . (Join-Path $PSScriptRoot 'classpilot-roadmap-release-evidence.ps1')
 . (Join-Path $PSScriptRoot 'classpilot-transient-replay-runtime.ps1')
 . (Join-Path $PSScriptRoot 'classpilot-device-telemetry-runtime.ps1')
+
+# Follow the existing private-profile release-evidence pattern used by poll
+# replay. This is a new successor contract: the historical 2.9.7 managed waiver
+# and its package identity cannot authorize Classroom Focus.
+function Assert-ClassroomFocusReleaseEvidence {
+    param($Profile, [string]$SchoolId, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
+    if ($Profile.PSObject.Properties.Name -cnotcontains 'classroomFocusEvidence') {
+        throw 'Classroom Focus activation requires separately reviewed successor package and managed Chromebook evidence.'
+    }
+    $evidence = $Profile.classroomFocusEvidence
+    $names = @('validatedAt', 'pilotSchoolId', 'extensionVersion', 'releaseTag', 'sourceCommit', 'zipSha256',
+        'testEvidenceSha256', 'contractFixtureSha256', 'extensionId', 'checks')
+    Assert-RequiredEvidenceProperties -Value $evidence -Names $names -Label 'classroomFocusEvidence'
+    foreach ($name in @($names | Where-Object { $_ -cne 'checks' })) {
+        if ($evidence.$name -isnot [string]) { throw 'Classroom Focus release identities must be strings.' }
+    }
+    $version = $null
+    $fixturePath = Join-Path $PSScriptRoot '../tests/fixtures/classroom-focus-scope-cases.json'
+    if (-not [Version]::TryParse([string]$evidence.extensionVersion, [ref]$version) -or $version -le [Version]'3.0.6' -or
+        $evidence.extensionVersion -cnotmatch '^\d+\.\d+\.\d+$' -or
+        $evidence.releaseTag -cne ('v' + $evidence.extensionVersion) -or
+        $evidence.pilotSchoolId -cne $SchoolId -or $evidence.extensionId -cne $script:ClassPilotExtensionId -or
+        $evidence.sourceCommit -cnotmatch '^[0-9a-f]{40}$' -or
+        $evidence.zipSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $evidence.sourceCommit -ceq $script:PreciseRestrictionRequiredMergeSha -or
+        $evidence.zipSha256 -ceq $script:PreciseRestrictionRequiredZipSha256 -or
+        $evidence.testEvidenceSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $evidence.contractFixtureSha256 -cne (Get-FileSha256 -Path $fixturePath)) {
+        throw 'Classroom Focus evidence must bind the exact successor source, ZIP, shared scope contract, tests, extension, and pilot.'
+    }
+    [void](Get-FreshEvidenceTimestamp -Value $evidence.validatedAt -Label 'Classroom Focus validation timestamp' -Now $Now)
+    Assert-EvidenceChecksPassed -Value $evidence.checks -Names @(
+        'packagedChromePassed', 'managedChromebookPassed', 'crossRepositoryContractPassed',
+        'classroomFocusCapabilityAdvertised', 'sourceAuthorizationPassed', 'outsideAssignmentLinksPassed',
+        'restartAndCrashPassed', 'mixedFleetPassed', 'independentStopFocusPassed'
+    ) -Label 'classroomFocusEvidence.checks'
+}
 
 function Get-ServingProtocolCapabilities {
     param(
@@ -660,7 +702,7 @@ function Assert-ExactProperties {
 function ConvertTo-RuntimeConfiguration {
     param([Parameter(Mandatory = $true)]$Profile, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
     Assert-ExactProperties -Value $Profile -Allowed @(
-        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn", "pollReplayEvidence", "localValidation"
+        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn", "pollReplayEvidence", "localValidation", "classroomFocusEvidence"
     ) -Trail "profile"
     $schemaVersion = [int]$Profile.schemaVersion
     $mode = [string]$Profile.mode
@@ -670,7 +712,7 @@ function ConvertTo-RuntimeConfiguration {
     $schemaFourModes = @("late-signin-pilot", "late-signin-off")
     $schemaFiveModes = @("fast-preview-pilot", "fast-preview-global-on", "fast-preview-off")
     $schemaSixModes = @("restriction-auth-pilot", "restriction-auth-off")
-    $schemaSevenModes = @($script:RoadmapProfileCapabilities.Keys)
+    $schemaSevenModes = @($script:RoadmapProfileCapabilities.Keys | Where-Object { $_ -cnotin $script:ClassroomFocusModes })
     # Scheduled classroom is the first capability whose activation is not a pilot.
     # It reaches every school or none, so this family has a global-on and an off and
     # deliberately NO pilot mode: a per-school scheduled classroom is the shape the
@@ -687,6 +729,7 @@ function ConvertTo-RuntimeConfiguration {
     $schemaElevenModes = @($script:TransientReplayModes)
     $schemaTwelveModes = @($script:TelemetryProfileCapabilities.Keys | Where-Object { $_ -cnotin $script:TelemetryDeltaModes })
     $schemaThirteenModes = @($script:TelemetryDeltaModes)
+    $schemaFourteenModes = @($script:ClassroomFocusModes)
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -700,7 +743,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 11 -and $mode -cnotin $schemaElevenModes) -or
         ($schemaVersion -eq 12 -and $mode -cnotin $schemaTwelveModes) -or
         ($schemaVersion -eq 13 -and $mode -cnotin $schemaThirteenModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)) {
+        ($schemaVersion -eq 14 -and $mode -cnotin $schemaFourteenModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
     Assert-TelemetryLocalValidation -Profile $Profile
@@ -763,6 +807,11 @@ function ConvertTo-RuntimeConfiguration {
     } elseif ($Profile.PSObject.Properties.Name -contains 'pollReplayEvidence') {
         throw 'Only the poll replay pilot may carry poll replay release evidence.'
     }
+    if ($mode -ceq 'classroom-focus-pilot') {
+        Assert-ClassroomFocusReleaseEvidence -Profile $Profile -SchoolId $pilotSchoolId -Now $Now
+    } elseif ($Profile.PSObject.Properties.Name -contains 'classroomFocusEvidence') {
+        throw 'Only the Classroom Focus pilot may carry its successor release evidence.'
+    }
 
     $turn = $null
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
@@ -820,13 +869,13 @@ function ConvertTo-RuntimeConfiguration {
             PilotSchoolId = if ($mode -ceq 'transient-replay-off') { $null } else { $pilotSchoolId }
         }
     }
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes + $schemaTenModes)) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes + $schemaTenModes + $schemaFourteenModes)) {
         $isUnpin = $mode -cin $schemaNineModes
         $selectedCapability = if ($isUnpin) {
             $null
         } elseif ($mode -cin $schemaTenModes) {
             $script:RetiredCapability
-        } elseif ($mode -cin $schemaSevenModes) {
+        } elseif ($mode -cin @($schemaSevenModes + $schemaFourteenModes)) {
             $script:RoadmapProfileCapabilities[$mode]
         } elseif ($mode -cin $schemaEightModes) {
             $script:ScheduledClassroomCapability
@@ -1068,6 +1117,9 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         }
         $rollouts[$selectedCapability] = $gateEntry
         $values[[string]$script:CapabilityFlags[$selectedCapability]] = if ($gateOn) { "true" } else { "false" }
+        if ($selectedCapability -ceq $script:ClassroomFocusCapability) {
+            Assert-RoadmapRuntimeControls -Values $values -Rollouts (ConvertFrom-StrictJsonText -Text ($rollouts | ConvertTo-Json -Depth 8 -Compress))
+        }
     }
     $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
 
@@ -2682,6 +2734,16 @@ function Assert-RoadmapRuntimeControls {
              [string]$Rollouts.studentChatIdempotencyV1.mode -cne 'on' -or
              $Rollouts.studentChatIdempotencyV1.PSObject.Properties.Name -contains 'schoolIds')) {
             throw 'Private chat lifecycle requires global scoped authority and student chat idempotency.'
+        }
+        if ($capability -ceq $script:ClassroomFocusCapability) {
+            $parent = $Rollouts.preciseRestrictionResourcesV1
+            if ([string]$Values.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 -cne 'true' -or [string]$parent.mode -cne 'on') {
+                throw 'Classroom Focus requires active scoped authority and precise restriction resources.'
+            }
+            if ($parent.PSObject.Properties.Name -contains 'schoolIds' -and
+                (@($parent.schoolIds).Count -ne 1 -or [string]$parent.schoolIds[0] -cne [string]$entry.schoolIds[0])) {
+                throw 'Classroom Focus pilot must remain inside its precise restriction parent school scope.'
+            }
         }
     }
 }
@@ -4403,8 +4465,8 @@ function New-RuntimeConfigPlan {
         fastPreviewPilotEvidenceSha256 = if ($null -ne $fastPreviewPilotEvidence) {
             $fastPreviewPilotEvidence.EvidenceSha256
         } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "synthetic_only" } elseif ($roadmapLiveOnly) { 'live_pilot' } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "passed" } else { "not_applicable" }
+        validationLevel = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "synthetic_only" } elseif ($roadmapLiveOnly) { 'live_pilot' } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on", "classroom-focus-pilot")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on", "classroom-focus-pilot")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         toolSha = $toolSha
@@ -4602,7 +4664,7 @@ function Read-RuntimePlan {
             throw "Runtime plan synthetic-only activation authority is invalid."
         }
     }
-    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) {
+    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on", "classroom-focus-pilot")) {
         if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
             throw "Runtime plan strict managed activation authority is invalid."
         }

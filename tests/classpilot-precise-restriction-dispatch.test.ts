@@ -350,6 +350,8 @@ test("the reviewed rollback precheck and the clear transform agree on every stor
     { restrictions: emptyClasspilotRestrictions() },
     { restrictions: { ...emptyClasspilotRestrictions(), screenLock: { active: true, url: "https://docs.google.com/document/d/x/edit", resource: DOC } } },
     { restrictions: { ...emptyClasspilotRestrictions(), screenLock: { active: false, resource: null } } },
+    { restrictions: { ...emptyClasspilotRestrictions(), screenLock: { active: true, classroomScope: { invalid: true } } } },
+    { restorableClassState: { desiredState: { screenLock: { active: false, classroomScope: null } } } },
     { restrictions: { ...emptyClasspilotRestrictions(), flightPath: { active: true, allowedDomains: ["a.example"], resources: [] } } },
     { restrictions: { ...emptyClasspilotRestrictions(), flightPath: { active: true, allowedDomains: ["a.example"] } } },
     { restrictions: [{ screenLock: { resource: DOC } }] },

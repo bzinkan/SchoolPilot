@@ -15,19 +15,23 @@ export const PRECISE_RESTRICTION_CLEAR_OUTCOME = "precise_restriction_cleared";
 export const PRECISE_RESTRICTION_CLEAR_PROOF_PREFIX = "precise-clear-proof-v1:";
 
 /**
- * Presence rule, matching the PR 2-pre fence: any `resource` key on a screen
- * lock or `resources` key on a Flight Path, active or not, in the stored
+ * Presence rule, matching the delivery fence: any `resource` or `classroomScope`
+ * key on a screen lock or `resources` key on a Flight Path, active or not, in the stored
  * snapshot, its legacy flat shape, or the class snapshot Coverage keeps for
  * restoration. `strict` jsonpath never unwraps arrays, like the transform.
  */
 const PRECISE_CONTROL_STATE_PATHS = [
   "$.restrictions.screenLock.resource",
+  "$.restrictions.screenLock.classroomScope",
   "$.restrictions.flightPath.resources",
   "$.screenLock.resource",
+  "$.screenLock.classroomScope",
   "$.flightPath.resources",
   "$.restorableClassState.desiredState.restrictions.screenLock.resource",
+  "$.restorableClassState.desiredState.restrictions.screenLock.classroomScope",
   "$.restorableClassState.desiredState.restrictions.flightPath.resources",
   "$.restorableClassState.desiredState.screenLock.resource",
+  "$.restorableClassState.desiredState.screenLock.classroomScope",
   "$.restorableClassState.desiredState.flightPath.resources",
 ] as const;
 
@@ -37,7 +41,7 @@ export const PRECISE_CONTROL_STATE_PREDICATE_SQL = PRECISE_CONTROL_STATE_PATHS
 
 export const PRECISE_CLASSROOM_STATE_PREDICATE_SQL = [
   "cleared_at IS NULL",
-  "AND ((state_type = 'screen-lock' AND payload ? 'resource')",
+  "AND ((state_type = 'screen-lock' AND (payload ? 'resource' OR payload ? 'classroomScope'))",
   "  OR (state_type = 'flight-path' AND payload ? 'resources'))",
 ].join("\n  ");
 
@@ -67,13 +71,13 @@ function hasOwn(value: JsonObject, key: string): boolean {
 
 type ClearedSnapshot = { next: JsonObject; screenLocks: number; flightPaths: number };
 
-/** Ends a precise Waypoint / Flight Path held directly on one restrictions object. */
+/** Ends a precise Waypoint, Classroom scope or Flight Path on one restrictions object. */
 function clearRestrictionObject(container: JsonObject): ClearedSnapshot {
   let next = container;
   let screenLocks = 0;
   let flightPaths = 0;
   const screenLock = container.screenLock;
-  if (plainObject(screenLock) && hasOwn(screenLock, "resource")) {
+  if (plainObject(screenLock) && (hasOwn(screenLock, "resource") || hasOwn(screenLock, "classroomScope"))) {
     next = { ...next, screenLock: { active: false } };
     screenLocks += 1;
   }

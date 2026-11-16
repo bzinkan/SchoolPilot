@@ -207,6 +207,8 @@ async function publishControlStateRows(
           ...(classpilotControlStateRequiresPreciseCapability(delivered.classroomState)
             ? ["preciseRestrictionResourcesV1" as const]
             : []),
+          ...(delivered.classroomState.restrictions.screenLock.classroomScope !== undefined
+            ? ["classroomFocusScopeV1" as const] : []),
         ];
         const classroomRequiredCapability = classroomRequiredCapabilities.at(-1);
         const classroomTarget: Extract<WsRedisTarget, { kind: "student-binding" }> =
