@@ -65,7 +65,7 @@ async function setup(options = {}) {
     requests.push({ path: url.pathname, school, params: Object.fromEntries(url.searchParams), classContract: req.headers()['x-passpilot-class-model'] });
     const json = (data, status = 200) => route.fulfill({ json: data, status });
     if (url.pathname.endsWith('/reports/capabilities')) return state.denyCapabilities ? json({ error: 'Access changed' }, 403) : json({ enabled: true, version: 2, schoolTimezone: 'America/New_York', scope: 'school', administratorEvidence: false });
-    if (url.pathname.endsWith('/classes')) return json({ classes: [{ id: 'class-a', name: 'History Class', filterKey: { type: 'classId', value: 'class-a' } }] });
+    if (url.pathname.endsWith('/classes')) return json(state.classesResponse || { source: 'classpilot_groups', classes: [{ id: 'class-a', name: 'History Class', source: 'classpilot_groups', filterKey: { type: 'classId', value: 'class-a' } }] });
     if (url.pathname.endsWith('/passes/issuers')) return json({ issuers: [{ id: 'teacher-a', displayName: 'Synthetic Teacher' }] });
     if (url.pathname.endsWith('/reports/summary')) {
       if (school === 'school-a' && state.holdSummary) await new Promise(resolve => { state.releaseSummary = resolve; });
@@ -104,6 +104,27 @@ test('reviewed student/class/channel filters reach summary, paginated history an
     const exported = requests.find(value => value.path.endsWith('/export.csv'));
     assert.equal(exported.params.classId, 'class-a'); assert.equal(exported.params.studentId, 'student-a'); assert.equal(exported.params.issuedVia, 'kiosk'); assert.equal(exported.params.kind, 'summary');
     assert.equal(exported.params.ruleCode, undefined); assert.equal(exported.params.schoolTimezone, undefined); assert.deepEqual(errors, []);
+  } finally { await close(page); }
+});
+
+test('standalone PassPilot reports offer grade classes and apply the selected grade to reports and CSV', async () => {
+  const { page, requests, errors } = await setup({ classesResponse: { source: 'legacy_grades', classes: [
+    ...['3rd', '4th', '5th', '6th', '7th', '8th'].map((name, index) => ({ id: `grade-${index + 3}`, name, source: 'legacy_grades', filterKey: { type: 'gradeId', value: `grade-${index + 3}` } })),
+    ...['Grade 3 ELA', 'Grade 3 Homeroom', 'Grade 6 Science'].map((name, index) => ({ id: `subject-${index}`, name, source: 'classpilot_groups', filterKey: { type: 'classId', value: `subject-${index}` } })),
+  ] } });
+  try {
+    const classes = page.getByLabel('Class', { exact: true });
+    await classes.locator('option').filter({ hasText: '6th' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await classes.locator('option').allTextContents(), ['All authorized classes', '3rd', '4th', '5th', '6th', '7th', '8th']);
+    const filteredSummary = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/reports/summary') && new URL(response.url()).searchParams.get('gradeId') === 'grade-6');
+    const filteredPasses = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/reports/passes') && new URL(response.url()).searchParams.get('gradeId') === 'grade-6');
+    await classes.selectOption('gradeId:grade-6');
+    await Promise.all([filteredSummary, filteredPasses]);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export summary CSV' }).click(); await download;
+    const exported = requests.find(value => value.path.endsWith('/export.csv'));
+    assert.equal(exported.params.gradeId, 'grade-6'); assert.equal(exported.params.classId, undefined);
+    assert.deepEqual(errors, []);
   } finally { await close(page); }
 });
 test('server export limits are shown without a partial download', async () => {

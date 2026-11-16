@@ -38,6 +38,7 @@ export default function ReportsV2({ user, school, capabilities }) {
   };
   const classes = useQuery({ queryKey: [...key, 'classes'], enabled: !denied, retry: false,
     queryFn: ({ signal }) => load('/passpilot/classes?scope=history', signal) });
+  const reportClasses = (classes.data?.classes || []).filter(item => classes.data?.source !== 'legacy_grades' || item.source === 'legacy_grades');
   const issuers = useQuery({ queryKey: [...key, 'issuers'], enabled: !denied && capabilities.scope === 'school', retry: false,
     queryFn: ({ signal }) => load('/passpilot/passes/issuers', signal) });
   const queryString = new URLSearchParams(filters.params || {}).toString(), canRequest = !filters.error && !denied, enabled = canRequest && !snapshotChanged;
@@ -83,7 +84,7 @@ export default function ReportsV2({ user, school, capabilities }) {
   return <div className="space-y-4 p-4"><header><h2 className="text-xl font-semibold">PassPilot reports</h2><p className="text-sm text-muted-foreground">{capabilities.scope === 'school' ? 'School pass history' : 'Authorized teacher history'} · {timeZone}</p></header>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div><Label htmlFor="report-from">From date</Label><Input id="report-from" type="date" value={values.fromDate} onChange={event => update({ fromDate: event.target.value })} /></div>
       <div><Label htmlFor="report-through">Through date</Label><Input id="report-through" type="date" value={values.throughDate} onChange={event => update({ throughDate: event.target.value })} /></div>
-      <div><Label htmlFor="report-class">Class</Label><select id="report-class" className={field} value={values.classFilter} disabled={classes.isLoading || classes.isError} onChange={event => update({ classFilter: event.target.value })}><option value="">All authorized classes</option>{(classes.data?.classes || []).map(item => {
+      <div><Label htmlFor="report-class">Class</Label><select id="report-class" className={field} value={values.classFilter} disabled={classes.isLoading || classes.isError} onChange={event => update({ classFilter: event.target.value })}><option value="">All authorized classes</option>{reportClasses.map(item => {
         const kind = item.filterKey?.type || (item.legacyGradeId || item.historyOnly ? 'gradeId' : 'classId'), id = item.filterKey?.value || item.legacyGradeId || item.classId || item.id;
         return <option key={`${kind}:${id}`} value={`${kind}:${id}`}>{item.name}{item.historyOnly ? ' (History only)' : item.status && item.status !== 'active' ? ' (Archived)' : ''}</option>;
       })}</select></div>
