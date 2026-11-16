@@ -91,6 +91,7 @@ function StudentTile({
   isSelected = false,
   onToggleSelect,
   signOutOnlySelectionAvailable = false,
+  safetyUnlockSelectionAvailable = false,
   persistentRestrictionSelectionAvailable = false,
   liveStream,
   onStartLiveView,
@@ -224,7 +225,7 @@ function StudentTile({
   const selectionDisabled = actionsDisabled
     || monitoringSuppressed
     || (
-      (monitoringActionsDisabled || nonSignOutCommandsBlocked)
+      (monitoringActionsDisabled && !safetyUnlockSelectionAvailable || nonSignOutCommandsBlocked)
       && !signOutOnlySelectionAvailable
       && !persistentRestrictionSelectionAvailable
     );
@@ -588,6 +589,8 @@ function StudentTile({
                   ? unavailableActionReason
                   : persistentRestrictionSelectionAvailable
                     ? "Select for restrictions that will apply after sign-in"
+                    : safetyUnlockSelectionAvailable && monitoringActionsDisabled
+                      ? "Select for Stop Focus while monitoring reconnects"
                     : signOutOnlySelectionAvailable
                       ? "Select for Student Sign Out only"
                       : "Select this student"}

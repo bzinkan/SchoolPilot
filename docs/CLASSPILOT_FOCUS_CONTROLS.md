@@ -22,6 +22,15 @@ and explains unavailable Focus controls. A disabled tile padlock remains inert
 when clicked, with its reason visible beside the tile's status and available to
 assistive technology; it must never open the screenshot instead.
 
+Select all includes a logged-in, currently owned Focus cleanup recipient whose
+monitoring has gone stale when that row still passes the existing screen-only
+unlock capability and authority checks. Its checkbox remains available and its
+tick survives monitoring refreshes, matching individual Stop Focus behavior.
+This selection does not grant other commands: each command still validates
+every explicit recipient, so an unsupported mixed selection is refused rather
+than silently narrowed. Signed-out pending restrictions and sign-out-only
+selection retain their separate behavior.
+
 **Stop Focus** is one action. It clears the destination restriction and any
 remaining tab Focus from earlier controls. It preserves Flight Paths, block
 lists, Attention, and tab limits. Remove Flight Path and an automatic preset's

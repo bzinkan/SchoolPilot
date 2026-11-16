@@ -893,8 +893,8 @@ test('late-sign-in restriction authoring is row-gated and command-specific', asy
   );
   assert.match(
     dashboard,
-    /selectableStudents[\s\S]{0,220}\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents\]/,
-    'Select All must include both online and gated signed-out students',
+    /selectableStudents[\s\S]{0,220}\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents, \.\.\.safetyUnlockSelectionStudents\]/,
+    'individual selection includes current, signed-out restriction and safe Focus cleanup lanes',
   );
   assert.match(
     dashboard,
@@ -1259,11 +1259,11 @@ test('a selection cleared automatically is refused, never widened, and every cla
 
   // Every automatic clearing records what it removed, with its cause; the
   // scope effect that drops a previous scope's loss is declared after them.
-  const trim = between('const keepTick = (studentId) => (', '}, [lateSignInRestrictionEligibleStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);');
+  const trim = between('const keepTick = (studentId) => (', '}, [lateSignInRestrictionEligibleStudentIds, safetyUnlockSelectableStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);');
   assert.match(
     trim,
-    /^const keepTick = \(studentId\) => \(\s*monitoringDisplaysByStudent\.get\(studentId\)\?\.telemetryCurrent\s*\|\| lateSignInRestrictionEligibleStudentIds\.has\(studentId\)\s*\);/,
-    'a signed-out tick for restrictions after sign-in is not dropped as stopped reporting; the binding check validates it',
+    /^const keepTick = \(studentId\) => \(\s*monitoringDisplaysByStudent\.get\(studentId\)\?\.telemetryCurrent\s*\|\| lateSignInRestrictionEligibleStudentIds\.has\(studentId\)\s*\|\| safetyUnlockSelectableStudentIds\.has\(studentId\)\s*\);/,
+    'retain pending restrictions and safe Focus cleanup ticks; the exact-binding check still validates both',
   );
   assert.ok(
     dashboard.indexOf('const lateSignInRestrictionEligibleStudentIds = useMemo(') < dashboard.indexOf(trim),
