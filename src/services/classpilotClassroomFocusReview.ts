@@ -64,8 +64,9 @@ export async function confirmClassroomFocusReview(request: ClassroomFocusReviewR
   requireEnabled(request, dependencies);
   if (typeof request.reviewToken !== "string" || request.reviewToken.length > 4096) fail();
   const [payload, mac, extra] = request.reviewToken.split(".");
-  const expected = signed(payload || "", dependencies);
-  if (!payload || !mac || extra || mac.length !== expected.length || !timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) fail();
+  if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload) || !mac || !/^[A-Za-z0-9_-]{43}$/.test(mac) || extra !== undefined) fail();
+  const expected = signed(payload, dependencies);
+  if (!timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) fail();
   let claims: Record<string, unknown>;
   try { claims = JSON.parse(Buffer.from(payload, "base64url").toString()); } catch { fail(); }
   if (claims.schemaVersion !== 1 || claims.schoolId !== identity.schoolId || claims.actorId !== identity.actorId

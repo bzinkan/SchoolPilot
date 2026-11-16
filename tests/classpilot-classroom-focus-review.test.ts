@@ -37,3 +37,10 @@ test("a review that expires during the provider reread cannot authorize Focus", 
     ...dependencies, now: () => now, resolveSource: async () => { now = preview.expiresAt + 1; return source(); },
   }), /review/i);
 });
+
+test("malformed non-ASCII review signatures produce a stale review instead of a server error", async () => {
+  const preview = await previewClassroomFocusReview(input, dependencies);
+  const payload = preview.reviewToken.split(".")[0];
+  await assert.rejects(confirmClassroomFocusReview({ ...input, reviewToken: `${payload}.${"é".repeat(43)}` }, dependencies),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "CLASSROOM_FOCUS_REVIEW_STALE");
+});
