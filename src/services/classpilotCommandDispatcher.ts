@@ -37,6 +37,8 @@ import {
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
 import { validateClasspilotCommandPayload } from "./classpilotCommandValidation.js";
+import { prepareClassroomFocusCommand } from "./classpilotClassroomFocusCommand.js";
+import { CLASSROOM_FOCUS_SCOPE_CAPABILITY } from "./classroomFocusScope.js";
 import {
   broadcastToStaffSessionLocal,
   sendToStudentBindingLocal,
@@ -56,6 +58,7 @@ import {
   CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON,
   classpilotCommandPayloadRequiresPreciseCapability,
   classpilotControlStateRequiresPreciseCapability,
+  classpilotPreciseRestrictionPayload,
   classpilotRestrictionAuthPassThroughEnvelope,
   emptyClasspilotRestrictions,
   normalizeClasspilotRestrictions,
@@ -743,9 +746,10 @@ export function classpilotCommandFrameForTarget(
       | "lateSignInRestrictionSsoV1"
       | "restrictionAuthPassThroughV1"
       | "preciseRestrictionResourcesV1"
+      | "classroomFocusScopeV1"
       | "focusTabV1";
     requiredCapabilities?: Array<
-      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1" | "preciseRestrictionResourcesV1" | "focusTabV1"
+      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1" | "preciseRestrictionResourcesV1" | "classroomFocusScopeV1" | "focusTabV1"
     >;
     exactBindingControlRevision?: number;
     authPassThrough?: ClasspilotRestrictionAuthPassThroughEnvelope;
@@ -766,6 +770,10 @@ export function classpilotCommandFrameForTarget(
   // a precise payload without a precise snapshot is never framed.
   const preciseCommandPayload = classpilotCommandPayloadRequiresPreciseCapability(commandType, payload);
   const preciseClassroomState = classpilotControlStateRequiresPreciseCapability(classroomState);
+  const carriedPolicy = classpilotPreciseRestrictionPayload(classroomState?.restrictions);
+  if ((payload?.classroomScope !== undefined || carriedPolicy.state === "valid" && carriedPolicy.classroomScope)
+    && (carriedPolicy.state !== "valid" || !carriedPolicy.classroomScope
+      || !delivery.requiredCapabilities?.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY))) return null;
   if (
     (preciseCommandPayload || preciseClassroomState)
     && (
@@ -1371,6 +1379,13 @@ export async function executeClasspilotCommand(options: {
     normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
   }
   let commandPayload = { ...normalized.payload };
+  if (options.commandType === "lock-screen") {
+    commandPayload = await prepareClassroomFocusCommand({ schoolId: options.schoolId, actorId: options.actorId,
+      teachingSessionId: options.teachingSessionId, supervisionContextId: options.supervisionContextId,
+      contextAuthorityRevision: options.contextAuthorityRevision, targetScope: options.targetScope,
+      targetStudentIds: options.targets.map(target => target.studentId) }, commandPayload);
+    normalized = { ...normalized, payload: commandPayload };
+  }
   assertLegacyTabFocusNotRetired(options.commandType, commandPayload);
   const focusExact = options.commandType === "focus-tab" || options.commandType === "activate-tab";
   const focusNewAction = focusExact || (options.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
@@ -1423,8 +1438,10 @@ export async function executeClasspilotCommand(options: {
     // offline student is never deferred (there is no capability evidence to
     // defer on). A replayed payload whose entries no longer validate, or a
     // school whose rollout is off, refuses every target.
+    const classroomScopeRequired = commandPayload.classroomScope !== undefined;
     const preciseDeliverable = classpilotPreciseCommandPayloadValid(options.commandType, commandPayload)
-      && preciseRestrictionResourcesActive(options.schoolId);
+      && preciseRestrictionResourcesActive(options.schoolId)
+      && (!classroomScopeRequired || isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, { schoolId: options.schoolId }));
     const preciseEvidence = preciseDeliverable
       ? await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets
         .filter((target) => target.available && target.studentSessionId && target.deviceId)
@@ -1438,7 +1455,8 @@ export async function executeClasspilotCommand(options: {
         && live
         && read?.status === "hit"
         && classpilotRealtimeFresh(read.snapshot)
-        && read.snapshot.acceptedCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY) === true;
+        && read.snapshot.acceptedCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY) === true
+        && (!classroomScopeRequired || read.snapshot.acceptedCapabilities?.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY) === true);
       if (capable) continue;
       effectiveTargets[index] = {
         ...target,
@@ -2258,6 +2276,8 @@ export async function executeClasspilotCommand(options: {
             ...(classpilotControlStateRequiresPreciseCapability(authoritativeClassroomState)
               ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY]
               : []),
+            ...(authoritativeClassroomState?.restrictions.screenLock.classroomScope !== undefined
+              ? [CLASSROOM_FOCUS_SCOPE_CAPABILITY] : []),
             ...(focusNewAction || authoritativeClassroomState?.restrictions.focus?.active
               ? [FOCUS_TAB_CAPABILITY] : []),
           ];

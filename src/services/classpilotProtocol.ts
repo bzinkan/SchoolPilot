@@ -47,7 +47,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "lessonActivitiesV1",
   "exitTicketsV1",
   // Roadmap PR 2: This-resource-only Waypoints and section/resource Flight
-  // Path entries. Index 25, inside the 32-name realtime capability cache.
+  // Path entries. Index 25, inside the 64-name realtime capability cache.
   "preciseRestrictionResourcesV1",
   "focusTabV1",
   "privateChatLifecycleV1",
@@ -55,6 +55,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "deviceTelemetryTransportV1",
   "scopedScreenshotReferencesV1",
   "scopedScreenshotDeltasV1",
+  "classroomFocusScopeV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -101,6 +102,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   deviceTelemetryTransportV1: "CLASSPILOT_CAP_DEVICE_TELEMETRY_TRANSPORT_V1",
   scopedScreenshotReferencesV1: "CLASSPILOT_CAP_SCOPED_SCREENSHOT_REFERENCES_V1",
   scopedScreenshotDeltasV1: "CLASSPILOT_CAP_SCOPED_SCREENSHOT_DELTAS_V1",
+  classroomFocusScopeV1: "CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -134,6 +136,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "deviceTelemetryTransportV1",
   "scopedScreenshotReferencesV1",
   "scopedScreenshotDeltasV1",
+  "classroomFocusScopeV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -345,6 +348,9 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "classroomFocusScopeV1"
+    && !(["scopedAuthorityChecksV1", "preciseRestrictionResourcesV1"] as const)
+      .every(parent => isClasspilotCapabilityActive(parent, scope, env))) return false;
   if (capability === "scopedScreenshotDeltasV1"
     && !(["scopedAuthorityChecksV1", "screenshotTrackingWindowLeaseV1", "deviceTelemetryTransportV1", "scopedScreenshotReferencesV1"] as const)
       .every(parent => isClasspilotCapabilityActive(parent, scope, env))) return false;
@@ -435,6 +441,8 @@ export function negotiateClasspilotProtocol(options: {
           || trackingWindowLeaseAccepted
         )
         && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
+        && (capability !== "classroomFocusScopeV1" || repairedScopedAuthorityAccepted
+          && advertised.has("preciseRestrictionResourcesV1") && serverEnabled.has("preciseRestrictionResourcesV1"))
         && (capability !== "privateChatLifecycleV1" || advertised.has("studentChatIdempotencyV1") && serverEnabled.has("studentChatIdempotencyV1"))
         && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
         && (capability !== "scopedScreenshotReferencesV1" || trackingWindowLeaseAccepted

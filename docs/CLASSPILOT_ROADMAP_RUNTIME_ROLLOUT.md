@@ -78,6 +78,11 @@ Rollback capability flags before widening another cohort. A safety-only rollback
 
 ## Precise restriction resources (roadmap PR 2)
 
+The current rollback inventory/clear also covers `screenLock.classroomScope`.
+See [Classroom Focus](CLASSPILOT_CLASSROOM_FOCUS.md) for its separate capability,
+release and adoption gates. The broad clear below ends both kinds of precise
+screen lock and every precise Flight Path; it is not a Classroom-only reset.
+
 `preciseRestrictionResourcesV1` adds "This resource only" Waypoints and Flight Path entries for one YouTube video, Google Doc, Slides deck, Sheet, Form or Drive file, or one section of a site. The extension contract, matcher and case-file hash are in [the ClassPilot 2.9.7 contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The capability is off by default. While it is off for a school, teachers cannot author sections or resources (409 `PRECISE_RESTRICTION_RESOURCES_DISABLED`), a Flight Path that has them cannot be applied, and the dashboard hides the controls. An owner can still edit the websites of such a path; the stored entries stay untouched.
 
 Admission follows the schema-v7 pattern above. Profiles:
@@ -134,19 +139,23 @@ Follow these steps in order. They end every stored precise restriction explicitl
    SELECT 'control_state' AS kind, school_id, count(*)::int AS row_count
    FROM classpilot_student_control_states
    WHERE desired_state @? 'strict $.restrictions.screenLock.resource'
+      OR desired_state @? 'strict $.restrictions.screenLock.classroomScope'
       OR desired_state @? 'strict $.restrictions.flightPath.resources'
       OR desired_state @? 'strict $.screenLock.resource'
+      OR desired_state @? 'strict $.screenLock.classroomScope'
       OR desired_state @? 'strict $.flightPath.resources'
       OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.resource'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.classroomScope'
       OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.flightPath.resources'
       OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.resource'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.classroomScope'
       OR desired_state @? 'strict $.restorableClassState.desiredState.flightPath.resources'
    GROUP BY school_id
    UNION ALL
    SELECT 'classroom_state' AS kind, school_id, count(*)::int AS row_count
    FROM classpilot_classroom_states
    WHERE cleared_at IS NULL
-     AND ((state_type = 'screen-lock' AND payload ? 'resource')
+     AND ((state_type = 'screen-lock' AND (payload ? 'resource' OR payload ? 'classroomScope'))
        OR (state_type = 'flight-path' AND payload ? 'resources'))
    GROUP BY school_id
    ORDER BY kind, school_id;

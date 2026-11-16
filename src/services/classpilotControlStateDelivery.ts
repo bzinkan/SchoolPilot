@@ -202,6 +202,8 @@ export async function syncClasspilotControlStatesToActiveDevices(
                 ...(classpilotControlStateRequiresPreciseCapability(deliveredState.classroomState)
                   ? ["preciseRestrictionResourcesV1" as const]
                   : []),
+                ...(deliveredState.classroomState.restrictions.screenLock.classroomScope !== undefined
+                  ? ["classroomFocusScopeV1" as const] : []),
                 ...(deliveredState.classroomState.restrictions.focus?.active
                   ? ["focusTabV1" as const] : []),
               ];

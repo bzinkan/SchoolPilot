@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { emptyClasspilotRestrictions } from "../src/services/classpilotClassroomState.js";
 import {
   classpilotClassroomStatePushFrame,
   classpilotFabStatePushFrame,
@@ -23,7 +24,7 @@ type Frame = Record<string, unknown> & {
 };
 function fixture(options: { revoked?: boolean; lateSignIn?: boolean } = {}) {
   const binding = { kind: "student-binding", schoolId: "school-a", studentId: "student-a", studentSessionId: "session-a", deviceId: "device-a" };
-  const state = { revision: 8, teachingSessionId: options.revoked ? null : "teaching-a", supervisionContextId: null, desiredState: {}, restrictions: {} };
+  const state = { revision: 8, teachingSessionId: options.revoked ? null : "teaching-a", supervisionContextId: null, desiredState: {}, restrictions: emptyClasspilotRestrictions() };
   const local: Frame[] = [], batches: Frame[][] = [], pending: Frame[] = [], cleared: Frame[] = [];
   let failFab = false, held = false;
   const transactionDb = {};

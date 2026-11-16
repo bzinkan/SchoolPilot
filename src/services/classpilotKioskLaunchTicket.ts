@@ -37,14 +37,14 @@ export const classpilotKioskLaunchTicketRequestSchema = z
   .object({
     directoryDeviceId: z.string().trim().min(1).max(512),
     clientProtocolVersion: z.number().int().min(1).max(100),
-    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(64),
   })
   .strict();
 
 export const classpilotKioskLaunchTicketPreflightSchema = z
   .object({
     clientProtocolVersion: z.number().int().min(1).max(100),
-    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(64),
   })
   .strict();
 

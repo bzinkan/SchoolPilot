@@ -44,6 +44,7 @@ import { db } from "../../db.js";
 import { classpilotClassroomStates, classpilotCommands, classpilotCommandTargets } from "../../schema/classpilot.js";
 import { parseAutomaticFlightPathStopOption } from "../../services/classpilotAutomaticFlightPathCommand.js";
 import { classpilotTeachingSessionIsCurrent } from "../../services/classpilotTeachingSessionWindow.js";
+import { previewClassroomFocusReview } from "../../services/classpilotClassroomFocusReview.js";
 
 const router = Router();
 
@@ -264,6 +265,30 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   }
   return resolved;
 }
+
+router.post("/commands/classroom-focus/preview", ...auth, async (req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin", "teacher"])) return res.status(403).json({ error: "Teacher or admin access required" });
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body))
+      return res.status(400).json({ error: "A Classroom Focus review request is required.", code: "CLASSROOM_FOCUS_REVIEW_INVALID" });
+    const authority = parseClasspilotActivityAuthority(req.body);
+    const ids = normalizeStudentIds(req.body.targetStudentIds);
+    if (!authority || req.body.targetScope !== "students" || !Array.isArray(req.body.targetStudentIds)
+      || ids.length === 0 || ids.length !== req.body.targetStudentIds.length
+      || Object.keys(req.body).some(key => !["teachingSessionId", "supervisionContextId", "targetScope", "targetStudentIds", "courseId"].includes(key))
+      || req.body.courseId !== undefined && (typeof req.body.courseId !== "string" || !req.body.courseId.trim()))
+      return res.status(400).json({ error: "Review an exact nonempty student selection and a valid course.", code: "CLASSROOM_FOCUS_REVIEW_INVALID" });
+    const targets = await resolveTargets(req, res, { ...req.body, commandType: "lock-screen", commandPayload: { url: "https://classroom.google.com/" } });
+    if (targets.length !== ids.length || targets.some(target => target.stateAuthorized === false))
+      return res.status(409).json({ error: "The selected students or their classroom ownership changed. Review them again.", code: "CLASSROOM_FOCUS_REVIEW_STALE" });
+    const preview = await previewClassroomFocusReview({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id,
+      authority: authority.supervisionContextId ? { ...authority,
+        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : authority,
+      targetStudentIds: ids, courseId: req.body.courseId });
+    return res.json(preview);
+  } catch (error) { next(error); }
+});
 
 router.post("/commands", ...auth, async (req, res, next) => {
   try {

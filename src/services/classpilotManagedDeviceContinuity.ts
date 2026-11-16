@@ -39,7 +39,7 @@ const DEVICE_PROOF_PATTERN =
 export const classpilotManagedDevicePreflightRequestSchema = z
   .object({
     clientProtocolVersion: z.literal(3),
-    capabilities: z.array(z.string().trim().min(1).max(64)).max(32),
+    capabilities: z.array(z.string().trim().min(1).max(64)).max(64),
   })
   .strict()
   .superRefine((value, context) => {

@@ -3,9 +3,12 @@ import type {
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import type { ClasspilotSsoPolicy } from "./classpilotSsoPolicy.js";
 import { focusAssignmentMatches, focusCapabilityAccepted, focusRecord, readFocusAssignment,
   readFocusRestriction, type ClasspilotFocusRestriction } from "./classpilotFocus.js";
+import { CLASSROOM_FOCUS_SCOPE_CAPABILITY, isClassroomFocusWebsiteUrl, validateClassroomFocusScope,
+  type ClassroomFocusScope } from "./classroomFocusScope.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   isWaypointLandingUrl,
@@ -109,6 +112,8 @@ export type ClasspilotClassroomStateSnapshot = {
        * binding that accepted the capability.
        */
       resource?: unknown;
+      /** Server-reviewed published Classroom materials; never a legacy host projection. */
+      classroomScope?: unknown;
     };
     flightPath: {
       active: boolean;
@@ -231,6 +236,12 @@ function preservedScreenLockResource(screenLock: unknown): { resource?: unknown 
     : {};
 }
 
+function preservedClassroomFocusScope(screenLock: unknown): { classroomScope?: unknown } {
+  const source = objectValue(screenLock);
+  return Object.prototype.hasOwnProperty.call(source, "classroomScope") && source.classroomScope !== undefined
+    ? { classroomScope: source.classroomScope } : {};
+}
+
 function preservedFlightPathResources(flightPath: unknown): { resources?: unknown } {
   return carriesPreciseRestrictionKey(flightPath, "resources")
     ? { resources: objectValue(flightPath).resources }
@@ -241,6 +252,7 @@ function preservedFlightPathResources(flightPath: unknown): { resources?: unknow
 export function classpilotRestrictionsRequirePreciseCapability(restrictions: unknown): boolean {
   const source = objectValue(restrictions);
   return carriesPreciseRestrictionKey(source.screenLock, "resource")
+    || Object.keys(preservedClassroomFocusScope(source.screenLock)).length > 0
     || carriesPreciseRestrictionKey(source.flightPath, "resources");
 }
 
@@ -255,7 +267,8 @@ export function classpilotCommandPayloadRequiresPreciseCapability(
   commandType: string,
   payload: unknown
 ): boolean {
-  if (commandType === "lock-screen") return carriesPreciseRestrictionKey(payload, "resource");
+  if (commandType === "lock-screen") return carriesPreciseRestrictionKey(payload, "resource")
+    || Object.keys(preservedClassroomFocusScope(payload)).length > 0;
   if (commandType === "apply-flight-path") return carriesPreciseRestrictionKey(payload, "resources");
   return false;
 }
@@ -266,6 +279,7 @@ export type ClasspilotPreciseRestrictionPayload =
   | {
       state: "valid";
       screenLockResource?: PreciseAllowedResource;
+      classroomScope?: ClassroomFocusScope;
       flightPathResources?: AllowedResource[];
     };
 
@@ -281,8 +295,16 @@ export function classpilotPreciseRestrictionPayload(restrictions: unknown): Clas
   const screenLock = objectValue(source.screenLock);
   const flightPath = objectValue(source.flightPath);
   const hasResource = carriesPreciseRestrictionKey(screenLock, "resource");
+  const hasClassroomScope = Object.keys(preservedClassroomFocusScope(screenLock)).length > 0;
   const hasResources = carriesPreciseRestrictionKey(flightPath, "resources");
-  if (!hasResource && !hasResources) return { state: "none" };
+  if (!hasResource && !hasResources && !hasClassroomScope) return { state: "none" };
+  let classroomScope: ClassroomFocusScope | undefined;
+  if (hasClassroomScope) {
+    const scope = validateClassroomFocusScope(screenLock.classroomScope);
+    if (!scope || hasResource || screenLock.active !== true || !isClassroomFocusWebsiteUrl(screenLock.url)
+      || (screenLock.domain !== undefined && screenLock.domain !== "classroom.google.com")) return { state: "invalid" };
+    classroomScope = scope;
+  }
   let screenLockResource: PreciseAllowedResource | undefined;
   let flightPathResources: AllowedResource[] | undefined;
   if (hasResource) {
@@ -302,6 +324,7 @@ export function classpilotPreciseRestrictionPayload(restrictions: unknown): Clas
   }
   return {
     state: "valid",
+    ...(classroomScope ? { classroomScope } : {}),
     ...(screenLockResource ? { screenLockResource } : {}),
     ...(flightPathResources ? { flightPathResources } : {}),
   };
@@ -320,7 +343,9 @@ export function classpilotPreciseRestrictionCapabilityRequired(options: {
   const precise = classpilotPreciseRestrictionPayload(desired.restrictions ?? desired);
   if (precise.state === "none") return false;
   return precise.state === "invalid"
-    || !options.acceptedCapabilities.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY);
+    || !options.acceptedCapabilities.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY)
+    || (precise.state === "valid" && !!precise.classroomScope
+      && !options.acceptedCapabilities.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY));
 }
 
 export function readClasspilotLateSignInDeliveryProvenance(
@@ -441,6 +466,7 @@ export function normalizeClasspilotRestrictions(value: unknown): ClasspilotClass
       ...(screenLock.url ? { url: String(screenLock.url).slice(0, 4_096) } : {}),
       ...(screenLock.domain ? { domain: String(screenLock.domain).slice(0, 253) } : {}),
       ...preservedScreenLockResource(screenLock),
+      ...preservedClassroomFocusScope(screenLock),
     },
     flightPath: {
       active: flightPath.active === true,
@@ -479,6 +505,7 @@ export function applyClasspilotControlCommand(
         active: true,
         url: payload.url ? String(payload.url).slice(0, 4_096) : null,
         ...preservedScreenLockResource(payload),
+        ...preservedClassroomFocusScope(payload),
       };
       // Screen Lock overlays the independently configured Flight Path. The
       // lock wins while active, and a canonical screen-only unlock reveals
@@ -608,6 +635,8 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   state: ClasspilotStudentControlState;
   gateActive: boolean;
   acceptedCapabilities: readonly string[];
+  /** Internal pure-policy override; production callers use the live school gate. */
+  classroomFocusScopeGateActive?: boolean;
   exactBinding: ClasspilotExactStudentBinding | null;
   authPassThrough?: {
     gateActive: boolean;
@@ -624,6 +653,7 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     | "late_sign_in_capability_required"
     | "restriction_auth_update_required"
     | "precise_restriction_capability_required"
+    | "classroom_focus_scope_capability_required"
     | "focus_tab_capability_required";
 } {
   const provenance = readClasspilotLateSignInDeliveryProvenance(options.state.desiredState);
@@ -672,6 +702,12 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   // above, so its clear still reaches every device.
   const precise = classpilotPreciseRestrictionPayload(restrictions);
   if (precise.state !== "none") {
+    if (precise.state === "valid" && precise.classroomScope
+      && (!(options.classroomFocusScopeGateActive ?? isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, { schoolId: options.state.schoolId }))
+        || !exactBindingAuthorized || !options.acceptedCapabilities.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY)
+        || !options.acceptedCapabilities.includes("scopedAuthorityChecksV1"))) {
+      return { classroomState: null, withheld: true, withheldReason: "classroom_focus_scope_capability_required" };
+    }
     if (
       precise.state === "invalid"
       || !exactBindingAuthorized
@@ -686,7 +722,9 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     }
     restrictions = {
       ...restrictions,
-      screenLock: precise.screenLockResource
+      screenLock: precise.classroomScope
+        ? { ...restrictions.screenLock, classroomScope: precise.classroomScope }
+        : precise.screenLockResource
         ? { ...restrictions.screenLock, resource: precise.screenLockResource }
         : restrictions.screenLock,
       flightPath: precise.flightPathResources
