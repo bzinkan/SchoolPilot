@@ -1384,7 +1384,17 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /const boundary = lockScreenMode === "url" && preciseRestrictionResourcesEnabled \? lockScreenBoundary : "website"/,
+  /const lockScreenEffectiveBoundary = preciseRestrictionResourcesEnabled \? lockScreenBoundary : 'website'/,
+  'withdrawing the precise feature must force the shared Focus boundary to website',
+);
+assert.match(
+  dashboardSource,
+  /const classroomFocusRequested = lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl\(lockScreenUrl\)/,
+  'Classroom review must use the effective boundary so precise-feature withdrawal cannot bypass it',
+);
+assert.match(
+  dashboardSource,
+  /const boundary = lockScreenMode === "url" \? lockScreenEffectiveBoundary : "website"/,
   'a current-page Waypoint is never a resource boundary',
 );
 assert.match(
