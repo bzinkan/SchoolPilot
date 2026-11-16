@@ -81,13 +81,15 @@ function rosterRow(studentId, report, { lateSignIn = false } = {}) {
     studentId, studentName: NAMES[studentId], studentEmail: `${firstName}@example.edu`,
     status: signedOut ? 'offline' : 'online', loginState: signedOut ? 'not_logged_in' : 'logged_in',
     isLoggedIn: !signedOut, commandable: !signedOut,
+    screenLocked: report.focused === true,
     monitoringState: 'healthy', activityState: signedOut ? 'off' : 'active',
     activeTabTitle: `${NAMES[studentId]} notes`, activeTabUrl: `https://classroom.example.edu/${firstName}`,
     allOpenTabs: signedOut ? [] : [{ tabRef: `tab-${firstName}`, url: `https://classroom.example.edu/${firstName}`, title: `${NAMES[studentId]} notes` }],
     tabSnapshotRevision: 1,
-    acceptedCapabilities: { screenOnlyUnlockV1: true },
+    acceptedCapabilities: report.unsupported ? {} : { screenOnlyUnlockV1: true },
     lastSeenAt: observedAt, realtimeObservedAt: signedOut ? null : observedAt,
     realtimeBinding: signedOut ? null : `binding-${firstName}`, realtimeRevision: signedOut ? null : report.revision,
+    ...(report.ownedElsewhere ? { supervisionContext: { type: 'class', id: 'another-class-session' } } : {}),
     ...(lateSignIn ? { lateSignInRestrictionSsoV1Enabled: true } : {}),
   };
 }
@@ -144,9 +146,11 @@ function scheduledActivity({ revision }) {
 // which a test changes in place) the Claimed view, shown automatically while
 // it has a group; with `scheduled` ({ revision }) a scheduled supervision
 // instead of a class.
-async function classPage(studentIds, { signedOut = [], lateSignIn = false, claimed = null, scheduled = null } = {}) {
+async function classPage(studentIds, { signedOut = [], focused = [], lateSignIn = false, claimed = null, scheduled = null } = {}) {
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
-  const reports = Object.fromEntries(studentIds.map((studentId) => [studentId, { at: Date.now(), revision: 1, signedOut: signedOut.includes(studentId) }]));
+  const reports = Object.fromEntries(studentIds.map((studentId) => [studentId, {
+    at: Date.now(), revision: 1, signedOut: signedOut.includes(studentId), focused: focused.includes(studentId),
+  }]));
   const commands = [];
   const claimedCommands = [];
   const releases = [];
@@ -244,10 +248,12 @@ async function classPage(studentIds, { signedOut = [], lateSignIn = false, claim
   }, queryKey);
   // Re-read the class with `fresh` students observed now and `stale` ones
   // observed past the signal window; `signIn` students have signed in.
-  const report = async ({ fresh = [], stale = [], signIn = [] }) => {
+  const report = async ({ fresh = [], stale = [], signIn = [], unsupported = [], ownedElsewhere = [] }) => {
     for (const studentId of signIn) reports[studentId] = { ...reports[studentId], signedOut: false };
     for (const studentId of [...fresh, ...signIn]) reports[studentId] = { ...reports[studentId], at: Date.now(), revision: reports[studentId].revision + 1 };
     for (const studentId of stale) reports[studentId] = { ...reports[studentId], at: Date.now() - STALE_MS, revision: reports[studentId].revision + 1 };
+    for (const studentId of unsupported) reports[studentId] = { ...reports[studentId], unsupported: true };
+    for (const studentId of ownedElsewhere) reports[studentId] = { ...reports[studentId], ownedElsewhere: true };
     await invalidate(['/api/students-aggregated']);
   };
   // A student signs out: the server says so over the socket, for the binding
@@ -790,6 +796,66 @@ test('Set Focus freezes its students and requires a new gesture when one current
     assert.deepEqual(commands[0].targetStudentIds, [ADA]);
     assert.equal(commands[0].commandType, 'lock-screen');
     assert.deepEqual(commands[0].commandPayload, { url: 'CURRENT_URL' });
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('Select All retains a capable focused student with stale monitoring for exact Stop Focus only', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, report, tick } = await classPage([ADA, BEN, CY], { focused: [ADA, BEN] });
+  try {
+    await report({ fresh: [ADA, CY], stale: [BEN] });
+    assert.equal(await page.getByTestId('button-select-all-students').innerText(), 'Select All (3)',
+      'Select All must include the same safe Focus cleanup target as the student tile');
+    await page.getByTestId('button-select-all-students').click();
+    for (const id of [ADA, BEN, CY]) await waitForTick(page, id, 'checked');
+    await report({ fresh: [ADA, CY], stale: [BEN] });
+    await waitForTick(page, BEN, 'checked');
+    assert.match(await page.getByTestId('badge-selection-count').innerText(), /\b3 selected students\b/,
+      'the Target badge counts the explicit selection, independently of another command\'s availability');
+    assert.equal(await page.getByTestId('selection-lost-notice').count(), 0);
+    assert.equal(await page.getByTestId('button-lock-screen').isDisabled(), true,
+      'stale cleanup selection cannot authorize a new Focus');
+    if (await page.getByTestId('button-open-tab').isEnabled()) await page.getByTestId('button-open-tab').click();
+    assert.equal(await page.getByTestId('dialog-open-tab').count(), 0,
+      'Open URL must refuse the stale member instead of silently sending only to fresh students');
+    assert.deepEqual(commands, []);
+    assert.equal(await page.getByTestId('button-unlock-screen').isEnabled(), true);
+    await page.getByTestId('button-unlock-screen').click();
+    const dialog = page.getByTestId('dialog-stop-focus'); await dialog.waitFor();
+    assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(),
+      ['Ada Student', 'Ben Student', 'Cy Student']);
+    await page.getByTestId('button-confirm-stop-focus').click();
+    await waitUntil(() => commands.length === 1, 'all explicitly reviewed cleanup recipients are sent');
+    assert.equal(commands[0].targetScope, 'students');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA, BEN, CY]);
+    assert.equal(commands[0].commandType, 'unlock-screen');
+    assert.deepEqual(commands[0].commandPayload, { screenOnly: true });
+    await page.getByTestId('button-clear-selection').click();
+    await tick(BEN);
+    assert.equal(await page.getByTestId('button-unlock-screen').isEnabled(), true,
+      'individual checkbox selection retains safe cleanup instead of sign-out-only mode');
+    assert.equal(await page.getByTestId('button-lock-screen').isDisabled(), true);
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('Focus cleanup selection excludes unsupported, signed-out and another class targets without empty broadcast', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, report } = await classPage([ADA, BEN, CY], {
+    focused: [ADA, BEN, CY], signedOut: [CY], lateSignIn: true,
+  });
+  try {
+    await report({ fresh: [ADA], stale: [BEN], unsupported: [BEN] });
+    assert.equal(await page.getByTestId('button-select-all-students').innerText(), 'Select All (1)');
+    await page.getByTestId('button-select-all-students').click();
+    await waitForTick(page, ADA, 'checked');
+    await waitForTick(page, BEN, 'unchecked');
+    await waitForTick(page, CY, 'unchecked');
+    await page.getByTestId('button-clear-selection').click();
+    await report({ ownedElsewhere: [ADA] });
+    assert.equal(await page.getByTestId('button-select-all-students').innerText(), 'Select All (0)');
+    assert.equal(await page.getByTestId('button-select-all-students').isDisabled(), true);
+    assert.equal(await page.getByTestId('button-unlock-screen').isDisabled(), true);
+    assert.deepEqual(commands, []);
     assert.deepEqual(pageErrors, []);
   } finally { await page.close(); }
 });

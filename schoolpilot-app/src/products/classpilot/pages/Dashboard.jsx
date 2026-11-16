@@ -3153,6 +3153,15 @@ export default function Dashboard() {
     && student?.isLoggedIn === true
     && student?.loginState !== 'not_logged_in'
   );
+  const isStudentSafetyUnlockSelectable = (student) => (
+    dashboardCapabilities.allows('unlock-screen')
+    && student?.isLoggedIn === true
+    && student?.loginState !== 'not_logged_in'
+    && isStudentCommandable(student, { allowSafetyUnlock: true })
+  );
+  const isStudentCommandSelectable = (student) => (
+    isStudentCommandable(student) || isStudentSafetyUnlockSelectable(student)
+  );
   const signOutSelectionBindingFor = (student) => studentSignOutSelectionBinding({
     schoolId: activeSchoolId,
     viewerId: currentUser?.id,
@@ -3166,7 +3175,7 @@ export default function Dashboard() {
   const toggleStudentSelection = (studentId) => {
     if (studentView === 'available' && !availableStudentsReady) return;
     const student = filteredStudents.find((row) => row.studentId === studentId);
-    if (studentView === "class" && !isStudentCommandable(student)) {
+    if (studentView === "class" && !isStudentCommandSelectable(student)) {
       if (isStudentLateSignInRestrictionEligible(student)) {
         const wasSelected = selectedStudentIds.has(studentId);
         setSelectionLoss(null);
@@ -3621,14 +3630,23 @@ export default function Dashboard() {
     () => new Set(JSON.parse(lateSignInRestrictionEligibleStudentIdsKey)),
     [lateSignInRestrictionEligibleStudentIdsKey],
   );
+  const safetyUnlockSelectableStudentIdsKey = JSON.stringify(
+    sessionFilteredStudents.filter(isStudentSafetyUnlockSelectable).map((student) => student.studentId).sort(),
+  );
+  const safetyUnlockSelectableStudentIds = useMemo(
+    () => new Set(JSON.parse(safetyUnlockSelectableStudentIdsKey)),
+    [safetyUnlockSelectableStudentIdsKey],
+  );
   // Ticks of students whose device stopped reporting are dropped. A signed-out
   // student ticked for restrictions that apply after sign-in never reports;
-  // the binding check below validates that tick instead.
+  // the binding check below validates that tick instead. Keep owned Focus
+  // cleanup targets selectable; each other command still requires fresh telemetry.
   useEffect(() => {
     if (studentView !== 'class') return;
     const keepTick = (studentId) => (
       monitoringDisplaysByStudent.get(studentId)?.telemetryCurrent
       || lateSignInRestrictionEligibleStudentIds.has(studentId)
+      || safetyUnlockSelectableStudentIds.has(studentId)
     );
     setSelectedStudentIds((current) => {
       let changed = false;
@@ -3650,7 +3668,7 @@ export default function Dashboard() {
         previousIds, keptIds, scopeKey: selectionScopeKey, reason: 'stopped-reporting',
       }));
     }
-  }, [lateSignInRestrictionEligibleStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);
+  }, [lateSignInRestrictionEligibleStudentIds, safetyUnlockSelectableStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);
   useEffect(() => {
     if (!(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) || studentView !== 'class') return;
     const selectedIds = new Set([
@@ -4815,19 +4833,21 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const lateSignInRestrictionStudents = studentView === 'class'
     ? filteredStudents.filter(isStudentLateSignInRestrictionEligible)
     : EMPTY_LIST;
+  const safetyUnlockSelectionStudents = filteredStudents.filter(isStudentSafetyUnlockSelectable);
   const subgroupCommandsDisabled = studentView === 'class'
     && Boolean(selectedSubgroupId)
     && !subgroupSelectionReady;
   const selectableStudents = dashboardCapabilities.canSelectStudents && !subgroupCommandsDisabled
     ? (studentView === "class"
-        ? uniqueStudentsById([...controllableStudents, ...lateSignInRestrictionStudents])
+        ? uniqueStudentsById([...controllableStudents, ...lateSignInRestrictionStudents, ...safetyUnlockSelectionStudents])
         : filteredStudents)
     : EMPTY_LIST;
-  // Select All is for actions that can run now. Signed-out students may still
-  // be ticked individually for an explicit saved restriction.
+  // Include safe Focus cleanup even while its browser signal recovers. Other
+  // commands still check freshness for every explicitly selected target.
+  // Signed-out students may be ticked individually for a saved restriction.
   const selectAllStudents = studentView === 'available'
     ? availableStudentsReady ? filteredStudents : EMPTY_LIST
-    : selectableStudents.filter(isStudentCommandable);
+    : selectableStudents.filter(isStudentCommandSelectable);
 
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
     .filter((student) => !isStudentMonitoringSuppressed(student));
@@ -5128,7 +5148,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         break;
     }
   }
-  const claimedTargetContextCount = new Set(targetStudents.map((student) => student.contextId).filter(Boolean)).size;
+  const selectedBannerStudents = recipientStudents().filter((student) => selectedStudentIds.has(student.studentId));
+  const claimedTargetContextCount = new Set((selectedStudentIds.size > 0 ? selectedBannerStudents : targetStudents)
+    .map((student) => student.contextId).filter(Boolean)).size;
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
     ? ` · ${filteredClaimedStudents.length} currently shown by search`
     : '';
@@ -5144,7 +5166,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
-    ? `${targetStudents.length} selected ${studentView === "class" ? selectedLateSignInRestrictionStudentIds.length > 0 ? "restriction-eligible " : "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedLateSignInRestrictionStudentIds.length > 0 ? ` · ${selectedLateSignInRestrictionStudentIds.length} signed out` : ''}${selectedServerSignOutStudentIds.size > 0 ? ` · ${signOutOnlySelectionLabel(selectedServerSignOutStudentIds.size)}` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
+    ? `${selectedStudentIds.size} selected ${studentView === "class" ? selectedLateSignInRestrictionStudentIds.length > 0 ? "restriction-eligible " : "" : "claimed "}student${selectedStudentIds.size === 1 ? "" : "s"}${selectedLateSignInRestrictionStudentIds.length > 0 ? ` · ${selectedLateSignInRestrictionStudentIds.length} signed out` : ''}${selectedServerSignOutStudentIds.size > 0 ? ` · ${signOutOnlySelectionLabel(selectedServerSignOutStudentIds.size)}` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
     : selectedServerSignOutStudentIds.size > 0
       ? signOutOnlySelectionLabel(selectedServerSignOutStudentIds.size)
     : selectedSubgroupId && studentView === "class"
@@ -7946,7 +7968,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   ? 'Clear the sign-out-only selection before using other ClassPilot controls.'
                   : dashboardCapabilities.reason;
               const signOutOnlySelectionAvailable = isStudentServerSignOutEligible(student)
-                && !isStudentCommandable(student);
+                && !isStudentCommandSelectable(student);
+              const safetyUnlockSelectionAvailable = isStudentSafetyUnlockSelectable(student);
               const persistentRestrictionSelectionAvailable = isStudentLateSignInRestrictionEligible(student);
               const tileStudent = supervisedElsewhere
                 ? {
@@ -8041,6 +8064,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     )}
                     onToggleSelect={!dashboardCapabilities.canSelectStudents || supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     signOutOnlySelectionAvailable={signOutOnlySelectionAvailable}
+                    safetyUnlockSelectionAvailable={safetyUnlockSelectionAvailable}
                     persistentRestrictionSelectionAvailable={persistentRestrictionSelectionAvailable}
                     liveStream={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
                     liveViewPending={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}

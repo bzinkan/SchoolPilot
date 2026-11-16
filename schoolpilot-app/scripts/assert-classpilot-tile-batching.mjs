@@ -1419,8 +1419,8 @@ assert.match(supervisionReviewSource, /\{ \.\.\.review\.request, reviewToken: re
   'the mutation must submit the server-reviewed request and token');
 assert.match(
   dashboardSource,
-  /uniqueStudentsById\(\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents\]\)/,
-  'Dashboard Select All must not double-count a signed-out student eligible through both lanes',
+  /uniqueStudentsById\(\[\.\.\.controllableStudents, \.\.\.lateSignInRestrictionStudents, \.\.\.safetyUnlockSelectionStudents\]\)/,
+  'Dashboard selection must deduplicate current, late-sign-in and safe Focus cleanup targets',
 );
 assert.match(
   dashboardSource,
