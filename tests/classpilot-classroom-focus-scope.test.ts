@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   applyClasspilotControlCommand,
@@ -34,6 +35,11 @@ function control(): ClasspilotStudentControlState {
 }
 const exactBinding = { schoolId: "scope-school", studentId: "scope-student", studentSessionId: "scope-session", deviceId: "scope-device" };
 const parents = ["scopedAuthorityChecksV1", "preciseRestrictionResourcesV1"];
+
+test("the shared Classroom scope fixture retains its reviewed byte identity", () => {
+  const bytes = readFileSync(new URL("./fixtures/classroom-focus-scope-cases.json", import.meta.url));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "4b04de889de92a89225d0e5b33bdf9d4f5b0ecce86c95cbe67d21b116bffa0f5");
+});
 
 test("full successor advertisements fit shared-device continuity and kiosk preflight without truncating Classroom support", () => {
   const capabilities = [...CLASSPILOT_PROTOCOL_V3_CAPABILITIES, "managedDeviceContinuityV1"];
