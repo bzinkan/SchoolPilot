@@ -306,6 +306,61 @@ function threadText(page, text) {
   return page.getByTestId('chat-thread').getByText(text, { exact: true });
 }
 
+test('message links open complete URLs in new tabs without changing chat text or classroom commands', { timeout: 90_000 }, async () => {
+  const { page, harness, mutations } = await messagesPage({ students: rosterClass() });
+  const url = 'https://classroom.google.com/c/123?a=one&b=two#details';
+  const incoming = `Open (${url}).\n<img src=x onerror="window.__messageLinkInjected=true"> javascript:alert(1) data:text/html,bad file:///tmp/test`;
+  const destinations = [];
+  await page.context().route('https://classroom.google.com/**', async route => {
+    destinations.push({ url: route.request().url(), referer: route.request().headers().referer });
+    await route.fulfill({ contentType: 'text/html', body: '<title>Assignment fixture</title><p>Assignment</p>' });
+  });
+  await page.context().route('https://www.example.edu/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Materials fixture</title>' }));
+  try {
+    await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage({ content: incoming })));
+    await selectConversation(page);
+    const bubble = page.getByTestId(`chat-bubble-${CHAT_MESSAGE_ID}`);
+    const link = bubble.getByRole('link', { name: url, exact: true });
+    await link.waitFor({ timeout: 8_000 });
+    assert.equal(await bubble.textContent(), incoming, 'Link rendering must preserve every visible message character');
+    assert.equal(await link.getAttribute('href'), url);
+    assert.equal(await link.getAttribute('target'), '_blank');
+    assert.match(await link.getAttribute('rel'), /\bnoopener\b/);
+    assert.match(await link.getAttribute('rel'), /\bnoreferrer\b/);
+    assert.equal(await bubble.locator('a').count(), 1);
+    assert.equal(await bubble.locator('img,script,iframe').count(), 0);
+    assert.equal(await page.evaluate(() => window.__messageLinkInjected), undefined);
+    assert.equal(destinations.length, 0, 'Rendering a message must not fetch or open its link');
+    const opened = page.waitForEvent('popup');
+    await link.click();
+    const assignment = await opened;
+    await assignment.waitForLoadState();
+    assert.equal(assignment.url(), url);
+    assert.equal(await assignment.evaluate(() => window.opener), null);
+    assert.equal(destinations[0].referer, undefined);
+    await assignment.close();
+
+    const outgoing = 'Your materials: www.example.edu/work?part=1&mode=read';
+    await page.getByTestId('chat-composer-input').fill(outgoing);
+    await page.getByTestId('chat-composer-send').click();
+    const replyLink = page.getByTestId(`chat-bubble-${CHAT_REPLY_ID}`).getByRole('link');
+    await replyLink.waitFor();
+    assert.equal(mutations.find(item => item.pathname === '/api/teacher/reply').body.message, outgoing);
+    assert.equal(await replyLink.getAttribute('href'), 'https://www.example.edu/work?part=1&mode=read');
+    await replyLink.focus();
+    const keyed = page.waitForEvent('popup');
+    await page.keyboard.press('Enter');
+    const materials = await keyed;
+    await materials.waitForLoadState();
+    assert.equal(materials.url(), 'https://www.example.edu/work?part=1&mode=read');
+    assert.equal(await materials.evaluate(() => window.opener), null);
+    await materials.close();
+    assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), STUDENT_ID);
+    assert.deepEqual(harness.commandPosts, [], 'A chat link must never issue an open-tab, focus or permission command');
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); }
+});
+
 test('private chat shows connection readiness and recovers only the exact current student after polling', async () => {
   const lifecycle = { threadId: 'private-thread-a', schoolEpoch: 1, activityEpoch: 1, threadGeneration: 1 };
   const state = (readiness, supported = false, extra = []) => ({ privateChatLifecycleRequired: true,

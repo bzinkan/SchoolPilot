@@ -5,6 +5,7 @@ import { cn } from '../../../lib/utils';
 import { formatChatTimestamp } from '../lib/chatTimestamp';
 import { deliveryLabel, looksLikeQuestion } from '../lib/chatThreads';
 import LastSeenTime from './LastSeenTime';
+import MessageText from './MessageText';
 
 // Delivery states whose bubble no longer reads "Waits until … signs in".
 const WAIT_SETTLED_STATUSES = new Set(['seen', 'delivered', 'failed']);
@@ -24,7 +25,7 @@ export function ChatMessageBubble({ item, waitingFor = null }) {
             question && 'border-l-2 border-amber-400'
           )}
         >
-          {item.message}
+          <MessageText text={item.message} />
         </div>
         <div
           data-testid="chat-message-time"
