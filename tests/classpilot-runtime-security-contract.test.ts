@@ -81,7 +81,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
       heartbeat,
       /classpilotControlAuthorityRevisionForDelivery\(\{[\s\S]*?state: finalControlState,[\s\S]*?delivery: serialized,[\s\S]*?deliveredFab: finalFab[\s\S]*?ownershipRevision: controlAuthorityRevision/
     );
-    assert.match(heartbeat, /\.\.\.\(prepared\.deliveredFab \? \{ fab: prepared\.deliveredFab \} : \{\}\)/);
+    assert.match(heartbeat, /\.\.\.\(prepared\.deliveredFab \? \{ fab: classroomApprovalCurrent \? prepared\.deliveredFab : \{ \.\.\.prepared\.deliveredFab, ownershipRevision: 0 \} \} : \{\}\)/);
     assert.equal(heartbeat.match(/buildStudentFabState\(/g)?.length, 1);
     // A device flagged because the class-start push found no socket gets the
     // FAB state on its next regular heartbeat through the same single call.

@@ -1,7 +1,13 @@
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState,
+  studentClassroomAccessPublicationApprovedFromCache } from "../../src/services/classpilotStudentClassroomAccess.js";
+
 /** Adapt existing executable route-slice fixtures to the canonical operation API. */
 export function withDeviceTelemetryContext<T extends Record<string, any>>(globals: T): T {
   const req = globals.req ?? {}, res = globals.res;
   return Object.assign(globals, {
+    studentClassroomAccessApprovalForState: globals.studentClassroomAccessApprovalForState ?? studentClassroomAccessApprovalForState,
+    studentClassroomAccessApprovalKeyForState: globals.studentClassroomAccessApprovalKeyForState ?? studentClassroomAccessApprovalKeyForState,
+    studentClassroomAccessPublicationApprovedFromCache: globals.studentClassroomAccessPublicationApprovedFromCache ?? studentClassroomAccessPublicationApprovedFromCache,
     telemetryIdentity: undefined,
     context: {
       payload: req.body ?? {},

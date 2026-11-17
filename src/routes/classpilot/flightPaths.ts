@@ -7,6 +7,7 @@ import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { isSharedTeachingResourcesEnabled } from "../../config/sharedTeachingResources.js";
 import { logAudit } from "../../services/audit.js";
+import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.js";
 import { restrictionResourceResolutionLimiter } from "../../middleware/rateLimiter.js";
 import {
   classroomImportLinkUrls,
@@ -413,11 +414,13 @@ router.get("/", ...auth, async (req, res, next) => {
     // features.preciseRestrictionResources is present only while the
     // capability is active for this school, with or without the School Library.
     const preciseFeature = precise ? { preciseRestrictionResources: true as const } : {};
+    const classroomAccess = isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId });
+    const classroomFeature = classroomAccess ? { studentClassroomAccess: true as const } : {};
     const teacherPaths = await getFlightPathsByTeacherAndSchool(req.authUser!.id, schoolId);
     if (!schoolLibraryEnabled(res)) {
       return res.json({
         flightPaths: teacherPaths.map((row) => withFlightPathResourcesVisibility(withoutTeachingResourcePublication(row), precise)),
-        ...(precise ? { features: preciseFeature } : {}),
+        ...(precise || classroomAccess ? { features: { ...preciseFeature, ...classroomFeature } } : {}),
       });
     }
     const actor = resourceActor(req, res);
@@ -428,7 +431,7 @@ router.get("/", ...auth, async (req, res, next) => {
         libraryFlightPathView(flightPath, ownerName, actor),
         precise
       )),
-      features: { sharedTeachingResources: true, ...preciseFeature },
+      features: { sharedTeachingResources: true, ...preciseFeature, ...classroomFeature },
     });
   } catch (err) {
     next(err);

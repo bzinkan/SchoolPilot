@@ -44,7 +44,7 @@ import {
   upsertSettings,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
-import { GOOGLE_ROSTER_SCOPES } from "../../services/googleRosterConnector.js";
+import { classifyGoogleRosterScopeReadiness, isStudentClassroomAccessApprovedForSchool } from "../../services/googleClassroomAccess.js";
 import {
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
   readClasspilotRealtimeStatusBatch,
@@ -380,9 +380,8 @@ async function buildReadinessPayload(req: any, res: any) {
   ]);
 
   const now = Date.now();
-  const approvedScopes = new Set((rosterConnector?.approvedScopes || []).filter(Boolean));
-  const missingRosterScopes = GOOGLE_ROSTER_SCOPES.filter((scope) => !approvedScopes.has(scope));
-  const extraRosterScopes = [...approvedScopes].filter((scope) => !GOOGLE_ROSTER_SCOPES.includes(scope as any));
+  const studentClassroomAccessApproved = await isStudentClassroomAccessApprovedForSchool(schoolId);
+  const { missingRosterScopes, extraRosterScopes } = classifyGoogleRosterScopeReadiness(rosterConnector?.approvedScopes || [], studentClassroomAccessApproved);
   const schoolDomain = normalizeDomain(school?.domain);
   const connectorDomain = normalizeDomain(rosterConnector?.domain);
   const delegatedAdminDomain = getEmailDomain(rosterConnector?.delegatedAdminEmail || null);
@@ -443,7 +442,7 @@ async function buildReadinessPayload(req: any, res: any) {
     issue(schoolDomain ? "pass" : "fail", "Google", "School Workspace domain", schoolDomain ? `School domain is ${schoolDomain}.` : "Set the school Google Workspace domain before imports.", "/super-admin"),
     issue(connectorVerified ? "pass" : "fail", "Google", "Roster Connector verified", connectorVerified ? `Connector verified as ${rosterConnector?.delegatedAdminEmail || "delegated admin"}.` : `Connector status is ${rosterConnector?.status || "not connected"}.`, "/classpilot/it-readiness"),
     issue(googleDomainVerified ? "pass" : "fail", "Google", "Delegated admin domain", !rosterConnector ? "Connect the Google Workspace Roster Connector." : googleDomainVerified ? `Connector domain ${connectorDomain} matches this school.` : `Connector domain ${connectorDomain || "unknown"} or delegated admin domain ${delegatedAdminDomain || "unknown"} does not match ${schoolDomain || "the school domain"}.`, "/classpilot/it-readiness"),
-    issue(missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "pass" : "fail", "Google", "Roster Connector scopes", missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "Only the approved read-only roster scopes are configured." : `Missing: ${missingRosterScopes.join(", ") || "none"}; Extra: ${extraRosterScopes.join(", ") || "none"}.`, "/classpilot/it-readiness"),
+    issue(missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "pass" : "fail", "Google", "Roster Connector scopes", missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? studentClassroomAccessApproved ? "Approved read-only roster and student Classroom scopes are configured." : "Only the approved read-only roster scopes are configured." : `Missing: ${missingRosterScopes.join(", ") || "none"}; Extra: ${extraRosterScopes.join(", ") || "none"}.`, "/classpilot/it-readiness"),
     issue(staffDomainMismatches.length === 0 ? "pass" : "fail", "Staff", "Staff email domain match", staffDomainMismatches.length === 0 ? "All staff emails match the school Workspace domain." : `${staffDomainMismatches.length} staff account(s) use the wrong or unverifiable domain.`, "/admin/users"),
     issue(classOwnershipIntegrity.total === 0 ? "pass" : "fail", "Staff", "Class ownership integrity", classOwnershipIntegrity.total === 0 ? "Every live staff-owned record and active workflow has an eligible school member." : `${classOwnershipIntegrity.total} live staff ownership issue(s) require review.`, "/classpilot/admin"),
     issue(courses.length > 0 ? "pass" : "warn", "Roster", "Classroom sync history", courses.length > 0 ? `${courses.length} Classroom course(s) synced.` : "No Classroom courses have been synced yet.", "/classpilot/admin/classes"),

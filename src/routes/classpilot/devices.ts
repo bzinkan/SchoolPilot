@@ -1,3 +1,5 @@
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState,
+  studentClassroomAccessPublicationApprovedFromCache } from "../../services/classpilotStudentClassroomAccess.js";
 import { DeviceTelemetryDelivery, heartbeatTelemetryIdentity, validTelemetryOperationId,
   DEVICE_TELEMETRY_IP_WINDOW_MS, DEVICE_TELEMETRY_IP_MAX_OPERATIONS, deviceTelemetryIpRateExceeded,
   registerClasspilotDeviceTelemetryOperations, type DeviceTelemetryContext, type DeviceTelemetryOutcome,
@@ -1650,6 +1652,7 @@ async function completeStudentDeviceLogin<
       const loginDelivery = controlState
         ? serializeClasspilotStudentControlStateForDelivery({
             state: controlState,
+            studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(controlState),
             gateActive: isClasspilotCapabilityActive(
               "lateSignInRestrictionSsoV1",
               { schoolId: options.schoolId }
@@ -1711,6 +1714,7 @@ async function completeStudentDeviceLogin<
         classroomState,
         withheld: loginDelivery.withheld,
         withheldReason: loginDelivery.withheldReason,
+        studentClassroomApprovalKey: classroomState && controlState ? studentClassroomAccessApprovalKeyForState(controlState) : null,
       };
     },
     (prepared) => {
@@ -1722,8 +1726,16 @@ async function completeStudentDeviceLogin<
       const {
         withheld: _withheld,
         withheldReason: _withheldReason,
+        studentClassroomApprovalKey,
         ...login
       } = prepared;
+      if (studentClassroomApprovalKey && !studentClassroomAccessPublicationApprovedFromCache(options.schoolId, studentClassroomApprovalKey)) {
+        // Content permission loss withholds only this snapshot. The authenticated
+        // login remains successful, including on shared Chromebooks.
+        login.classroomState = null;
+        login.exactBinding = classpilotControlStateExactBinding({ schoolId: options.schoolId, deviceId: effectiveDeviceId,
+          studentId: student.id, studentSessionId: session.id, controlRevision: 0 });
+      }
       return sendResponse(login);
     }
   );
@@ -4271,6 +4283,7 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
     const heartbeatDelivery = controlState
       ? serializeClasspilotStudentControlStateForDelivery({
           state: controlState,
+          studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(controlState),
           gateActive: isClasspilotCapabilityActive(
             "lateSignInRestrictionSsoV1",
             { schoolId }
@@ -4923,6 +4936,7 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
           const serialized = finalControlState
             ? serializeClasspilotStudentControlStateForDelivery({
                 state: finalControlState,
+                studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(finalControlState),
                 gateActive: isClasspilotCapabilityActive(
                   "lateSignInRestrictionSsoV1",
                   { schoolId }
@@ -4982,9 +4996,12 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
               : undefined,
             withheld: serialized.withheld,
             withheldReason: serialized.withheldReason,
+            studentClassroomApprovalKey: finalClassroomState && finalControlState ? studentClassroomAccessApprovalKeyForState(finalControlState) : null,
           };
         },
         (_claimed, prepared, inbox) => {
+          const classroomApprovalCurrent = !prepared.studentClassroomApprovalKey
+            || studentClassroomAccessPublicationApprovedFromCache(schoolId, prepared.studentClassroomApprovalKey);
           if (inbox?.checked) stagePendingInbox(inbox);
           if (fabSyncPending && prepared.deliveredFab) {
             recordRuntimePerformanceCounter("fabSyncPendingServed");
@@ -5006,14 +5023,14 @@ export async function executeCanonicalHeartbeat(context: DeviceTelemetryContext)
               deviceId,
               studentId,
               studentSessionId,
-              controlRevision: prepared.controlAuthorityRevision || prepared.focusCleanup?.exactBinding.controlRevision || 0,
+              controlRevision: (classroomApprovalCurrent ? prepared.controlAuthorityRevision : 0) || prepared.focusCleanup?.exactBinding.controlRevision || 0,
             }),
             planStatus: school.planStatus || "active",
-            classroomState: prepared.classroomState,
+            classroomState: classroomApprovalCurrent ? prepared.classroomState : null,
             ...(prepared.focusCleanup ? { focusCleanup: prepared.focusCleanup } : {}),
             ...protocol,
-            screenshotPolicy: prepared.screenshotPolicy,
-            ...(prepared.deliveredFab ? { fab: prepared.deliveredFab } : {}),
+            screenshotPolicy: classroomApprovalCurrent ? prepared.screenshotPolicy : undefined,
+            ...(prepared.deliveredFab ? { fab: classroomApprovalCurrent ? prepared.deliveredFab : { ...prepared.deliveredFab, ownershipRevision: 0 } } : {}),
             ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
           });
         },

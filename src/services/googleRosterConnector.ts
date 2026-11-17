@@ -8,13 +8,10 @@ import {
   updateGoogleRosterConnector,
 } from "./storage.js";
 
-export const GOOGLE_ROSTER_SCOPES = [
-  "https://www.googleapis.com/auth/admin.directory.user.readonly",
-  "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-  "https://www.googleapis.com/auth/classroom.courses.readonly",
-  "https://www.googleapis.com/auth/classroom.rosters.readonly",
-  "https://www.googleapis.com/auth/classroom.profile.emails",
-] as const;
+import { GOOGLE_ROSTER_SCOPES } from "./googleRosterScopes.js";
+export { GOOGLE_ROSTER_SCOPES } from "./googleRosterScopes.js";
+
+export type GoogleDwdRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -96,7 +93,7 @@ function buildDwdClaims(serviceAccountEmail: string, delegatedAdminEmail: string
   };
 }
 
-async function exchangeJwtForAccessToken(assertion: string) {
+async function exchangeJwtForAccessToken(assertion: string, options?: GoogleDwdRequestOptions) {
   const body = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
     assertion,
@@ -108,6 +105,7 @@ async function exchangeJwtForAccessToken(assertion: string) {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body,
+    ...(options ? { signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? 8000)]) : AbortSignal.timeout(options.timeoutMs ?? 8000) } : {}),
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
@@ -132,7 +130,7 @@ async function exchangeJwtForAccessToken(assertion: string) {
   };
 }
 
-async function getKeylessDwdAuthClient(delegatedAdminEmail: string, scopes: readonly string[]) {
+async function getKeylessDwdAuthClient(delegatedAdminEmail: string, scopes: readonly string[], options?: GoogleDwdRequestOptions) {
   const info = assertRosterServiceAccountConfigured();
   if (!info.email) {
     throw routeError(
@@ -144,13 +142,14 @@ async function getKeylessDwdAuthClient(delegatedAdminEmail: string, scopes: read
 
   const auth = new google.auth.GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    ...(options ? { clientOptions: { transporterOptions: { timeout: options.timeoutMs ?? 8000, signal: options.signal } } } : {}),
   });
   const iam = google.iamcredentials({ version: "v1", auth });
   const payload = JSON.stringify(buildDwdClaims(info.email, delegatedAdminEmail, scopes));
   const response = await iam.projects.serviceAccounts.signJwt({
     name: `projects/-/serviceAccounts/${info.email}`,
     requestBody: { payload },
-  });
+  }, options ? { timeout: options.timeoutMs ?? 8000, signal: options.signal } : undefined);
   const signedJwt = response.data.signedJwt;
   if (!signedJwt) {
     throw routeError(
@@ -160,8 +159,8 @@ async function getKeylessDwdAuthClient(delegatedAdminEmail: string, scopes: read
     );
   }
 
-  const token = await exchangeJwtForAccessToken(signedJwt);
-  const oauth2Client = new google.auth.OAuth2();
+  const token = await exchangeJwtForAccessToken(signedJwt, options);
+  const oauth2Client = new google.auth.OAuth2(options ? { transporterOptions: { timeout: options.timeoutMs ?? 8000, signal: options.signal } } : undefined);
   oauth2Client.setCredentials({
     access_token: token.accessToken,
     expiry_date: token.expiryDate,
@@ -170,7 +169,7 @@ async function getKeylessDwdAuthClient(delegatedAdminEmail: string, scopes: read
   return oauth2Client;
 }
 
-export async function getRosterDwdAuthClient(delegatedAdminEmail: string, scopes: readonly string[] = GOOGLE_ROSTER_SCOPES) {
+export async function getRosterDwdAuthClient(delegatedAdminEmail: string, scopes: readonly string[] = GOOGLE_ROSTER_SCOPES, options?: GoogleDwdRequestOptions) {
   const key = loadRosterServiceAccountKey();
   if (key) {
     return new google.auth.JWT({
@@ -178,9 +177,10 @@ export async function getRosterDwdAuthClient(delegatedAdminEmail: string, scopes
       key: key.private_key,
       scopes: [...scopes],
       subject: delegatedAdminEmail,
+      ...(options ? { transporterOptions: { timeout: options.timeoutMs ?? 8000, signal: options.signal } } : {}),
     });
   }
-  return getKeylessDwdAuthClient(delegatedAdminEmail, scopes);
+  return getKeylessDwdAuthClient(delegatedAdminEmail, scopes, options);
 }
 
 export async function getVerifiedRosterConnectorForSchool(schoolId: string) {

@@ -115,7 +115,14 @@ export function validateClasspilotCommandPayload(
           url: z.unknown(),
           boundary: z.enum(["website", "resource"]).optional(),
           classroomFocus: strictObject({ courseId: id, reviewToken: z.string().min(1).max(8_192) }).optional(),
+          classroomAccess: strictObject({ reviewToken: z.string().min(1).max(8_192) }).optional(),
         }).parse(raw);
+        if (value.classroomAccess) {
+          const url = value.url === "CURRENT_URL" ? "CURRENT_URL" : persistentWaypointUrl(value.url);
+          if (value.classroomFocus || value.boundary === "resource" || !isClassroomFocusWebsiteUrl(url))
+            throw new z.ZodError([{ code: "custom", path: ["classroomAccess"], message: "Student Classroom access requires an explicit Classroom website destination" }]);
+          return { url, classroomAccess: value.classroomAccess };
+        }
         if (value.classroomFocus) {
           const url = value.url === "CURRENT_URL" ? "CURRENT_URL" : persistentWaypointUrl(value.url);
           if (value.boundary === "resource" || !isClassroomFocusWebsiteUrl(url)) {
@@ -174,7 +181,10 @@ export function validateClasspilotCommandPayload(
         return strictObject({}).parse(raw);
       case "apply-flight-path":
         return strictObject({ flightPathId: id, expectedFlightPathUpdatedAt: z.string().datetime({ offset: true })
-          .refine(value => Number.isFinite(Date.parse(value)), "Expected a valid ISO instant").optional() }).parse(raw);
+          .refine(value => Number.isFinite(Date.parse(value)), "Expected a valid ISO instant").optional(),
+          classroomAccess: strictObject({ reviewToken: z.string().min(1).max(8_192) }).optional() })
+          .superRefine((value, ctx) => { if (value.classroomAccess && !value.expectedFlightPathUpdatedAt)
+            ctx.addIssue({ code: "custom", path: ["expectedFlightPathUpdatedAt"], message: "Review the saved Flight Path version" }); }).parse(raw);
       case "apply-block-list":
         return strictObject({ blockListId: id }).parse(raw);
       case "attention-mode":

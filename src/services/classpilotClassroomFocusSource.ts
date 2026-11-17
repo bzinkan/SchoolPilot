@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { CLASSROOM_FOCUS_BASE_DOMAINS, normalizeClassroomFocusScope, type ClassroomFocusScope } from "./classroomFocusScope.js";
+import { CLASSROOM_FOCUS_BASE_DOMAINS, isGoogleSearchHostname, normalizeClassroomFocusScope, type ClassroomFocusScope } from "./classroomFocusScope.js";
 import { canonicalRestrictionHostname, normalizeAllowedResource, restrictionResourceIdentityKey, type PreciseAllowedResource } from "./restrictionResources.js";
 
 export type ClassroomFocusAuthority = { teachingSessionId?: string; supervisionContextId?: string; contextAuthorityRevision?: string };
 export type ClassroomFocusSourceRequest = { schoolId: string; actorId: string; authority: ClassroomFocusAuthority; courseId?: string };
-export type ClassroomFocusSource = { course: { id: string; name: string }; itemCount: number; linkCount: number; scope: ClassroomFocusScope };
+export type ClassroomFocusSource = { course: { id: string; name: string }; itemCount: number; linkCount: number; scope: ClassroomFocusScope; blockedSearchLinkCount?: number };
 export type ClassroomFocusSourceClient = {
   course: (courseId: string) => Promise<{ data: unknown }>;
   courses: (params: Record<string, unknown>) => Promise<{ data: unknown }>;
@@ -31,7 +31,7 @@ function sourceUrl(value: unknown): string {
 }
 
 /** Only teacher-published post content is read. No student submissions or destination pages are fetched. */
-export function buildClassroomFocusSource(course: { id: string; name: string }, items: readonly unknown[]): ClassroomFocusSource {
+export function buildClassroomFocusSource(course: { id: string; name: string }, items: readonly unknown[], options: { excludeGoogleSearch?: boolean } = {}): ClassroomFocusSource {
   if (!course.id || !course.name || items.length > MAX_ITEMS || Buffer.byteLength(JSON.stringify(items)) > MAX_SOURCE_BYTES)
     throw classroomFocusSourceError("This course source is too large to review completely.");
   const urls = new Set<string>();
@@ -75,9 +75,14 @@ export function buildClassroomFocusSource(course: { id: string; name: string }, 
   }
   const hosts = new Set<string>(CLASSROOM_FOCUS_BASE_DOMAINS);
   const resources = new Map<string, PreciseAllowedResource>();
+  let blockedSearchLinkCount = 0;
   for (const value of [...urls].sort()) {
     const url = new URL(value);
     const host = canonicalRestrictionHostname(url.hostname)!;
+    if (options.excludeGoogleSearch === true && isGoogleSearchHostname(host)) {
+      blockedSearchLinkCount++;
+      continue;
+    }
     if (["youtube.com", "m.youtube.com", "youtube-nocookie.com", "youtu.be"].includes(host)) {
       const entry = normalizeAllowedResource({ url: value });
       if (entry.type !== "resource" || entry.provider !== "youtube") throw classroomFocusSourceError("A YouTube link must identify one assigned video.");
@@ -86,8 +91,9 @@ export function buildClassroomFocusSource(course: { id: string; name: string }, 
   }
   const allowedDomains = [...hosts].sort();
   const preciseResources = [...resources.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value);
-  const sourceRevision = createHash("sha256").update(JSON.stringify({ courseId: course.id, itemIds: [...identities].sort(), urls: [...urls].sort(), allowedDomains, resources: preciseResources })).digest("hex");
-  return { course, itemCount: identities.size, linkCount: urls.size,
+  const sourceRevision = createHash("sha256").update(JSON.stringify({ courseId: course.id, itemIds: [...identities].sort(), urls: [...urls].sort(), allowedDomains, resources: preciseResources,
+    ...(options.excludeGoogleSearch === true ? { blockedSearchLinkCount } : {}) })).digest("hex");
+  return { course, itemCount: identities.size, linkCount: urls.size, ...(blockedSearchLinkCount ? { blockedSearchLinkCount } : {}),
     scope: normalizeClassroomFocusScope({ schemaVersion: 1, sourceRevision, allowedDomains, resources: preciseResources }) };
 }
 

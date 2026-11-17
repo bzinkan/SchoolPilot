@@ -11,8 +11,11 @@ import { teachingToolsShouldBlock } from '../lib/teachingTools';
 import { teachingResourceBadge } from '../lib/teachingResourceLibrary';
 import { restrictionResourceLabel, restrictionResourceUrl } from '../lib/restrictionResourceMatcher';
 import { automaticFlightPathChoices, automaticFlightPathPolicyKey, automaticFlightPathReason } from '../lib/automaticFlightPath';
+import { flightPathIncludesClassroom } from '../lib/classroomFocus';
+import { useStudentClassroomAccessPreview } from '../hooks/useStudentClassroomAccessPreview';
+import StudentClassroomAccessReview from './StudentClassroomAccessReview';
 
-export default function AutomaticFlightPathSetup({ groupId, schoolId, viewerId, primaryTeacherId, sharedPathsEnabled, flightPaths, flightPathsError, active }) {
+export default function AutomaticFlightPathSetup({ groupId, schoolId, viewerId, primaryTeacherId, sharedPathsEnabled, flightPaths, flightPathsError, classroomAccessEnabled = false, active }) {
   const queryKey = automaticFlightPathPolicyKey(groupId, schoolId, viewerId);
   const choices = automaticFlightPathChoices(flightPaths, { viewerId, primaryTeacherId, sharedPathsEnabled });
   const query = useQuery({ queryKey,
@@ -22,14 +25,14 @@ export default function AutomaticFlightPathSetup({ groupId, schoolId, viewerId, 
     <CardHeader><CardTitle className="flex items-center gap-2"><Layers className="h-5 w-5 text-blue-500" />Automatic Flight Path</CardTitle>
       <CardDescription>Limit students to a saved set of allowed websites and resources during this scheduled class. Off by default.</CardDescription></CardHeader>
     <CardContent>{!groupId ? <p className="text-sm text-muted-foreground">Choose a class above to set its automatic Flight Path.</p>
-      : query.data?.policy ? <><PresetEditor key={`${schoolId}:${viewerId}:${groupId}:${query.data.canManage}`} incoming={query.data} queryKey={queryKey} groupId={groupId} schoolId={schoolId} flightPaths={choices} flightPathsError={flightPathsError} readError={query.isError} anotherTeacherClass={viewerId !== primaryTeacherId} />
+      : query.data?.policy ? <><PresetEditor key={`${schoolId}:${viewerId}:${groupId}:${query.data.canManage}`} incoming={query.data} queryKey={queryKey} groupId={groupId} schoolId={schoolId} viewerId={viewerId} flightPaths={choices} flightPathsError={flightPathsError} classroomAccessEnabled={classroomAccessEnabled} readError={query.isError} anotherTeacherClass={viewerId !== primaryTeacherId} />
           {query.isError ? <p role="alert" className="mt-3 text-sm">The saved preset could not be refreshed. Your draft is kept. <Button variant="link" onClick={() => query.refetch()}>Retry</Button></p> : null}</>
         : query.isError ? <p role="alert" className="text-sm">The class preset could not be loaded. <Button variant="link" onClick={() => query.refetch()}>Retry</Button></p>
           : <p role="status" className="text-sm text-muted-foreground">Loading class preset…</p>}</CardContent>
   </Card>;
 }
 
-function PresetEditor({ incoming, queryKey, groupId, schoolId, flightPaths, flightPathsError, readError, anotherTeacherClass }) {
+function PresetEditor({ incoming, queryKey, groupId, schoolId, viewerId, flightPaths, flightPathsError, classroomAccessEnabled, readError, anotherTeacherClass }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState(null), [notice, setNotice] = useState(''), [conflict, setConflict] = useState(false);
   const lifetime = useRef({ alive: true, controller: new AbortController() });
@@ -39,12 +42,22 @@ function PresetEditor({ incoming, queryKey, groupId, schoolId, flightPaths, flig
   const flightPathId = draft ? draft.flightPathId : incoming.policy.flightPathId || '';
   const selected = flightPaths.find(path => path.id === flightPathId);
   const savedName = incoming.flightPath?.flightPathName || 'Saved Flight Path unavailable';
-  const dirty = Boolean(enabled) !== Boolean(baseline.enabled) || (enabled && flightPathId !== baseline.flightPathId);
+  const changed = Boolean(enabled) !== Boolean(baseline.enabled) || (enabled && flightPathId !== baseline.flightPathId);
+  const classroomRequested = classroomAccessEnabled === true && Boolean(enabled && flightPathIncludesClassroom(selected));
+  const classroomReviewRequired = classroomRequested && (changed || baseline.classroomAccess?.approved !== true);
+  const dirty = changed || classroomReviewRequired;
   const canManage = incoming.canManage === true;
-  const valid = !enabled || Boolean(incoming.eligible && selected && !flightPathsError);
+  const classroomReview = useStudentClassroomAccessPreview({ schoolId, viewerId, mode: 'automatic-flight-path', groupId,
+    flightPathId: selected?.id, expectedFlightPathUpdatedAt: selected?.updatedAt, expectedRevision: baseline.revision,
+    scopeKey: [incoming.canManage, incoming.eligible],
+    enabled: canManage && incoming.eligible === true && classroomReviewRequired && !flightPathsError && !readError,
+  });
+  const valid = (!enabled || Boolean(incoming.eligible && selected && !flightPathsError))
+    && (!classroomReviewRequired || Boolean(classroomReview.preview && !classroomReview.pending));
   const update = values => { setDraft({ baseline, enabled, flightPathId, ...values }); setNotice(''); setConflict(false); };
   const save = useMutation({ mutationFn: () => apiRequest('PATCH', `/groups/${encodeURIComponent(groupId)}/automatic-flight-path`, {
     expectedRevision: baseline.revision, enabled: Boolean(enabled), flightPathId: enabled ? flightPathId : null,
+    ...(classroomReviewRequired ? { expectedFlightPathUpdatedAt: selected.updatedAt, classroomAccess: { reviewToken: classroomReview.preview.reviewToken } } : {}),
   }, { signal: lifetime.current.controller.signal, headers: { 'X-School-Id': schoolId } }),
   onSuccess: response => { if (!lifetime.current.alive) return; client.setQueryData(queryKey, response); setDraft(null); setConflict(false); setNotice('Class preset saved. It takes effect at the next scheduled session.'); },
   onError: error => { if (!lifetime.current.alive) return; setConflict(error?.response?.status === 409); setNotice(error?.response?.status === 409
@@ -75,6 +88,8 @@ function PresetEditor({ incoming, queryKey, groupId, schoolId, flightPaths, flig
                 <ul className="space-y-1 break-all">{(selected.allowedDomains || []).map(domain => <li key={domain}>{domain} — entire website and subdomains</li>)}
                   {(selected.resources || []).map((resource, index) => <li key={`${restrictionResourceUrl(resource)}:${index}`}>{restrictionResourceLabel(resource)} — {restrictionResourceUrl(resource)}</li>)}</ul>
               </section> : null}
+              {classroomReviewRequired && <StudentClassroomAccessReview review={classroomReview} automatic disabled={save.isPending} />}
+              {classroomRequested && !classroomReviewRequired && <p className="text-sm text-muted-foreground">This class preset includes current and future published work across each student's own Google Classroom courses. Google Search stays blocked.</p>}
             </div> : null}
           </fieldset>
           <p className="text-sm text-muted-foreground">One preset is shared by all teachers of this class. Saving changes only the next session. The current session keeps its existing controls.</p>

@@ -1,4 +1,6 @@
 import { privateChatMessageLifecycle } from "../services/classpilotPrivateChatLifecycle.js";
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState,
+  studentClassroomAccessPublicationApproved, studentClassroomAccessPublicationApprovedFromCache } from "../services/classpilotStudentClassroomAccess.js";
 import { DEVICE_TELEMETRY_CAPABILITY, DeviceTelemetryDelivery, createDeviceTelemetryDispatcher,
   createDeviceTelemetryLanes, deviceTelemetrySourceIp, executeRegisteredDeviceTelemetry,
   validTelemetryOperationId, type DeviceTelemetryOutcome,
@@ -246,6 +248,7 @@ async function deliverClasspilotStudentBindingRedisMessageSerial(
   message: unknown,
 ): Promise<boolean> {
   try {
+    if (!await studentClassroomAccessPublicationApproved(target.schoolId, target.requiredStudentClassroomApprovalKey)) return false;
     return await runWithTenantContext({ schoolId: target.schoolId }, async () => {
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         target,
@@ -254,6 +257,7 @@ async function deliverClasspilotStudentBindingRedisMessageSerial(
           && sendToStudentBindingLocal(target, message, {
           requiredCapability: target.requiredCapability,
           requiredCapabilities: target.requiredCapabilities,
+          requiredStudentClassroomApprovalKey: target.requiredStudentClassroomApprovalKey,
         })
       );
       return delivery.authorized && delivery.value;
@@ -1310,6 +1314,7 @@ export function setupWebSocket(
                       const authDelivery = classroomStateRow
                         ? serializeClasspilotStudentControlStateForDelivery({
                             state: classroomStateRow,
+                            studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(classroomStateRow),
                             gateActive: isClasspilotCapabilityActive(
                               "lateSignInRestrictionSsoV1",
                               { schoolId }
@@ -1408,10 +1413,19 @@ export function setupWebSocket(
                         screenshotPolicy,
                         deliveryWithheld: authDelivery.withheld,
                         transientReplay,
+                        studentClassroomApprovalKey: classroomState && classroomStateRow ? studentClassroomAccessApprovalKeyForState(classroomStateRow) : null,
                       };
                     },
                     (teacherReplies, prepared) => {
                       authStage = "socket_delivery";
+                      const classroomApprovalCurrent = !prepared.studentClassroomApprovalKey
+                        || studentClassroomAccessPublicationApprovedFromCache(schoolId, prepared.studentClassroomApprovalKey);
+                      if (!classroomApprovalCurrent) {
+                        prepared.classroomState = null;
+                        prepared.controlAuthorityRevision = 0;
+                        prepared.deliveryWithheld = true;
+                        prepared.transientReplay = [];
+                      }
                       if (ws.readyState !== WebSocket.OPEN || !webSocketWork.canStart()) {
                         throw Object.assign(new Error("Student WebSocket closed during authentication"), {
                           code: "WS_AUTH_SOCKET_CLOSED",
@@ -1450,7 +1464,7 @@ export function setupWebSocket(
                         studentId: payload.studentId,
                         studentSessionId: activeSession.id,
                         ...protocol,
-                        screenshotPolicy: prepared.screenshotPolicy,
+                        screenshotPolicy: classroomApprovalCurrent ? prepared.screenshotPolicy : undefined,
                         exactBinding: classpilotControlStateExactBinding({
                           schoolId,
                           deviceId,
@@ -2112,6 +2126,7 @@ export function setupWebSocket(
                     const delivery = state
                       ? serializeClasspilotStudentControlStateForDelivery({
                           state,
+                          studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(state),
                           gateActive: isClasspilotCapabilityActive(
                             "lateSignInRestrictionSsoV1",
                             { schoolId }
@@ -2131,11 +2146,15 @@ export function setupWebSocket(
                     const focusCleanup = delivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
                       state, binding, acceptedCapabilities) : null;
                     attempt.assertCurrent();
-                    return { ...delivery, focusCleanup };
+                    return { ...delivery, focusCleanup,
+                      studentClassroomApprovalKey: delivery.classroomState && state ? studentClassroomAccessApprovalKeyForState(state) : null };
                   },
                   (_claimed, delivery) => {
                     attempt.assertCurrent();
                     if (delivery.focusCleanup) attempt.send(delivery.focusCleanup, (frame, callback) => ws.send(frame, callback));
+                    if (delivery.studentClassroomApprovalKey && !studentClassroomAccessPublicationApprovedFromCache(schoolId, delivery.studentClassroomApprovalKey)) {
+                      attempt.stage = "commit"; return "withheld" as const;
+                    }
                     if (delivery.withheld) { attempt.stage = "commit"; return "withheld" as const; }
                     const delivered = delivery.classroomState;
                     // Queue the authoritative frame synchronously while the same

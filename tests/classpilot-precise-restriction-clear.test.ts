@@ -173,19 +173,27 @@ describe("precise restriction rollback precheck", () => {
       "$.restrictions.screenLock.resource",
       "$.restrictions.screenLock.classroomScope",
       "$.restrictions.flightPath.resources",
+      "$.restrictions.flightPath.classroomMaterials",
+      "$.restrictions.screenLock.classroomMaterials",
       "$.screenLock.resource",
       "$.screenLock.classroomScope",
       "$.flightPath.resources",
+      "$.flightPath.classroomMaterials",
+      "$.screenLock.classroomMaterials",
       "$.restorableClassState.desiredState.restrictions.screenLock.resource",
       "$.restorableClassState.desiredState.restrictions.screenLock.classroomScope",
       "$.restorableClassState.desiredState.restrictions.flightPath.resources",
+      "$.restorableClassState.desiredState.restrictions.flightPath.classroomMaterials",
+      "$.restorableClassState.desiredState.restrictions.screenLock.classroomMaterials",
       "$.restorableClassState.desiredState.screenLock.resource",
       "$.restorableClassState.desiredState.screenLock.classroomScope",
       "$.restorableClassState.desiredState.flightPath.resources",
+      "$.restorableClassState.desiredState.flightPath.classroomMaterials",
+      "$.restorableClassState.desiredState.screenLock.classroomMaterials",
     ]);
     assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /^cleared_at IS NULL\n/);
-    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'screen-lock' AND \(payload \? 'resource' OR payload \? 'classroomScope'\)/);
-    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'flight-path' AND payload \? 'resources'/);
+    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'screen-lock' AND \(payload \? 'resource' OR payload \? 'classroomScope' OR payload \? 'classroomMaterials'\)/);
+    assert.match(PRECISE_CLASSROOM_STATE_PREDICATE_SQL, /state_type = 'flight-path' AND \(payload \? 'resources' OR payload \? 'classroomMaterials'\)/);
     assert.doesNotMatch(PRECISE_RESTRICTION_ROLLBACK_PRECHECK_SQL, /\b(?:UPDATE|DELETE|INSERT|ALTER|DROP)\b/i, "the precheck is read-only");
   });
 

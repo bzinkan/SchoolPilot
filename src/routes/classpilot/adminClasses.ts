@@ -60,6 +60,7 @@ import {
   recordRosterConnectorSync,
 } from "../../services/googleRosterConnector.js";
 import { mapWithConcurrency } from "../../util/concurrency.js";
+import { publicGroupAutomaticFlightPath } from "../../services/classpilotAutomaticFlightPath.js";
 
 const router = Router();
 
@@ -180,7 +181,7 @@ async function serializeClass(group: any, schoolId: string) {
     .filter((entry) => entry.relationshipRole === "co-teacher")
     .map((entry) => entry.teacher);
   return {
-    ...group,
+    ...publicGroupAutomaticFlightPath(group),
     primaryTeacher,
     coTeachers,
   };
@@ -813,7 +814,7 @@ router.post("/", ...auth, async (req, res, next) => {
       entityType: "class",
       entityId: group.id,
       entityName: group.name,
-      changes: { after: group, coTeacherIds },
+      changes: { after: publicGroupAutomaticFlightPath(group), coTeacherIds },
     });
     return res.status(201).json({ class: await serializeClass(group, schoolId) });
   } catch (err) {
@@ -932,7 +933,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       entityType: "class",
       entityId: group.id,
       entityName: updated.name,
-      changes: { before: group, after: updated, coTeacherIds },
+      changes: { before: publicGroupAutomaticFlightPath(group), after: publicGroupAutomaticFlightPath(updated), coTeacherIds },
     });
     if (submittedPrimaryTeacherId !== undefined && primaryTeacherId !== group.teacherId) {
       await logAudit({
@@ -1087,7 +1088,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
       entityType: "class",
       entityId: group.id,
       entityName: group.name,
-      changes: { before: group },
+      changes: { before: publicGroupAutomaticFlightPath(group) },
     });
     return res.json({ ok: true });
   } catch (err) {

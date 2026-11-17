@@ -53,6 +53,7 @@ import {
   listActiveSupervisionContextsForScheduledConflict,
   listOtherActiveTeachingSessionsForSchool,
   promoteScheduledReportSessionToLive,
+  prepareClasspilotAutomaticClassroomAccessForGroup,
   releaseScheduledConflictSupervision,
   resolveScheduledClassConflict,
   resolveScheduledConflictForStartedOccurrence,
@@ -65,6 +66,8 @@ import {
 import { scheduledClassStaffIds } from "./classpilotScheduledStaff.js";
 import { buildClassStartOverlapPayload } from "./classpilotStartOverlap.js";
 import { loadClasspilotTodayOccurrences, todayOccurrenceWindow } from "./classpilotTodayOccurrences.js";
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import type { PreparedAutomaticClassroomAccess } from "./classpilotAutomaticClassroomAccess.js";
 
 type ReviewedClassStart = { actorId: string; expectedActiveSessionId: string | null; acknowledgeOverlap?: boolean };
 
@@ -721,10 +724,21 @@ async function startScheduledClass(options: {
   afterReplacement?: () => Promise<void>;
   reviewedStart?: ReviewedClassStart;
 }): Promise<TeachingSession> {
+  let classroomPreparation: PreparedAutomaticClassroomAccess | null = null;
+  if (options.scheduledSession.sessionMode !== "live"
+    && isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.group.schoolId })) {
+    const preflightDb = options.dbInstance ?? db;
+    if (options.actorId) await assertClasspilotSessionStartAccess(options.group.schoolId, options.actorId, options.group.id, preflightDb);
+    if (options.reviewedStart) await assertClasspilotClassStartReview({ schoolId: options.group.schoolId,
+      actorId: options.reviewedStart.actorId, groupId: options.group.id,
+      expectedActiveSessionId: options.reviewedStart.expectedActiveSessionId }, preflightDb);
+    classroomPreparation = await prepareClasspilotAutomaticClassroomAccessForGroup({ schoolId: options.group.schoolId,
+      groupId: options.group.id, teachingSessionId: options.scheduledSession.id }, preflightDb);
+  }
   const outcome = await withTeachingSessionStartLock(
     options.group.schoolId,
     options.scheduledSession.teacherId,
-    (lockedDb) => startScheduledClassLocked({ ...options, dbInstance: lockedDb }),
+    (lockedDb) => startScheduledClassLocked({ ...options, dbInstance: lockedDb, classroomPreparation }),
     options.dbInstance
   );
   if (outcome.wasPromoted && outcome.session.scheduledDate) {
@@ -782,6 +796,7 @@ async function startScheduledClassLocked(options: {
   dbInstance: typeof db;
   afterReplacement?: () => Promise<void>;
   reviewedStart?: ReviewedClassStart;
+  classroomPreparation?: PreparedAutomaticClassroomAccess | null;
 }): Promise<{
   session: TeachingSession;
   wasPromoted: boolean;
@@ -827,6 +842,7 @@ async function startScheduledClassLocked(options: {
   const promotedSession = await promoteScheduledReportSessionToLive({
     schoolId: options.group.schoolId,
     sessionId: options.scheduledSession.id,
+    automaticClassroomPreparation: options.classroomPreparation,
   }, dbInstance);
   const currentOccurrence = promotedSession || await getScheduledTeachingSessionOccurrence(
     options.group.schoolId,

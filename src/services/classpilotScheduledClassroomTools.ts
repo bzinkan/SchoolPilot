@@ -12,6 +12,7 @@ import { requireScheduledClassroomContext, scheduledContextHasClassroomTools, sc
 import { resolveChatPause } from "./classpilotChatChannelControl.js";
 import { broadcastToStaffContextLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
+import { studentClassroomCommandPayloadForTarget } from "./classpilotStudentClassroomAccess.js";
 
 function activityError(message: string, code = "CLASSROOM_ACTIVITY_STALE", status = 409) {
   return Object.assign(new Error(message), { status, code, expose: true });
@@ -293,7 +294,8 @@ export async function persistScheduledClassroomStateRecords(options: {
   await database.insert(classpilotClassroomStates).values(options.studentIds.map((studentId) => ({
     schoolId: options.schoolId, teachingSessionId: null, supervisionContextId: options.contextId, studentId, stateType,
     stateKey: String(options.payload.flightPathId || options.payload.blockListId || options.payload.domain || "active"),
-    payload: options.payload, commandId: options.commandId, appliedBy: options.actorId, appliedAt: options.now, expiresAt,
+    payload: studentClassroomCommandPayloadForTarget(options.payload, studentId) ?? (() => { throw new Error("Missing exact Classroom target policy"); })(),
+    commandId: options.commandId, appliedBy: options.actorId, appliedAt: options.now, expiresAt,
   })));
 }
 

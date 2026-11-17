@@ -1389,8 +1389,8 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /const classroomFocusRequested = lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl\(lockScreenUrl\)/,
-  'Classroom review must use the effective boundary so precise-feature withdrawal cannot bypass it',
+  /const classroomFocusRequested = studentClassroomAccessEnabled && lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl\(lockScreenUrl\)/,
+  'activated Classroom review must use the effective boundary so precise-feature withdrawal cannot bypass it',
 );
 assert.match(
   dashboardSource,

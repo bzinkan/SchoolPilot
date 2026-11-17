@@ -58,6 +58,7 @@ import { mydeskImportsMigration } from "./mydeskImportsMigration.js";
 import { mydeskWorkspaceMigration } from "./mydeskWorkspaceMigration.js";
 import { mydeskSeatingMeasuredMigration } from "./mydeskSeatingMeasuredMigration.js";
 import { schoolDisciplineMigration } from "./schoolDisciplineMigration.js";
+import { googleStudentClassroomAccessMigration } from "./googleStudentClassroomAccessMigration.js";
 
 export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
 
@@ -575,6 +576,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotTodayScheduleMigration,
   classpilotTelemetryIdempotencyMigration,
   heartbeatPrefixIndexRetirementMigration,
+  googleStudentClassroomAccessMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

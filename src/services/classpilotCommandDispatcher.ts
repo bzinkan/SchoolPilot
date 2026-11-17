@@ -38,6 +38,8 @@ import {
 } from "./storage.js";
 import { validateClasspilotCommandPayload } from "./classpilotCommandValidation.js";
 import { prepareClassroomFocusCommand } from "./classpilotClassroomFocusCommand.js";
+import { prepareStudentClassroomAccessCommand, studentClassroomCommandPayloadForTarget,
+  studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState, hasStudentClassroomAccessProvenance, studentClassroomAccessProjectionsEqual } from "./classpilotStudentClassroomAccess.js";
 import { CLASSROOM_FOCUS_SCOPE_CAPABILITY } from "./classroomFocusScope.js";
 import {
   broadcastToStaffSessionLocal,
@@ -331,6 +333,7 @@ export async function normalizeCommandPayload(
       const payload = classpilotFlightPathApplyPayload({ schoolId, flightPath });
       requireRuleListWithinExtensionLimit(payload.allowedDomains, "Flight Path");
       return { extensionType: "apply-flight-path", payload: { ...payload,
+        ...(validated.classroomAccess ? { classroomAccess: validated.classroomAccess } : {}),
         ...(validated.expectedFlightPathUpdatedAt ? { expectedFlightPathUpdatedAt: validated.expectedFlightPathUpdatedAt } : {}) } };
     }
     case "apply-block-list": {
@@ -759,6 +762,26 @@ export function classpilotCommandFrameForTarget(
   classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
   commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
 ) {
+  const studentAccess = Object.hasOwn(payload, "classroomAccessV1");
+  if (studentAccess && !classpilotPreciseCommandPayloadValid(commandType, payload)) return null;
+  const selected = studentClassroomCommandPayloadForTarget(payload, target.studentId);
+  if (!selected) return null;
+  if (studentAccess) {
+    if (!classroomState || !delivery.requiredCapabilities?.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY)
+      || !delivery.requiredCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY)) return null;
+    const expected = commandType === "lock-screen" ? selected.classroomScope
+      : { allowedDomains: selected.allowedDomains, resources: selected.resources ?? [] };
+    const actual = commandType === "lock-screen" ? classroomState.restrictions.screenLock.classroomScope
+      : { allowedDomains: classroomState.restrictions.flightPath.allowedDomains, resources: classroomState.restrictions.flightPath.resources ?? [] };
+    if (!studentClassroomAccessProjectionsEqual(expected, actual)) return null;
+    const { classroomAccessV1: _private, ...base } = payload;
+    payload = { ...base, ...selected };
+  }
+  if (classroomState) {
+    const { classroomMaterials: _screenProvenance, ...screenLock } = classroomState.restrictions.screenLock;
+    const { classroomMaterials: _pathProvenance, ...flightPath } = classroomState.restrictions.flightPath;
+    classroomState = { ...classroomState, restrictions: { ...classroomState.restrictions, screenLock, flightPath } };
+  }
   // A command created by an older server can reach the final framing lane
   // after retirement. Never deliver a new persistent tab assignment from it.
   if (isLegacyTabFocusStart(commandType, payload)
@@ -922,7 +945,7 @@ export function classpilotCommandFrameForTarget(
       ...classpilotTransientCurrentPageCommandEnvelope(delivery),
       // Stop Focus accepts an empty payload; command IDs stay on the envelope.
       data: commandType === "stop-focus" ? {} : commandType === "open-tab" ? { url: payload.url }
-        : Object.fromEntries(Object.entries(payload).filter(([key]) => !["focusAfterOpen", "afterRestrictionCommandId", "expectedFlightPathUpdatedAt"].includes(key))),
+        : Object.fromEntries(Object.entries(payload).filter(([key]) => !["focusAfterOpen", "afterRestrictionCommandId", "expectedFlightPathUpdatedAt", "classroomAccessV1", "classroomMaterials"].includes(key))),
     },
     ...(classroomState ? { classroomState } : {}),
   };
@@ -1207,7 +1230,7 @@ async function persistActiveState(options: {
       studentId: target.studentId,
       stateType,
       stateKey: options.payload.flightPathId || options.payload.blockListId || options.payload.domain || options.payload.pollId || "active",
-      payload: options.payload,
+      payload: studentClassroomCommandPayloadForTarget(options.payload, target.studentId) ?? (() => { throw new Error("Missing exact Classroom target policy"); })(),
       expiresAt: options.payload.expiresAt
         ? new Date(options.payload.expiresAt)
         : options.commandType === "temp-unblock"
@@ -1246,7 +1269,7 @@ async function persistActiveState(options: {
         const restrictions = applyClasspilotControlCommand(
           baseRestrictions,
           options.commandType,
-          options.payload,
+          studentClassroomCommandPayloadForTarget(options.payload, studentId) ?? (() => { throw new Error("Missing exact Classroom target policy"); })(),
           now
         );
         if (restrictionsAreEmpty(restrictions)) return { restrictions };
@@ -1314,7 +1337,7 @@ async function persistActiveSupervisionState(options: {
       const restrictions = applyClasspilotControlCommand(
         baseRestrictions,
         options.commandType,
-        options.payload
+        studentClassroomCommandPayloadForTarget(options.payload, studentId) ?? (() => { throw new Error("Missing exact Classroom target policy"); })()
       );
       if (restrictionsAreEmpty(restrictions)) {
         // Clearing Coverage's own pending restriction removes its top-level
@@ -1357,6 +1380,8 @@ export async function executeClasspilotCommand(options: {
   routineReservation?: import("./classpilotToolsRoutines.js").RoutineReservation;
   originalTargetCommandId?: string;
   replayCommand?: import("../schema/classpilot.js").ClasspilotCommand;
+  /** Internal external-provider boundary; HTTP callers never forward this option. */
+  resolveStudentClassroomSources?: (request: { schoolId: string; studentIds: string[] }) => Promise<import("./classpilotStudentClassroomAccess.js").StudentClassroomAccessSource[]>;
 }) {
   if (options.stopAutomaticFlightPath && (
     options.commandType !== "remove-flight-path" || options.targetScope !== "class"
@@ -1379,6 +1404,11 @@ export async function executeClasspilotCommand(options: {
     normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
   }
   let commandPayload = { ...normalized.payload };
+  commandPayload = await prepareStudentClassroomAccessCommand({ schoolId: options.schoolId, actorId: options.actorId,
+    teachingSessionId: options.teachingSessionId, supervisionContextId: options.supervisionContextId,
+    contextAuthorityRevision: options.contextAuthorityRevision, targetScope: options.targetScope,
+    targetStudentIds: options.targets.map(target => target.studentId) }, options.commandType, commandPayload,
+    { resolveSources: options.resolveStudentClassroomSources });
   if (options.commandType === "lock-screen") {
     commandPayload = await prepareClassroomFocusCommand({ schoolId: options.schoolId, actorId: options.actorId,
       teachingSessionId: options.teachingSessionId, supervisionContextId: options.supervisionContextId,
@@ -1438,7 +1468,7 @@ export async function executeClasspilotCommand(options: {
     // offline student is never deferred (there is no capability evidence to
     // defer on). A replayed payload whose entries no longer validate, or a
     // school whose rollout is off, refuses every target.
-    const classroomScopeRequired = commandPayload.classroomScope !== undefined;
+    const classroomScopeRequired = commandPayload.classroomScope !== undefined || commandPayload.classroomAccessV1 !== undefined;
     const preciseDeliverable = classpilotPreciseCommandPayloadValid(options.commandType, commandPayload)
       && preciseRestrictionResourcesActive(options.schoolId)
       && (!classroomScopeRequired || isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, { schoolId: options.schoolId }));
@@ -1456,7 +1486,8 @@ export async function executeClasspilotCommand(options: {
         && read?.status === "hit"
         && classpilotRealtimeFresh(read.snapshot)
         && read.snapshot.acceptedCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY) === true
-        && (!classroomScopeRequired || read.snapshot.acceptedCapabilities?.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY) === true);
+        && (!classroomScopeRequired || read.snapshot.acceptedCapabilities?.includes(CLASSROOM_FOCUS_SCOPE_CAPABILITY) === true
+          && read.snapshot.acceptedCapabilities?.includes("scopedAuthorityChecksV1") === true);
       if (capable) continue;
       effectiveTargets[index] = {
         ...target,
@@ -1826,6 +1857,8 @@ export async function executeClasspilotCommand(options: {
   const targetByStudent = new Map(committedTargets.map((target) => [target.studentId, target]));
   const authUnavailableReasons = new Map<string, string>();
   const restrictionEnforcementStartedAt = performance.now();
+  const studentClassroomApprovalByStudent = new Map(await Promise.all(controlStateRows.map(async row =>
+    [row.studentId, await studentClassroomAccessApprovalForState(row)] as const)));
   const classroomStateByStudent = new Map(controlStateRows.flatMap((row) => {
     const target = targetByStudent.get(row.studentId);
     const read = capabilityRealtime.get(row.studentId);
@@ -1834,6 +1867,7 @@ export async function executeClasspilotCommand(options: {
       : null;
     const delivered = serializeClasspilotStudentControlStateForDelivery({
       state: row,
+      studentClassroomAccessApproved: studentClassroomApprovalByStudent.get(row.studentId),
       gateActive,
       acceptedCapabilities: snapshot?.acceptedCapabilities ?? [],
       exactBinding: target?.studentSessionId && target.deviceId
@@ -2042,6 +2076,7 @@ export async function executeClasspilotCommand(options: {
                 const current = await getClasspilotStudentControlState(created.schoolId, target.studentId, transactionDb);
                 const policy = await getClasspilotSsoPolicyForSchool(created.schoolId, transactionDb);
                 const delivered = current && serializeClasspilotStudentControlStateForDelivery({ state: current, gateActive,
+                  studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(current),
                   acceptedCapabilities: capabilitySnapshot?.acceptedCapabilities ?? [], exactBinding: baseExactTarget,
                   authPassThrough: { gateActive: isClasspilotCapabilityActive("restrictionAuthPassThroughV1", { schoolId: created.schoolId }),
                     policyRevision: policy.revision, policy: policy.policy } });
@@ -2105,6 +2140,7 @@ export async function executeClasspilotCommand(options: {
                 }
                 const delivered = serializeClasspilotStudentControlStateForDelivery({
                   state: currentControlState,
+                  studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(currentControlState),
                   gateActive,
                   acceptedCapabilities: capabilitySnapshot?.acceptedCapabilities ?? [],
                   exactBinding: baseExactTarget,
@@ -2130,6 +2166,8 @@ export async function executeClasspilotCommand(options: {
                       ? capabilitySnapshot
                         ? "Extension update required for sign-in-safe Focus or Flight Path"
                         : "Extension capability status unavailable; reconnect or update before applying this restriction"
+                      : delivered.withheldReason === "student_classroom_access_unavailable"
+                        ? "Classroom access approval or permissions changed; review the selected students again"
                       : delivered.withheldReason === "precise_restriction_capability_required"
                         ? CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON
                         : "Extension update required before applying this restriction",
@@ -2140,6 +2178,7 @@ export async function executeClasspilotCommand(options: {
                 return {
                   kind: "ready" as const,
                   classroomState: delivered.classroomState,
+                  studentClassroomAccessApprovalKey: studentClassroomAccessApprovalKeyForState(currentControlState),
                   authPassThrough: undefined,
                   controlRevision: undefined,
                   restrictionExpiresAt: undefined,
@@ -2276,8 +2315,9 @@ export async function executeClasspilotCommand(options: {
             ...(classpilotControlStateRequiresPreciseCapability(authoritativeClassroomState)
               ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY]
               : []),
-            ...(authoritativeClassroomState?.restrictions.screenLock.classroomScope !== undefined
+            ...(authoritativeClassroomState?.restrictions.screenLock.classroomScope !== undefined || committedCommandPayload.classroomAccessV1 !== undefined
               ? [CLASSROOM_FOCUS_SCOPE_CAPABILITY] : []),
+            ...(committedCommandPayload.classroomAccessV1 !== undefined ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
             ...(focusNewAction || authoritativeClassroomState?.restrictions.focus?.active
               ? [FOCUS_TAB_CAPABILITY] : []),
           ];
@@ -2323,6 +2363,8 @@ export async function executeClasspilotCommand(options: {
 
           const exactTarget = {
             ...baseExactTarget,
+            ...("studentClassroomAccessApprovalKey" in currentPageAuthority && currentPageAuthority.studentClassroomAccessApprovalKey
+              ? { requiredStudentClassroomApprovalKey: currentPageAuthority.studentClassroomAccessApprovalKey } : {}),
             ...(requiredCapability
               ? {
                   requiredCapability,
@@ -2340,6 +2382,7 @@ export async function executeClasspilotCommand(options: {
           sendToStudentBindingLocal(exactTarget, message, {
             requiredCapability: exactTarget.requiredCapability,
             requiredCapabilities: exactTarget.requiredCapabilities,
+            requiredStudentClassroomApprovalKey: exactTarget.requiredStudentClassroomApprovalKey,
           });
           return {
             target,

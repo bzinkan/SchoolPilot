@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { studentClassroomAccessApprovalForState } from "./classpilotStudentClassroomAccess.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { db } from "../db.js";
 import { classpilotCommands, classpilotCommandTargets, classpilotStudentControlStates,
@@ -169,6 +170,7 @@ export async function persistClasspilotFocusCommand(database: Database, command:
     const row = rows.find(row => row.studentId === target.studentId);
     const policy = await getClasspilotSsoPolicyForSchool(command.schoolId, database);
     const delivered = serializeClasspilotStudentControlStateForDelivery({ state: current, now,
+      studentClassroomAccessApproved: await studentClassroomAccessApprovalForState(current),
       gateActive: isClasspilotCapabilityActive("lateSignInRestrictionSsoV1", { schoolId: command.schoolId }),
       acceptedCapabilities: snapshot?.acceptedCapabilities ?? [],
       exactBinding: { schoolId: command.schoolId, studentId: target.studentId,

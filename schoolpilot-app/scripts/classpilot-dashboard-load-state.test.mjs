@@ -5001,7 +5001,7 @@ async function assignedTestingBrowser(context, options = {}) {
   return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }
 
-async function focusBrowserFixture(context, overrides = {}) {
+async function focusBrowserFixture(context, overrides = {}, options = {}) {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: new Date('2026-08-25T13:01:00Z') });
@@ -5013,7 +5013,8 @@ async function focusBrowserFixture(context, overrides = {}) {
   const aggregate = aggregateController({ scoped: success([row]) });
   const live = teachingSession();
   const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', activeSession: live,
-    allSessions: [live], acknowledgeSessionSubscriptions: true });
+    allSessions: [live], acknowledgeSessionSubscriptions: true,
+    flightPathResponse: { flightPaths: [], features: { studentClassroomAccess: true } }, ...options });
   const posts = [];
   await page.route('**/api/commands', async route => {
     const body = route.request().postDataJSON(); posts.push(body);
@@ -5037,8 +5038,8 @@ async function refreshFocusStudent(fixture, row) {
 }
 
 function classroomFocusReview(courseId = 'course-science', reviewToken = 'review-science') {
-  return { schemaVersion: 1, purpose: 'classroom', boundary: 'website',
-    course: { id: courseId, name: courseId === 'course-science' ? 'Science with Ms Example' : 'History with Ms Example' },
+  return { schemaVersion: 1, purpose: 'student-classroom-access', mode: 'focus', boundary: 'website',
+    studentCount: 1, courseCount: 6,
     itemCount: 4, linkCount: 7, reviewToken, expiresAt: Date.parse('2026-08-25T13:02:00Z'),
     effectiveAllowedDomains: ['classroom.google.com', 'docs.google.com', 'reading.example.test'],
     scopes: [{ type: 'website', hostname: 'reading.example.test', label: 'Entire reading.example.test website',
@@ -5049,12 +5050,12 @@ function classroomFocusReview(courseId = 'course-science', reviewToken = 'review
     skipped: [], authoring: { allowedDomains: ['classroom.google.com', 'docs.google.com', 'reading.example.test'], resources: [] } };
 }
 
-test('Classroom website Focus reviews the mapped course and sends only the signed scope for frozen students', { timeout: 60_000 }, async context => {
+test('Classroom website Focus reviews every student course and sends only the signed scope for frozen students', { timeout: 60_000 }, async context => {
   const fixture = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
     screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
   const { page, posts, harness } = fixture;
   const previews = [];
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
     previews.push({ body: route.request().postDataJSON(), school: route.request().headers()['x-school-id'] });
     await route.fulfill({ json: classroomFocusReview() });
   });
@@ -5063,25 +5064,25 @@ test('Classroom website Focus reviews the mapped course and sends only the signe
   await page.getByTestId('button-lock-screen').click();
   await page.getByTestId('radio-lock-screen-specific').check();
   await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
-  await page.getByText('Science with Ms Example', { exact: true }).waitFor({ timeout: 8_000 });
-  assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /All published assignments and materials in this course/);
+  await page.getByTestId('student-classroom-summary').waitFor({ timeout: 8_000 });
+  assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /all of their own Google Classroom courses/);
   assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /Google work apps and all files/);
   assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /whole website and its subdomains/);
   assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student']);
-  assert.deepEqual(previews, [{ body: { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID] }, school: SCHOOL_ID }]);
+  assert.deepEqual(previews, [{ body: { mode: 'focus', teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID] }, school: SCHOOL_ID }]);
   assert.equal(harness.scopePreviewRequests.length, 0, 'Classroom scope must never use the unsigned generic website preview');
   await page.getByTestId('button-confirm-lock-screen').click();
   await waitUntil(() => posts.length === 1, 'Reviewed Classroom Focus must send its signed course scope');
   assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
     commandType: 'lock-screen', commandPayload: { url: 'https://classroom.google.com/',
-      classroomFocus: { courseId: 'course-science', reviewToken: 'review-science' } } });
+      classroomAccess: { reviewToken: 'review-science' } } });
   assert.deepEqual(harness.pageErrors, []);
 });
 
 test('Classroom website Focus refuses old extensions without substituting a legacy website lock', { timeout: 60_000 }, async context => {
   const { page, posts, harness } = await focusBrowserFixture(context, { extensionVersion: '3.0.6',
     acceptedCapabilities: { scopedAuthorityChecksV1: true, screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true } });
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', route => route.fulfill({ json: classroomFocusReview() }));
+  await page.route('**/api/classpilot/commands/classroom-access/preview', route => route.fulfill({ json: classroomFocusReview() }));
   await page.getByTestId('button-close-tabs-dialog').click();
   await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
   await page.getByTestId('button-lock-screen').click();
@@ -5095,7 +5096,7 @@ test('Classroom website Focus refuses old extensions without substituting a lega
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Classroom website Focus selects an unmapped own course and expires its review without replaying it', { timeout: 60_000 }, async context => {
+test('Classroom website Focus reviews student courses without a teacher course picker and expires without replaying', { timeout: 60_000 }, async context => {
   const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
     screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } });
   const previews = [], courseReads = [];
@@ -5103,11 +5104,9 @@ test('Classroom website Focus selects an unmapped own course and expires its rev
     courseReads.push(route.request().headers()['x-school-id']);
     await route.fulfill({ json: { courses: [{ id: 'course-science', name: 'Science with Ms Example' }, { id: 'course-history', name: 'History with Ms Example' }] } });
   });
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
     const body = route.request().postDataJSON(); previews.push(body);
-    if (!body.courseId) return route.fulfill({ status: 409,
-      json: { code: 'CLASSROOM_FOCUS_COURSE_REQUIRED', error: 'Choose a Classroom course.' } });
-    const review = classroomFocusReview(body.courseId, `review-${body.courseId}`);
+    const review = classroomFocusReview('all-student-courses', `review-${previews.length}`);
     review.expiresAt = await page.evaluate(() => Date.now() + 60_000);
     await route.fulfill({ json: review });
   });
@@ -5116,19 +5115,16 @@ test('Classroom website Focus selects an unmapped own course and expires its rev
   await page.getByTestId('button-lock-screen').click();
   await page.getByTestId('radio-lock-screen-specific').check();
   await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
-  const coursePicker = page.getByLabel('Google Classroom course', { exact: true });
-  await coursePicker.selectOption('course-science');
-  await page.getByTestId('classroom-focus-course-summary').getByText('Science with Ms Example', { exact: true }).waitFor();
-  await coursePicker.selectOption('course-history');
-  await page.getByTestId('classroom-focus-course-summary').getByText('History with Ms Example', { exact: true }).waitFor();
+  await page.getByTestId('student-classroom-summary').waitFor();
+  assert.equal(await page.getByLabel('Google Classroom course', { exact: true }).count(), 0);
   assert.equal(await page.getByTestId('button-confirm-lock-screen').isEnabled(), true);
   await page.clock.fastForward(60_100);
-  await page.getByRole('alert').getByText(/Classroom scope review expired/).waitFor();
+  await page.getByRole('alert').getByText(/Classroom access review expired/).waitFor();
   assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true);
-  assert.equal(previews.length, 3, 'expiry is not permission to replay a review or a command');
-  assert.deepEqual(courseReads, [SCHOOL_ID]);
+  assert.equal(previews.length, 1, 'expiry is not permission to replay a review or a command');
+  assert.deepEqual(courseReads, []);
   assert.deepEqual(posts, []);
-  assert.deepEqual(previews.map(body => body.courseId), [undefined, 'course-science', 'course-history']);
+  assert.deepEqual(previews.map(body => body.mode), ['focus']);
   assert.ok(previews.every(body => body.teachingSessionId === OWN_SESSION_ID
     && body.targetScope === 'students' && JSON.stringify(body.targetStudentIds) === JSON.stringify([STUDENT_ID])));
   assert.deepEqual(harness.pageErrors, []);
@@ -5141,7 +5137,7 @@ test('Classroom website Focus discards a late scope after editing the URL and pr
   const held = new Promise(resolve => { releasePreview = resolve; });
   const entered = new Promise(resolve => { enteredPreview = resolve; });
   context.after(() => releasePreview());
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
     enteredPreview(); await held;
     await route.fulfill({ json: classroomFocusReview() }).catch(() => {});
   });
@@ -5169,7 +5165,7 @@ test('Classroom website Focus never revives a reviewed token after leaving and r
   const held = new Promise(resolve => { releasePreview = resolve; });
   const entered = new Promise(resolve => { enteredPreview = resolve; });
   context.after(() => releasePreview());
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
     previewCount += 1;
     if (previewCount === 2) { enteredPreview(); await held; }
     await route.fulfill({ json: classroomFocusReview('course-science', `proof-${previewCount}`) }).catch(() => {});
@@ -5179,17 +5175,17 @@ test('Classroom website Focus never revives a reviewed token after leaving and r
   await page.getByTestId('button-lock-screen').click();
   await page.getByTestId('radio-lock-screen-specific').check();
   await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
-  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('student-classroom-summary').waitFor();
   await page.getByTestId('input-lock-screen-url').fill('ixl.com');
   await page.getByTestId('input-lock-screen-url').fill('classroom.google.com');
   await entered;
   assert.equal(await page.getByTestId('button-confirm-lock-screen').isDisabled(), true, 'the first review was retired by the URL edit');
-  assert.equal(await page.getByTestId('classroom-focus-course-summary').count(), 0);
+  assert.equal(await page.getByTestId('student-classroom-summary').count(), 0);
   releasePreview();
-  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('student-classroom-summary').waitFor();
   await page.getByTestId('button-confirm-lock-screen').click();
   await waitUntil(() => posts.length === 1, 'Only the fresh course proof may be sent');
-  assert.equal(posts[0].commandPayload.classroomFocus.reviewToken, 'proof-2');
+  assert.equal(posts[0].commandPayload.classroomAccess.reviewToken, 'proof-2');
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -5199,8 +5195,8 @@ test('Classroom website Focus survives precise-feature withdrawal without fallin
   let preciseEnabled = true, releasePreview;
   const held = new Promise(resolve => { releasePreview = resolve; });
   context.after(() => releasePreview());
-  await page.route('**/api/flight-paths', route => route.fulfill({ json: { flightPaths: [], features: { preciseRestrictionResources: preciseEnabled } } }));
-  await page.route('**/api/classpilot/commands/classroom-focus/preview', async route => {
+  await page.route('**/api/flight-paths', route => route.fulfill({ json: { flightPaths: [], features: { preciseRestrictionResources: preciseEnabled, studentClassroomAccess: true } } }));
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
     await held; await route.fulfill({ json: classroomFocusReview() }).catch(() => {});
   });
   const refreshFeature = () => page.evaluate(async () => {
@@ -5223,12 +5219,74 @@ test('Classroom website Focus survives precise-feature withdrawal without fallin
   await page.getByTestId('classroom-focus-review').waitFor();
   assert.deepEqual(posts, []);
   releasePreview();
-  await page.getByTestId('classroom-focus-course-summary').waitFor();
+  await page.getByTestId('student-classroom-summary').waitFor();
   await page.getByTestId('button-confirm-lock-screen').click();
   await waitUntil(() => posts.length === 1, 'Only reviewed Classroom scope may be sent after feature withdrawal');
   assert.deepEqual(posts[0].commandPayload, { url: 'https://classroom.google.com/',
-    classroomFocus: { courseId: 'course-science', reviewToken: 'review-science' } });
+    classroomAccess: { reviewToken: 'review-science' } });
   assert.equal(harness.scopePreviewRequests.length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom Flight Path reviews frozen students and sends the exact saved path version with its opaque proof', { timeout: 60_000 }, async context => {
+  const path = { id: 'classroom-path', flightPathName: 'Classroom work', allowedDomains: ['classroom.google.com'], updatedAt: '2026-08-25T12:00:00.000Z' };
+  const { page, posts, harness } = await focusBrowserFixture(context, { acceptedCapabilities: { scopedAuthorityChecksV1: true,
+    screenOnlyUnlockV1: true, preciseRestrictionResourcesV1: true, classroomFocusScopeV1: true } }, { flightPathResponse: { flightPaths: [path], features: { studentClassroomAccess: true } } });
+  const previews = [];
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
+    previews.push(route.request().postDataJSON());
+    await route.fulfill({ json: { ...classroomFocusReview(), mode: 'flight-path' } });
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-apply-flight-path').click();
+  await page.getByTestId('select-flight-path').click();
+  await page.getByTestId('option-flight-path-classroom-path').click();
+  await page.getByTestId('student-classroom-summary').waitFor({ timeout: 8_000 });
+  assert.deepEqual(previews, [{ mode: 'flight-path', teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    flightPathId: path.id, expectedFlightPathUpdatedAt: path.updatedAt }]);
+  await page.getByTestId('button-confirm-apply-flight-path').click();
+  await waitUntil(() => posts.length === 1, 'Reviewed Flight Path must preserve its exact student audience');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID], commandType: 'apply-flight-path',
+    commandPayload: { flightPathId: path.id, expectedFlightPathUpdatedAt: path.updatedAt, classroomAccess: { reviewToken: 'review-science' } } });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom Flight Path refuses an unsupported extension without substituting its website-only policy', { timeout: 60_000 }, async context => {
+  const { page, posts, harness } = await focusBrowserFixture(context, {}, { flightPathResponse: { flightPaths: [
+    { id: 'classroom-path', flightPathName: 'Classroom work', allowedDomains: ['classroom.google.com'], updatedAt: '2026-08-25T12:00:00.000Z' },
+  ], features: { studentClassroomAccess: true } } });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-apply-flight-path').click();
+  await page.getByTestId('select-flight-path').click();
+  await page.getByTestId('option-flight-path-classroom-path').click();
+  await page.getByTestId('classroom-flight-path-extension-required').waitFor();
+  assert.equal(await page.getByTestId('button-confirm-apply-flight-path').isDisabled(), true);
+  assert.deepEqual(posts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Classroom Flight Path remains usable before student Classroom access is activated', { timeout: 60_000 }, async context => {
+  const path = { id: 'classroom-path', flightPathName: 'Classroom work', allowedDomains: ['classroom.google.com'] };
+  const { page, posts, harness } = await focusBrowserFixture(context, {}, { flightPathResponse: { flightPaths: [path] } });
+  const previews = [];
+  await page.route('**/api/classpilot/commands/classroom-access/preview', async route => {
+    previews.push(route.request().postDataJSON());
+    await route.fulfill({ status: 409, json: { error: 'Classroom access is not enabled for this school.' } });
+  });
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('button-apply-flight-path').click();
+  await page.getByTestId('select-flight-path').click();
+  await page.getByTestId('option-flight-path-classroom-path').click();
+  assert.equal(await page.getByTestId('button-confirm-apply-flight-path').isEnabled(), true);
+  assert.equal(await page.getByTestId('student-classroom-summary').count(), 0);
+  await page.getByTestId('button-confirm-apply-flight-path').click();
+  await waitUntil(() => posts.length === 1, 'Legacy Classroom Flight Path must remain usable');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'apply-flight-path', commandPayload: { flightPathId: path.id } });
+  assert.deepEqual(previews, []);
   assert.deepEqual(harness.pageErrors, []);
 });
 

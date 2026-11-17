@@ -46,15 +46,15 @@ import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import SchoolDayClosureNotice from '../../../shared/components/SchoolDayClosureNotice';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
-import { useClassroomFocusPreview } from '../hooks/useClassroomFocusPreview';
-import { classroomFocusPayload, isClassroomFocusUrl, supportsClassroomFocus } from '../lib/classroomFocus';
+import { useStudentClassroomAccessPreview } from '../hooks/useStudentClassroomAccessPreview';
+import { classroomFocusPayload, classroomFlightPathPayload, flightPathIncludesClassroom, isClassroomFocusUrl, supportsClassroomFocus } from '../lib/classroomFocus';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
 import AutomaticFlightPathStatus from '../components/AutomaticFlightPathStatus';
 import { useAutomaticFlightPathSession } from '../hooks/useAutomaticFlightPathSession';
 import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
-import ClassroomFocusScopeReview from '../components/ClassroomFocusScopeReview';
+import StudentClassroomAccessReview from '../components/StudentClassroomAccessReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { MANUAL_TODAY_QUERY, useManualToday } from '../hooks/useManualToday';
@@ -233,6 +233,7 @@ const selectFlightPathOptions = (data) => mergeTeachingResourceOptions(data, 'fl
 // "This resource only" Waypoints appear only while the server reports
 // preciseRestrictionResourcesV1 active for the school (roadmap PR 2).
 const selectPreciseRestrictionResourcesEnabled = (data) => data?.features?.preciseRestrictionResources === true;
+const selectStudentClassroomAccessEnabled = (data) => data?.features?.studentClassroomAccess === true;
 const selectBlockListOptions = (data) => mergeTeachingResourceOptions(data, 'blockLists');
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_TILE_MAP = new Map();
@@ -936,6 +937,11 @@ export default function Dashboard() {
     queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: selectPreciseRestrictionResourcesEnabled,
+  });
+  const { data: studentClassroomAccessEnabled = false } = useQuery({
+    queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
+    select: selectStudentClassroomAccessEnabled,
   });
 
   const { data: blockLists = EMPTY_LIST } = useQuery({
@@ -6108,9 +6114,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const lockScreenMutation = useMutation({
     // The Entire website payload stays exactly { url }; only This resource
     // only adds a boundary, and the server derives the resource itself.
-    mutationFn: async ({ url, studentIds, boundary, classroomFocus, recipients }) => postActiveCommand(
+    mutationFn: async ({ url, studentIds, boundary, classroomAccess, recipients }) => postActiveCommand(
       'lock-screen',
-      classroomFocus ? { url, classroomFocus } : boundary === 'resource' ? { url, boundary } : { url },
+      classroomAccess ? { url, classroomAccess } : boundary === 'resource' ? { url, boundary } : { url },
       recipients ? snapshotRecipientOptions(recipients) : { studentIds },
     ),
     onSuccess: (data, variables) => {
@@ -6125,7 +6131,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       // Auto-allow an explicit lock domain so on-task students aren't flagged.
       // A This-resource-only Waypoint never allows its whole domain: the
       // off-task check matches the resource itself.
-      if (variables.url !== 'CURRENT_URL' && variables.boundary !== 'resource' && !variables.classroomFocus) {
+      if (variables.url !== 'CURRENT_URL' && variables.boundary !== 'resource' && !variables.classroomAccess) {
         try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       }
       setLockScreenUrl("");
@@ -6254,7 +6260,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const lockScreenEffectiveBoundary = preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website';
-  const classroomFocusRequested = lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl(lockScreenUrl);
+  const classroomFocusRequested = studentClassroomAccessEnabled && lockScreenMode === 'url' && lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl(lockScreenUrl);
   const classroomFocusTargetIds = recipientSnapshot?.kind === 'lock-screen'
     ? recipientSnapshot.confirmIds || recipientSnapshot.snapshot.ids : EMPTY_LIST;
   const classroomFocusRows = recipientSnapshotRows('lock-screen').filter(student => classroomFocusTargetIds.includes(student.studentId));
@@ -6270,10 +6276,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : contextAuthorityRevision;
   const classroomFocusUnsupportedNames = classroomFocusTargetIds.filter(id => !supportsClassroomFocus(classroomFocusRows.find(student => student.studentId === id)))
     .map(id => recipientSnapshot?.snapshot.names[recipientSnapshot.snapshot.ids.indexOf(id)] || 'Student unavailable');
-  const classroomFocusPreview = useClassroomFocusPreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
+  const classroomFocusPreview = useStudentClassroomAccessPreview({ schoolId: activeSchoolId, viewerId: currentUser?.id, mode: 'focus',
     authority: classroomFocusAuthority, contextAuthorityRevision: classroomFocusRevision, targetStudentIds: classroomFocusTargetIds,
-    url: lockScreenUrl.trim(), scopeKey: commandControlScopeKey,
-    enabled: showLockScreenDialog && classroomFocusRequested && Boolean(classroomFocusAuthority),
+    url: classroomFocusRequested ? 'https://classroom.google.com/' : lockScreenUrl.trim(), scopeKey: commandControlScopeKey,
+    enabled: showLockScreenDialog && classroomFocusRequested && Boolean(classroomFocusAuthority) && classroomFocusUnsupportedNames.length === 0,
   });
   const waypointPreview = useRestrictionScopePreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
     enabled: showLockScreenDialog && lockScreenMode === 'url' && !classroomFocusRequested,
@@ -6283,6 +6289,31 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled && !classroomFocusRequested;
   const classroomFocusApplyUnavailable = classroomFocusRequested && (!classroomFocusAuthority
     || classroomFocusUnsupportedNames.length > 0 || classroomFocusPreview.pending || !classroomFocusPreview.preview);
+  const selectedClassroomFlightPath = flightPaths.find(path => path.id === selectedFlightPathId);
+  const classroomFlightPathRequested = studentClassroomAccessEnabled && flightPathIncludesClassroom(selectedClassroomFlightPath);
+  const classroomFlightPathTargetIds = recipientSnapshot?.kind === 'flight-path'
+    ? recipientSnapshot.confirmIds || recipientSnapshot.snapshot.ids : EMPTY_LIST;
+  const classroomFlightPathRows = recipientSnapshotRows('flight-path').filter(student => classroomFlightPathTargetIds.includes(student.studentId));
+  const classroomFlightPathContexts = studentView === 'claimed'
+    ? [...new Set(classroomFlightPathRows.map(student => student.contextId || student.supervisionContext?.id).filter(Boolean))] : EMPTY_LIST;
+  const classroomFlightPathAuthority = studentView === 'claimed'
+    ? classroomFlightPathContexts.length === 1 && classroomFlightPathRows.length === classroomFlightPathTargetIds.length
+      ? { supervisionContextId: classroomFlightPathContexts[0] } : null
+    : effectiveAuthority;
+  const classroomFlightPathRevision = studentView === 'claimed'
+    ? claimedPreviewContextById.get(classroomFlightPathContexts[0])?.contextAuthorityRevision
+      ?? classroomFlightPathRows[0]?.contextAuthorityRevision ?? classroomFlightPathRows[0]?.supervisionContext?.contextAuthorityRevision
+    : contextAuthorityRevision;
+  const classroomFlightPathUnsupportedNames = classroomFlightPathTargetIds.filter(id => !supportsClassroomFocus(classroomFlightPathRows.find(student => student.studentId === id)))
+    .map(id => recipientSnapshot?.snapshot.names[recipientSnapshot.snapshot.ids.indexOf(id)] || 'Student unavailable');
+  const classroomFlightPathPreview = useStudentClassroomAccessPreview({ schoolId: activeSchoolId, viewerId: currentUser?.id, mode: 'flight-path',
+    authority: classroomFlightPathAuthority, contextAuthorityRevision: classroomFlightPathRevision, targetStudentIds: classroomFlightPathTargetIds,
+    flightPathId: selectedClassroomFlightPath?.id, expectedFlightPathUpdatedAt: selectedClassroomFlightPath?.updatedAt,
+    scopeKey: commandControlScopeKey,
+    enabled: showApplyFlightPathDialog && classroomFlightPathRequested && Boolean(classroomFlightPathAuthority) && classroomFlightPathUnsupportedNames.length === 0,
+  });
+  const classroomFlightPathApplyUnavailable = classroomFlightPathRequested && (!classroomFlightPathAuthority
+    || classroomFlightPathUnsupportedNames.length > 0 || classroomFlightPathPreview.pending || !classroomFlightPathPreview.preview);
   const handleConfirmLockScreen = (event) => {
     if (lockScreenMutation.isPending || recipientSendBusyRef.current === 'lock-screen') return;
     if (classroomFocusApplyUnavailable || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
@@ -6319,7 +6350,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const recipients = takeSnapshotRecipients('lock-screen', 'lock-screen', payload, { repeatGesture: event?.detail > 1 });
     if (!recipients) return;
     recipientSendBusyRef.current = 'lock-screen';
-    lockScreenMutation.mutate({ url, recipients, skippedSignedOutCount, boundary, ...(payload.classroomFocus ? { classroomFocus: payload.classroomFocus } : {}) });
+    lockScreenMutation.mutate({ url, recipients, skippedSignedOutCount, boundary, ...(payload.classroomAccess ? { classroomAccess: payload.classroomAccess } : {}) });
 
   };
 
@@ -6368,15 +6399,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const applyFlightPathMutation = useMutation({
-    mutationFn: async ({ flightPathId, allowedDomains, flightPathName, recipients }) => {
-      const data = await postActiveCommand('apply-flight-path', { flightPathId }, snapshotRecipientOptions(recipients));
+    mutationFn: async ({ flightPathId, commandPayload, allowedDomains, flightPathName, recipients }) => {
+      const data = await postActiveCommand('apply-flight-path', commandPayload || { flightPathId }, snapshotRecipientOptions(recipients));
       return { ...data, flightPathName, allowedDomains };
     },
     onSuccess: (data, variables) => {
       toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients));
       setShowApplyFlightPathDialog(false); setSelectedFlightPathId(""); clearRecipientSnapshot('flight-path');
       // Auto-allow all domains in the flight path so they're not flagged as off-task
-      (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
+      if (!variables.commandPayload?.classroomAccess) (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
@@ -6408,10 +6439,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       toast({ variant: "destructive", title: "Flight Path Cannot Be Applied", description: applicability.reason });
       return;
     }
-    const recipients = takeSnapshotRecipients('flight-path', 'apply-flight-path', { flightPathId: flightPath.id }, { repeatGesture: event?.detail > 1 });
+    if (classroomFlightPathApplyUnavailable) return;
+    let commandPayload = { flightPathId: flightPath.id };
+    try { if (classroomFlightPathRequested) commandPayload = classroomFlightPathPayload(flightPath, classroomFlightPathPreview.preview); }
+    catch (error) { classroomFlightPathPreview.invalidate(); toast({ variant: 'destructive', title: 'Review Classroom access again', description: error.message }); return; }
+    const recipients = takeSnapshotRecipients('flight-path', 'apply-flight-path', commandPayload, { repeatGesture: event?.detail > 1 });
     if (!recipients) return;
     recipientSendBusyRef.current = 'flight-path';
-    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });
+    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, commandPayload, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });
   };
 
   const handleRemoveFlightPath = (studentId) => { removeFlightPathMutation.mutate({ studentIds: [studentId] }); };
@@ -8597,7 +8632,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.repeat) return; if (recipientConfirmPending('lock-screen')) focusRecipientSendButton(e); else handleConfirmLockScreen(e); } }} data-testid="input-lock-screen-url" />
-                <p className="text-xs text-muted-foreground">{classroomFocusRequested ? 'Classroom includes the reviewed course materials and assigned websites below.' : preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
+                <p className="text-xs text-muted-foreground">{classroomFocusRequested ? "Classroom includes each student's own courses and assigned websites reviewed below." : preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
                   ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
                   : DOMAIN_RESTRICTION_URL_HELP}</p>
                 {preciseRestrictionResourcesEnabled && (
@@ -8614,11 +8649,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   </fieldset>
                 )}
                 {classroomFocusRequested ? <>
-                  {!classroomFocusAuthority && <p role="alert" className="text-sm text-destructive">Choose students from one supervision group and open Focus again to review their Classroom course.</p>}
+                  {!classroomFocusAuthority && <p role="alert" className="text-sm text-destructive">Choose students from one supervision group and open Focus again to review their Classroom access.</p>}
                   {classroomFocusUnsupportedNames.length > 0 && <p role="alert" className="text-sm text-destructive" data-testid="classroom-focus-extension-required">
                     ClassPilot extension update required for {classroomFocusUnsupportedNames.join(', ')} before Classroom Focus can be applied. Their current restrictions stay in place.
                   </p>}
-                  {classroomFocusAuthority && <ClassroomFocusScopeReview review={classroomFocusPreview} disabled={lockScreenMutation.isPending} />}
+                  {classroomFocusAuthority && classroomFocusUnsupportedNames.length === 0 && <StudentClassroomAccessReview review={classroomFocusPreview} testId="classroom-focus-review" disabled={lockScreenMutation.isPending} />}
                 </> : <RestrictionScopeReview review={waypointPreview} disabled={!lockScreenUrl.trim() || lockScreenMutation.isPending} />}
               </div>
             )}
@@ -8770,11 +8805,18 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     <p className="text-xs font-medium mb-1">Description:</p><p className="text-xs text-muted-foreground mb-2">{fp.description || "No description provided"}</p>
                     <p className="text-xs font-medium mb-1">Allowed Domains ({effectiveDomains.length}):</p>
                     <div className="flex flex-wrap gap-1">{effectiveDomains.length > 0 ? effectiveDomains.map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>)) : <p className="text-xs text-destructive">Add an allowed domain before applying this Flight Path.</p>}</div>
-                    {fp.effectiveAllowedDomains?.includes('classroom.google.com') && <p className="mt-2 text-xs text-muted-foreground">Classroom includes Google work apps and all files in those apps. School and teacher block rules still apply.</p>}
+                    {flightPathIncludesClassroom(fp) && <p className="mt-2 text-xs text-muted-foreground">{studentClassroomAccessEnabled
+                      ? "Classroom includes each student's own Google Classroom courses and reviewed assigned work. Google Search stays blocked."
+                      : "Classroom includes Google work apps. Access to assigned outside websites requires your school to activate expanded Classroom access."}</p>}
                   </div>
                 ) : null;
               })()}
             </div>
+            {classroomFlightPathRequested && <>
+              {!classroomFlightPathAuthority && <p role="alert" className="text-sm text-destructive">Choose students from one supervision group and open Apply Flight Path again to review Classroom access.</p>}
+              {classroomFlightPathUnsupportedNames.length > 0 && <p role="alert" className="text-sm text-destructive" data-testid="classroom-flight-path-extension-required">ClassPilot extension update required for {classroomFlightPathUnsupportedNames.join(', ')} before Classroom access can be applied. Their current restrictions stay in place.</p>}
+              {classroomFlightPathAuthority && classroomFlightPathUnsupportedNames.length === 0 && <StudentClassroomAccessReview review={classroomFlightPathPreview} disabled={applyFlightPathMutation.isPending} />}
+            </>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => closeRecipientDialog('flight-path')} data-testid="button-cancel-apply-flight-path">Cancel</Button>
@@ -8783,6 +8825,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               disabled={
                 applyFlightPathMutation.isPending
                 || !flightPathApplyCapability(flightPaths.find((fp) => fp.id === selectedFlightPathId)).enabled
+                || classroomFlightPathApplyUnavailable
               }
               onKeyDown={ignoreHeldEnter} data-recipient-send=""
               data-testid="button-confirm-apply-flight-path"

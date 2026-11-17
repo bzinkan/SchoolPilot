@@ -113,7 +113,7 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   );
   assert.match(
     heartbeat,
-    /planStatus: school\.planStatus \|\| "active",\s*classroomState: prepared\.classroomState,/
+    /planStatus: school\.planStatus \|\| "active",\s*classroomState: classroomApprovalCurrent \? prepared\.classroomState : null,/
   );
   const staleResponseStart = heartbeat.indexOf('realtimeStatusMutation.status === "stale"');
   const staleResponseEnd = heartbeat.indexOf('throw new Error("Realtime heartbeat snapshot was not created")');
@@ -156,7 +156,7 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   );
   assert.match(
     heartbeat,
-    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: prepared\.controlAuthorityRevision \|\| prepared\.focusCleanup\?\.exactBinding\.controlRevision \|\| 0/,
+    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: \(classroomApprovalCurrent \? prepared\.controlAuthorityRevision : 0\) \|\| prepared\.focusCleanup\?\.exactBinding\.controlRevision \|\| 0/,
     "heartbeat must bind the independently authorized ownership revision to the exact authenticated tuple"
   );
 });

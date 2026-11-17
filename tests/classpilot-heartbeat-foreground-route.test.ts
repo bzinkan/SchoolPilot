@@ -35,7 +35,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; holdRetirement?: boolean; failFallback?: boolean; nullClassification?: boolean; replayed?: boolean } = {}) {
+function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; holdRetirement?: boolean; failFallback?: boolean; nullClassification?: boolean; replayed?: boolean; approvalWithdrawn?: boolean } = {}) {
   const order: string[] = [], frames: Fields[] = [], historical: Fields[] = [], tracked: Promise<unknown>[] = [];
   const counters: string[] = [], phaseCounters: Array<{ name: string; operation: string }> = [];
   const release = deferred(), publication = deferred(), authorityReady = deferred();
@@ -162,6 +162,11 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
     trackingSettings: {}, heartbeatObservationStatus: "active", req: { body: {} },
     classpilotControlAuthorityRevisionForDelivery,
     classpilotControlStateExactBinding(value: Fields) { return value; },
+    ...(options.approvalWithdrawn ? {
+      async studentClassroomAccessApprovalForState() { return true; },
+      studentClassroomAccessApprovalKeyForState() { return "a".repeat(64); },
+      studentClassroomAccessPublicationApprovedFromCache() { return false; },
+    } : {}),
   };
   const run: () => Promise<unknown> = runInNewContext(executable, withDeviceTelemetryContext(context));
   return { run, order, frames, historical, counters, phaseCounters, authorityReady: authorityReady.promise,
@@ -169,6 +174,19 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
     retirementStarted: retirementStarted.promise, releaseRetirement: retirement.resolve,
     snapshot: () => ({ held, fallbackCalls, foregroundAttempts }), drain: async () => { await Promise.all(tracked); } };
 }
+
+test("content approval withdrawn after preparation withholds restrictions while heartbeat stays authenticated", async () => {
+  const f = fixture("published", { replayed: true, approvalWithdrawn: true });
+  const result = await f.run() as Fields;
+  assert.equal(result.ok, true);
+  assert.equal(result.classroomState, null);
+  assert.equal((result.exactBinding as Fields).controlRevision, 0);
+  assert.equal(result.screenshotPolicy, undefined);
+  assert.equal((result.fab as Fields).ownershipRevision, 0);
+  assert.equal(JSON.stringify(result).includes("studentClassroomApprovalKey"), false);
+  assert.ok(f.order.includes("http:ok"));
+  await f.drain();
+});
 
 test("a durable replay rebuilds current locked classroom policy without republishing old presence", async () => {
   const f = fixture("published", { replayed: true });

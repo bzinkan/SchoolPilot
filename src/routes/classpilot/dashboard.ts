@@ -38,6 +38,7 @@ import {
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { getSchoolWebsitePolicy } from "../../services/classpilotSchoolWebsitePolicy.js";
+import { publicGroupAutomaticFlightPath } from "../../services/classpilotAutomaticFlightPath.js";
 
 const router = Router();
 
@@ -359,7 +360,7 @@ router.get("/groups", ...auth, async (req, res, next) => {
     } else {
       groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);
     }
-    return res.json({ groups: groupsList });
+    return res.json({ groups: groupsList.map(publicGroupAutomaticFlightPath) });
   } catch (err) {
     next(err);
   }
@@ -423,7 +424,7 @@ router.post("/groups", ...auth, async (req, res, next) => {
       coTeacherIds: [],
       scheduleChangeActorId: req.authUser!.id,
     });
-    return res.status(201).json({ group });
+    return res.status(201).json({ group: publicGroupAutomaticFlightPath(group) });
   } catch (err) {
     next(err);
   }

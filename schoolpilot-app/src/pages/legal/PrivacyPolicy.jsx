@@ -72,6 +72,7 @@ export default function PrivacyPolicy() {
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>Google Classroom roster information (class names, student enrollments)</li>
+              <li>When a school separately authorizes Classroom assignment access, published assignment, material and announcement links from each student's own active and archived Classroom courses, used to build student-specific browsing restrictions. This feature does not fetch student submissions, grades or unrelated Drive file contents</li>
               <li>Active-tab and open-tab activity, including tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
               <li>Screen capture thumbnails for an authorized classroom, supervision, or administrator observation context, and separately authorized safety evidence captures, which may contain visible website content</li>
               <li>Student and teacher communications sent through ClassPilot</li>
@@ -108,6 +109,7 @@ export default function PrivacyPolicy() {
               <li>Manage digital hall passes and record departures, destinations, and returns</li>
               <li>Facilitate safe and efficient school dismissal</li>
               <li>Sync classroom rosters from Google Classroom</li>
+              <li>When separately authorized by the school, include students' own published Classroom work in Focus and manual or scheduled Flight Paths</li>
               <li>Display student screen previews within an authorized classroom, supervision, or administrator observation context</li>
               <li>Generate usage reports for teachers and administrators</li>
               <li>Classify monitored URL/domain signals and generate automated safety alerts for authorized human review</li>

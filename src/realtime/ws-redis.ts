@@ -31,6 +31,8 @@ export type WsRedisTarget =
       studentId: string;
       studentSessionId: string;
       deviceId: string;
+      /** Server-only source approval generation. Never part of the browser message. */
+      requiredStudentClassroomApprovalKey?: string;
       requiredCapability?:
         | "lateSignInRestrictionSsoV1"
         | "restrictionAuthPassThroughV1"
@@ -84,6 +86,13 @@ function messageForTarget(target: WsRedisTarget, message: unknown): unknown {
     : target.kind === "staff-context"
       ? correlateClasspilotContextMessage(target.supervisionContextId, message)
       : message;
+}
+export function validStudentClassroomPublicationTarget(target: unknown): boolean {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return false;
+  if (!Object.hasOwn(target, "requiredStudentClassroomApprovalKey")) return true;
+  const value = target as Record<string, unknown>;
+  return value.kind === "student-binding" && typeof value.requiredStudentClassroomApprovalKey === "string"
+    && /^[a-f0-9]{64}$/.test(value.requiredStudentClassroomApprovalKey);
 }
 
 export type CommandHotPathPhase =
@@ -514,7 +523,7 @@ export async function subscribeWS(
       try {
         subscribed = true;
         const envelope = JSON.parse(payload) as WsRedisEnvelope;
-        if (!envelope) {
+        if (!envelope || !validStudentClassroomPublicationTarget(envelope.target)) {
           return;
         }
         // Skip messages from this instance (they were already handled locally)
@@ -559,6 +568,7 @@ export async function subscribeWS(
 export type WsPublicationOutcome = RedisPublicationOutcome<number>;
 
 function publicationEnvelope(target: WsRedisTarget, message: unknown, options: PublishWSOptions = {}): WsRedisEnvelope {
+  if (!validStudentClassroomPublicationTarget(target)) throw new Error("Invalid student Classroom publication target");
   return { instanceId, target, message: messageForTarget(target, message),
     includeSource: options.includeSource || undefined, orderedKey: options.orderedKey, revision: options.revision };
 }

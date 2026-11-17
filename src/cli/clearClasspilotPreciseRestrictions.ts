@@ -278,7 +278,8 @@ export async function runPreciseRestrictionClearCli(args: string[]): Promise<num
         { schoolId },
         () => clearModule.planClasspilotPreciseRestrictionClear(schoolId)
       );
-      const blocked = plan.controlStateCount + plan.classroomStateCount > 0;
+      const blocked = plan.controlStateCount + plan.classroomStateCount
+        + plan.automaticSessionStateCount + plan.automaticGroupPolicyCount > 0;
       emit({
         version: REPORT_VERSION,
         status: blocked ? "blocked" : "passed",

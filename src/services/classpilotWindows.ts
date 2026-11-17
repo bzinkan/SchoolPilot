@@ -1,3 +1,4 @@
+import { studentClassroomAccessApprovalForState } from "./classpilotStudentClassroomAccess.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -107,6 +108,7 @@ async function windowsPolicy(binding:WindowsBinding,database:NativeStorageDb,log
   const state=authority?await getClasspilotStudentControlState(browser.schoolId,browser.studentId,database):undefined;
   const sso=await getClasspilotSsoPolicyForSchool(browser.schoolId,database);
   const classroomState=state&&browser.acceptedCapabilities.includes("scopedAuthorityChecksV1")&&browser.capabilityBlockedRevision!==state.revision?serializeClasspilotStudentControlStateForDelivery({state,
+    studentClassroomAccessApproved:await studentClassroomAccessApprovalForState(state),
     gateActive:isClasspilotCapabilityActive("lateSignInRestrictionSsoV1",{schoolId:browser.schoolId}),acceptedCapabilities:browser.acceptedCapabilities,
     exactBinding:{schoolId:browser.schoolId,studentId:browser.studentId,studentSessionId:browser.id,deviceId:browser.id},
     authPassThrough:{gateActive:isClasspilotCapabilityActive("restrictionAuthPassThroughV1",{schoolId:browser.schoolId}),policyRevision:sso.revision,policy:sso.policy},...(login?{portalFirstOnLogin:true as const}:{})}).classroomState:null;
@@ -242,6 +244,7 @@ export async function windowsTiles(scope:WindowsScope,input:NativeContext&{stude
 export async function dispatchWindowsCommand(scope:WindowsScope,input:NativeContext&{targetScope:"students";targetStudentIds:string[];commandType:string;commandPayload:Record<string,unknown>;browserTargets?:WindowsTarget[]}){
   if(Object.hasOwn(input.commandPayload,WINDOWS_UNAVAILABLE_AUDIENCE))throw new ClasspilotWindowsError("WINDOWS_INVALID_REQUEST",400);
   const payload=validateClasspilotCommandPayload(input.commandType,input.commandPayload);
+  if(payload.classroomAccess!==undefined)throw new ClasspilotWindowsError("WINDOWS_CLASSROOM_ACCESS_UNSUPPORTED",409);
   if(!WINDOWS_POLICY_COMMANDS.has(input.commandType)&&!WINDOWS_TAB_COMMANDS.has(input.commandType)&&!["timer","poll","teacher-message","lesson-activity"].includes(input.commandType))throw new ClasspilotWindowsError("WINDOWS_COMMAND_UNSUPPORTED",400);
   return withWindowsSchool(scope.schoolId,input.targetStudentIds,async database=>{
     const request={...staffRequest(scope,input),studentIds:input.targetStudentIds,commandType:input.commandType};

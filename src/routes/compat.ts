@@ -10,6 +10,7 @@ import { classPilotStudentDto } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
 import { requireClasspilotFullMonitoring } from "../services/classpilotMonitoringPolicy.js";
 import { canObserveClasspilotSession } from "../services/classpilotObservationAuthority.js";
+import { publicGroupAutomaticFlightPath } from "../services/classpilotAutomaticFlightPath.js";
 import {
   getGradesBySchool,
   createGrade,
@@ -824,7 +825,7 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
       },
       scheduleChangeActorId: req.authUser!.id,
     });
-    return res.status(201).json({ group });
+    return res.status(201).json({ group: publicGroupAutomaticFlightPath(group) });
   } catch (err) {
     next(err);
   }

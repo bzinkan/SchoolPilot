@@ -5,6 +5,7 @@ import db from "../db.js";
 import { settings } from "../schema/shared.js";
 import { eq } from "drizzle-orm";
 import { classroomFocusScopeAllowsUrl, isClassroomFocusWebsiteUrl } from "./classroomFocusScope.js";
+import { validateStudentClassroomFlightPath } from "./classpilotStudentClassroomAccess.js";
 const allowedCache = new Map<string, { until: number; value: Promise<string[]> }>();
 /** Task-attribution hint only; never used for safety suppression or authorization. */
 export async function schoolAllowedDomainsForTaskIntent(schoolId: string): Promise<string[]> {
@@ -20,13 +21,14 @@ export async function schoolAllowedDomainsForTaskIntent(schoolId: string): Promi
 }
 export function classpilotTeacherIntentForUrl(url: string, options: {
   allowedDomains: readonly string[];
-  flightPath?: { active?: boolean; allowedDomains?: readonly string[] | null; resources?: unknown } | null;
+  flightPath?: { active?: boolean; allowedDomains?: readonly string[] | null; resources?: unknown; classroomMaterials?: unknown } | null;
   screenLock?: { active?: boolean; url?: string | null; classroomScope?: unknown } | null;
 }): "classroom_focus" | "flight_path" | "school_allowed_domain" | null {
   let hostname: string;
   try { const parsed = new URL(url); if (!["http:", "https:"].includes(parsed.protocol)) return null; hostname = parsed.hostname; } catch { return null; }
   if (options.screenLock?.active && isClassroomFocusWebsiteUrl(options.screenLock.url)
     && classroomFocusScopeAllowsUrl(options.screenLock.classroomScope, url)) return "classroom_focus";
+  if (options.flightPath && Object.hasOwn(options.flightPath, "classroomMaterials") && !validateStudentClassroomFlightPath(options.flightPath)) return null;
   if (options.flightPath?.active && options.flightPath.allowedDomains?.some((entry) => domainMatches(hostname, entry))) return "flight_path";
   // Sections and resources of a precise Flight Path (only ever delivered to a
   // binding that accepted preciseRestrictionResourcesV1) attribute the same way.
