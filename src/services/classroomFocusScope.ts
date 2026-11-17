@@ -9,6 +9,39 @@ export const CLASSROOM_FOCUS_BASE_DOMAINS = ["classroom.google.com", "docs.googl
   "sheets.google.com", "slides.google.com", "forms.google.com", "forms.gle"] as const;
 const FORBIDDEN_DOMAIN_ROOTS = ["youtube.com", "youtube-nocookie.com", "youtu.be", "accounts.google.com",
   "login.microsoftonline.com", "accounts.youtube.com"];
+// Google's published Search domain inventory, pinned 2026-11-16. Brand sites such
+// as google.org/google.dev are not Search roots and must not be inferred from a TLD.
+// Source: https://www.google.com/supported_domains
+const GOOGLE_SEARCH_ROOTS = new Set(`
+google.com google.ad google.ae google.com.af google.com.ag google.al google.am google.co.ao google.com.ar
+google.as google.at google.com.au google.az google.ba google.com.bd google.be google.bf google.bg
+google.com.bh google.bi google.bj google.com.bn google.com.bo google.com.br google.bs google.bt google.co.bw
+google.by google.com.bz google.ca google.cd google.cf google.cg google.ch google.ci google.co.ck google.cl
+google.cm google.cn google.com.co google.co.cr google.com.cu google.cv google.com.cy google.cz google.de
+google.dj google.dk google.dm google.com.do google.dz google.com.ec google.ee google.com.eg google.es
+google.com.et google.fi google.com.fj google.fm google.fr google.ga google.ge google.gg google.com.gh
+google.com.gi google.gl google.gm google.gr google.com.gt google.gy google.com.hk google.hn google.hr
+google.ht google.hu google.co.id google.ie google.co.il google.im google.co.in google.iq google.is google.it
+google.je google.com.jm google.jo google.co.jp google.co.ke google.com.kh google.ki google.kg google.co.kr
+google.com.kw google.kz google.la google.com.lb google.li google.lk google.co.ls google.lt google.lu google.lv
+google.com.ly google.co.ma google.md google.me google.mg google.mk google.ml google.com.mm google.mn
+google.com.mt google.mu google.mv google.mw google.com.mx google.com.my google.co.mz google.com.na
+google.com.ng google.com.ni google.ne google.nl google.no google.com.np google.nr google.nu google.co.nz
+google.com.om google.com.pa google.com.pe google.com.pg google.com.ph google.com.pk google.pl google.pn
+google.com.pr google.ps google.pt google.com.py google.com.qa google.ro google.ru google.rw google.com.sa
+google.com.sb google.sc google.se google.com.sg google.sh google.si google.sk google.com.sl google.sn
+google.so google.sm google.sr google.st google.com.sv google.td google.tg google.co.th google.com.tj google.tl
+google.tm google.tn google.to google.com.tr google.tt google.com.tw google.co.tz google.com.ua google.co.ug
+google.co.uk google.com.uy google.co.uz google.com.vc google.co.ve google.co.vi google.com.vn google.vu
+google.ws google.rs google.co.za google.co.zm google.co.zw google.cat
+`.trim().split(/\s+/));
+/** Published Google Search roots and explicit Search aliases cannot be assignment website grants. */
+export function isGoogleSearchHostname(hostname: string): boolean {
+  const host = hostname.replace(/^www\./, "");
+  return GOOGLE_SEARCH_ROOTS.has(host)
+    || ["images", "image", "video", "videos", "search", "encrypted"].some(alias =>
+      host.startsWith(`${alias}.`) && GOOGLE_SEARCH_ROOTS.has(host.slice(alias.length + 1)));
+}
 
 export type ClassroomFocusScope = {
   schemaVersion: 1;
@@ -40,7 +73,7 @@ export function validateClassroomFocusScope(value: unknown): ClassroomFocusScope
     const domains: string[] = [];
     for (const raw of scope.allowedDomains) {
       if (typeof raw !== "string" || canonicalRestrictionHostname(raw) !== raw || domains.includes(raw)
-        || raw === "google.com" || FORBIDDEN_DOMAIN_ROOTS.some(root => raw === root || raw.endsWith(`.${root}`))) return null;
+        || isGoogleSearchHostname(raw) || FORBIDDEN_DOMAIN_ROOTS.some(root => raw === root || raw.endsWith(`.${root}`))) return null;
       domains.push(raw);
     }
     if (!CLASSROOM_FOCUS_BASE_DOMAINS.every(host => domains.includes(host))) return null;
@@ -48,7 +81,7 @@ export function validateClassroomFocusScope(value: unknown): ClassroomFocusScope
     const identities = new Set<string>();
     for (const raw of scope.resources) {
       const resource = validateAllowedResource(raw);
-      if (!resource || resource.type === "website"
+      if (!resource || resource.type === "website" || isGoogleSearchHostname(resource.hostname)
         || (resource.type === "section" && FORBIDDEN_DOMAIN_ROOTS.some(root =>
           resource.hostname === root || resource.hostname.endsWith(`.${root}`)))) return null;
       const identity = restrictionResourceIdentityKey(resource);

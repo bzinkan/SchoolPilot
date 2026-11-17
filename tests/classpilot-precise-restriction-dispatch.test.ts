@@ -420,7 +420,7 @@ test("the rollback clear ends every stored precise restriction with one revision
   assert.equal(plan.classroomStateCount, 2);
   assert.deepEqual(
     (await inSchool(() => clear.inventoryClasspilotPreciseRestrictions())).filter((entry) => entry.schoolId === ids.school),
-    [{ schoolId: ids.school, controlStateCount: 3, classroomStateCount: 2 }]
+    [{ schoolId: ids.school, controlStateCount: 3, classroomStateCount: 2, automaticSessionStateCount: 0, automaticGroupPolicyCount: 0 }]
   );
 
   const failedWith = (code: string) => (error: unknown) => (error as { code?: string }).code === code;
@@ -448,6 +448,8 @@ test("the rollback clear ends every stored precise restriction with one revision
       flightPathsCleared: 1,
       restorableSnapshotsCleared: 1,
       classroomStatesCleared: 2,
+      automaticSessionStatesCleared: 0,
+      automaticGroupPoliciesDisabled: 0,
     });
 
     const capableAfter = (await control(ids.capable))!;

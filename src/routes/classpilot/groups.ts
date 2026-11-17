@@ -32,6 +32,7 @@ import {
   groupHasTeachingHistory,
   getClasspilotAutomaticFlightPathPolicy,
   updateClasspilotAutomaticFlightPathPolicy,
+  previewClasspilotAutomaticClassroomAccess,
   getClasspilotManualTodayStatus,
   enableClasspilotManualToday,
 } from "../../services/storage.js";
@@ -42,6 +43,7 @@ import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotSchedul
 import { pushClasspilotSessionControlStates, runClasspilotFinalizationSideEffects } from "../../services/classpilotSessionLifecycle.js";
 import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
 import { safeErrorMetadata } from "../../util/safeLogging.js";
+import { publicGroupAutomaticFlightPath } from "../../services/classpilotAutomaticFlightPath.js";
 
 const router = Router();
 
@@ -104,7 +106,7 @@ router.get("/", ...auth, async (req, res, next) => {
     const enriched = await Promise.all(
       groups.map(async (g) => {
         const students = await getGroupStudents(g.id);
-        return { ...g, studentCount: students.length };
+        return { ...publicGroupAutomaticFlightPath(g), studentCount: students.length };
       })
     );
 
@@ -118,7 +120,24 @@ const automaticFlightPathPolicyInput = z.object({
   expectedRevision: z.number().int().nonnegative(),
   enabled: z.boolean(),
   flightPathId: z.string().trim().min(1).max(128).nullable(),
+  expectedFlightPathUpdatedAt: z.string().datetime({ offset: true }).optional(),
+  classroomAccess: z.object({ reviewToken: z.string().min(1).max(8192) }).strict().optional(),
 }).strict();
+const automaticClassroomPreviewInput = z.object({
+  flightPathId: z.string().trim().min(1).max(128),
+  expectedFlightPathUpdatedAt: z.string().datetime({ offset: true }),
+  expectedRevision: z.number().int().nonnegative(),
+}).strict();
+
+router.post("/:id/automatic-flight-path/classroom-preview", ...auth, async (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  const parsed = automaticClassroomPreviewInput.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Review the exact saved Flight Path and class preset revision" });
+  try {
+    return res.json(await previewClasspilotAutomaticClassroomAccess({ schoolId: res.locals.schoolId!,
+      groupId: param(req, "id"), actorId: req.authUser!.id, ...parsed.data }));
+  } catch (error) { next(error); }
+});
 
 // A class's website preset is its own revisioned preference. In particular,
 // this writer does not grant permission to edit an official roster/schedule.
@@ -192,7 +211,7 @@ router.get("/:id", ...auth, async (req, res, next) => {
     }));
     const subgroups = await getSubgroupsByGroup(group.id);
 
-    return res.json({ group, students, subgroups });
+    return res.json({ group: publicGroupAutomaticFlightPath(group), students, subgroups });
   } catch (err) {
     next(err);
   }
@@ -239,7 +258,7 @@ router.post("/", ...auth, async (req, res, next) => {
       scheduleChangeActorId: req.authUser!.id,
     });
 
-    return res.status(201).json({ group });
+    return res.status(201).json({ group: publicGroupAutomaticFlightPath(group) });
   } catch (err) {
     next(err);
   }
@@ -298,7 +317,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
       scheduleChangeActorId: req.authUser!.id,
     });
 
-    return res.json({ group: updated });
+    return res.json({ group: updated ? publicGroupAutomaticFlightPath(updated) : updated });
   } catch (err) {
     next(err);
   }

@@ -1,10 +1,125 @@
-# Classroom Focus with assigned materials
+# Classroom access in Focus and Flight Paths
 
 Implementation prepared November 16, 2026. This document does not establish a
 production deployment, Chrome Web Store publication, or managed-device adoption.
 The API/web app and the ClassPilot extension are separate releases.
 
-## Teacher behavior
+## Student courses: current teacher behavior
+
+A website Focus on `classroom.google.com`, or a Flight Path containing that
+website, reviews the selected students' **own** Classroom courses when the school
+has activated expanded Classroom access. It includes
+their accessible active and archived courses, published assignments, materials
+and announcements. Each student gets a separate allowed scope. Never combine
+classmates' course websites into a shared delivered allowlist. The review shows
+aggregate permitted websites/videos and counts, without other course titles or
+assignment content.
+
+Google work apps and student-created copies remain available. Assigned outside
+links permit the whole website and its subdomains, explicitly disclosed in the
+review. Assigned YouTube videos remain specific videos. Known Google Search
+links are excluded with an explicit review warning; unrelated sites stay blocked,
+including in new tabs. An existing broad Search grant in the saved Flight Path
+must be removed before that path can use this mode. School/teacher blocks and
+separately configured sign-in permissions keep their priority. Unlisted redirects
+are not discovered or automatically allowed. Approved websites may contain answers.
+
+The separate **This resource only** option stays narrow. Entering a full URL in
+Entire website mode is still a website restriction. One Classroom assignment page
+does not implicitly allow its linked documents or external materials.
+
+Manual application uses `POST /api/classpilot/commands/classroom-access/preview`
+with mode `focus` or `flight-path`, canonical class/supervision authority and
+nonempty exact student IDs. A Flight Path review also binds its saved ID/version
+and base policy. Confirmation submits only `classroomAccess: { reviewToken }`
+alongside the normal command fields; no client-computed website list is accepted.
+The two-minute proof binds actor, school, authority, mode, targets, per-student
+source-map hash and the saved path. Changed source/path/authority/targets or
+expiry require another review. The old teacher-course endpoint below remains a
+strict compatibility API, not the new Dashboard's default.
+
+## Automatic class starts
+
+The automatic preset reviews and explicitly authorizes current and future
+published work from each student's own courses. Durable approval belongs to one
+class, saved path and primary teacher; it is not written onto the school library
+path. The short-lived setup proof binds exact current policy/path/roster/source
+versions. Existing saved-path edits retain their normal next-session behavior.
+
+At manual Today, scheduled/report-to-live and dated-transition boundaries, source
+preparation runs **before** the outer class/Today/student authority locks. The
+transaction rechecks policy, primary teacher, saved path, roster and preparation
+expiry, then freezes per-student session payloads once. Missing, failed or stale
+preparation is visibly unavailable; it never claims expanded browsing permissions
+were applied. Later reconciliation and Coverage return use the frozen snapshot,
+respect manual overrides and do not reread Google under locks or on heartbeat.
+New publications during a running class require explicit review/reapplication or
+the next automatic start.
+
+## Separate Google Workspace authorization
+
+The existing roster connector alone cannot read student assignments. In
+ClassPilot IT Readiness, a school administrator enables the separate Classroom
+assignment-access purpose after authorizing the combined read-only DWD scopes in
+Google Admin. The combined list preserves existing roster permissions. The content
+token uses courses-readonly, own-coursework-readonly, materials-readonly,
+announcements-readonly and the existing profile-email scope. It reads as each
+exact student and verifies Google's profile ID against the current-school imported
+student Google ID before reading any course content. Chrome profile identity is
+not used as the student identity on a shared Chromebook.
+
+The Flight Paths API advertises `features.studentClassroomAccess: true` only when
+the school's Classroom runtime capability is active. With it off, existing website
+Focus and manual/automatic Flight Paths retain their ordinary behavior; they do
+not include the new assignment-derived outside websites. With it on, an unavailable
+source or incompatible client stops expanded application instead of substituting
+a website-only policy.
+
+Only published links and their metadata are processed. No student submissions,
+grades, comments, destination pages or unrelated Drive file contents are fetched.
+No Gmail permission is introduced. Source requests have bounded eight-second
+calls, twelve-second student and thirty-second batch deadlines, with four students
+and two course reads per student concurrently. Existing source and compiled-scope
+limits apply across each student's complete course set, including the 200-entry /
+49,152-byte final scope. Incomplete/unknown source errors stop the review.
+
+Content verification and local disable are separate from roster import and cannot
+damage roster connection status on a failed content check. A nullable
+`google_roster_connectors.classroom_access_approval` JSONB column records the
+separately verified approval generation. CAS protects disconnect/reconnect and
+ABA races. Reverification rotates that generation; old proofs, saved approvals,
+stored scopes and queued publications cannot revive under a different approval.
+
+## Existing 3.0.7 wire and current release
+
+The canonical 3.0.7 ZIP/tag are unchanged. Its SHA-256 remains
+`bf884705903cc8234024933ba5d9ee297dd8a30f56393674655ed07f5963346a`.
+Focus uses the existing `screenLock.classroomScope`; a reviewed Flight Path uses
+the existing `allowedDomains` and optional nonempty precise `resources`. Server
+`classroomMaterials` provenance and the command's private `classroomAccessV1`
+per-target map are validated before delivery and never appear in public history
+or browser wire messages. Delayed server publications carry a separate private
+approval-generation fence. Screen-only Unfocus restores the saved Flight Path.
+
+Both modes require exact binding and accepted `scopedAuthorityChecksV1`,
+`preciseRestrictionResourcesV1` and `classroomFocusScopeV1`, even when no precise
+video resource is present. The existing Classroom runtime capability remains
+default off. Deploy API/worker and web normally, leaving it off. The new additive
+column migration adds no tenant table or RLS admission. Keep the unchanged 3.0.7
+ZIP's receipt and run native acceptance with
+`node --import ./tests/test-environment.mjs --import tsx scripts/verify-student-classroom-extension.mjs`.
+Store upload, managed Chromebook adoption, separate Google administrator approval
+and guarded school activation remain real prerequisites; synthetic tests establish
+none of those. Windows is not qualified for this new authoring mode.
+
+Rollback must clear live, flat, inactive and restorable Classroom-derived controls,
+plus automatic schema-2 approvals and frozen per-student session maps before an
+older image can serve them. Use the inventory/proof/clear procedure in
+[the rollout runbook](CLASSPILOT_ROADMAP_RUNTIME_ROLLOUT.md); do not hand-delete rows.
+Capability/content disable alone can withhold updates while a browser retains its
+last restriction until a clearing revision or hard expiry.
+
+## Legacy teacher-course Focus behavior (compatibility API)
 
 An explicit `classroom.google.com` website Focus first reviews a Google Classroom
 course using the teacher's connected account for the active school. A mapped
@@ -31,7 +146,7 @@ Ordinary website/resource Focus, current-page Focus and Classroom Open keep thei
 existing contracts. Unfocus (`unlock-screen` with `screenOnly: true`) removes the
 Classroom scope and reveals the prior Flight Path unchanged.
 
-## Authority and source contract
+## Legacy teacher-course authority contract
 
 `POST /api/classpilot/commands/classroom-focus/preview` uses the canonical command
 authentication, school entitlement, full monitoring and class authority checks.
@@ -71,7 +186,7 @@ It is limited to 200 combined entries and 49,152 UTF-8 bytes, with existing nati
 regex/rule limits. Broad `google.com`, YouTube website scopes and sign-in host
 scopes are rejected. YouTube/auth-host Sections cannot bypass that restriction.
 
-## Capability and release order
+## Shared capability and original Focus release order
 
 `classroomFocusScopeV1` requires both `scopedAuthorityChecksV1` and
 `preciseRestrictionResourcesV1`, including advertisement, negotiated acceptance
@@ -84,6 +199,10 @@ switch withhold the entire scoped snapshot. There is no single-host fallback.
 Exact student/session/device binding remains transport-only and is rechecked at
 delivery. The separate extension persists a schema-4 marker so an older client
 cannot strip the new scope and claim that it restored it.
+
+The following is the original single-course Focus release sequence. Its successor
+package is the retained 3.0.7 archive; the student-course server update above uses
+that archive unchanged and adds the separate approval-column migration.
 
 1. Merge/review the login recovery and bulk Unfocus prerequisites, then these
    cross-repository changes. Run the source, API, Dashboard and packaged Chrome

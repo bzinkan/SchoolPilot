@@ -32,7 +32,34 @@ export function classroomFocusReviewValid(value, now = Date.now()) {
 }
 
 export function classroomFocusPayload(preview) {
+  if (studentClassroomAccessReviewValid(preview, 'focus')) {
+    return { url: 'https://classroom.google.com/', classroomAccess: { reviewToken: preview.reviewToken } };
+  }
   if (!classroomFocusReviewValid(preview)) throw new Error('Review the current Classroom scope before setting Focus.');
   return { url: 'https://classroom.google.com/',
     classroomFocus: { courseId: preview.course.id, reviewToken: preview.reviewToken } };
+}
+
+export function studentClassroomAccessReviewValid(value, mode) {
+  return value?.schemaVersion === 1 && value.purpose === 'student-classroom-access'
+    && ['focus', 'flight-path', 'automatic-flight-path'].includes(value.mode) && value.mode === mode
+    && Number.isSafeInteger(value.studentCount) && value.studentCount > 0
+    && ['courseCount', 'itemCount', 'linkCount'].every(key => Number.isSafeInteger(value[key]) && value[key] >= 0)
+    && typeof value.reviewToken === 'string' && value.reviewToken.length > 0
+    && Number.isFinite(value.expiresAt) && value.expiresAt > Date.now()
+    && Array.isArray(value.scopes) && value.scopes.length > 0 && Array.isArray(value.warnings);
+}
+
+export function flightPathIncludesClassroom(path) {
+  return (path?.allowedDomains || []).some(isClassroomFocusUrl)
+    || (path?.resources || []).some(resource => resource?.type === 'website' && isClassroomFocusUrl(resource.hostname));
+}
+
+export function classroomFlightPathPayload(path, preview) {
+  if (!path?.id || typeof path.updatedAt !== 'string' || !Number.isFinite(Date.parse(path.updatedAt))
+    || !studentClassroomAccessReviewValid(preview, 'flight-path')) {
+    throw new Error('Review the current Flight Path and Classroom access again before applying.');
+  }
+  return { flightPathId: path.id, expectedFlightPathUpdatedAt: path.updatedAt,
+    classroomAccess: { reviewToken: preview.reviewToken } };
 }

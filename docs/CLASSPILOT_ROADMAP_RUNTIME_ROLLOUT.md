@@ -141,28 +141,48 @@ Follow these steps in order. They end every stored precise restriction explicitl
    WHERE desired_state @? 'strict $.restrictions.screenLock.resource'
       OR desired_state @? 'strict $.restrictions.screenLock.classroomScope'
       OR desired_state @? 'strict $.restrictions.flightPath.resources'
+      OR desired_state @? 'strict $.restrictions.flightPath.classroomMaterials'
+      OR desired_state @? 'strict $.restrictions.screenLock.classroomMaterials'
       OR desired_state @? 'strict $.screenLock.resource'
       OR desired_state @? 'strict $.screenLock.classroomScope'
       OR desired_state @? 'strict $.flightPath.resources'
+      OR desired_state @? 'strict $.flightPath.classroomMaterials'
+      OR desired_state @? 'strict $.screenLock.classroomMaterials'
       OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.resource'
       OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.classroomScope'
       OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.flightPath.resources'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.flightPath.classroomMaterials'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.classroomMaterials'
       OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.resource'
       OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.classroomScope'
       OR desired_state @? 'strict $.restorableClassState.desiredState.flightPath.resources'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.flightPath.classroomMaterials'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.classroomMaterials'
    GROUP BY school_id
    UNION ALL
    SELECT 'classroom_state' AS kind, school_id, count(*)::int AS row_count
    FROM classpilot_classroom_states
    WHERE cleared_at IS NULL
-     AND ((state_type = 'screen-lock' AND (payload ? 'resource' OR payload ? 'classroomScope'))
-       OR (state_type = 'flight-path' AND payload ? 'resources'))
+     AND ((state_type = 'screen-lock' AND (payload ? 'resource' OR payload ? 'classroomScope' OR payload ? 'classroomMaterials'))
+       OR (state_type = 'flight-path' AND (payload ? 'resources' OR payload ? 'classroomMaterials')))
+   GROUP BY school_id
+   UNION ALL
+   SELECT 'automatic_session' AS kind, coalesce(teaching_sessions.school_id, groups.school_id) AS school_id, count(*)::int AS row_count
+   FROM teaching_sessions JOIN groups ON groups.id = teaching_sessions.group_id
+   WHERE (automatic_flight_path_state->>'schemaVersion' = '2' OR automatic_flight_path_state ? 'perStudentPayloads' OR automatic_flight_path_state->'payload' ? 'classroomMaterials')
+   GROUP BY coalesce(teaching_sessions.school_id, groups.school_id)
+   UNION ALL
+   SELECT 'automatic_policy' AS kind, school_id, count(*)::int AS row_count
+   FROM groups
+   WHERE (automatic_flight_path_policy->>'schemaVersion' = '2' OR automatic_flight_path_policy ? 'classroomAccess')
    GROUP BY school_id
    ORDER BY kind, school_id;
    ```
 
 3. **Project the registry onto the target image.** Plan and Apply `precise-restriction-resources-off` again with `-RegistryTargetAppSha <the older image's full app SHA>`. The plan projects onto what both the serving image and the target register: it drops the precise entry and kill switch, which are already off, and preserves every other control. The plan records the target, and Apply re-derives the same projection. A target that would drop an active capability is refused; turn that capability off with its own off profile first. This works after ordinary `scripts/deploy.sh` deploys too, and needs no `-Operation Rollback` and no pre-PR-2 tool. Apply no other runtime profile between this step and step 4: a plan against the still-serving PR 2 image would write the entry again.
 4. **Only then revert the image**, and never below the PR 2-pre (#550) image. `scripts/deploy.sh` carries the live registry forward; it now names only capabilities the older image registers, so the older image boots. Later plans against it project onto its registry automatically.
+
+The clear also removes frozen per-student automatic Classroom maps from teaching sessions and disables automatic policies carrying Classroom content approvals. Its reviewed proof binds their complete JSON snapshots, and execution locks class/start authority and student controls before rechecking and clearing them. Ordinary automatic website policies stay configured. This prevents reconciliation or a later start from restoring compiled Classroom access after the controls have been cleared; enabling it again requires a fresh review.
 
 If step 2 is skipped, an older image still fails closed: the PR 2-pre fence withholds every stored precise state, so a capable 2.9.7 device keeps its last applied restriction until the revision changes or `hardExpiresAt` passes (at most 12 hours), and teachers see the student as unsupported. The clear is still required, because it ends those restrictions visibly and leaves nothing for a later image to interpret.
 

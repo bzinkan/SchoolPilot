@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { automaticFlightPathStateDto } from "./classpilotAutomaticFlightPath.js";
+import type { PreparedAutomaticClassroomAccess } from "./classpilotAutomaticClassroomAccess.js";
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalFromCache, studentClassroomAccessApprovalKeyForState } from "./classpilotStudentClassroomAccess.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import type db from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
@@ -15,6 +17,7 @@ import {
   claimDueSessionSummaryDeliveries,
   completeSessionSummaryDelivery,
   createTeachingSession,
+  prepareClasspilotAutomaticClassroomAccessForGroup,
   countOverdueSessionSummaryDeliveries,
   finalizeTeachingSession,
   getCentralEmailRecipientForSchool,
@@ -150,6 +153,7 @@ async function publishControlStateRows(
         // side effect. Provenance is immutable, so stamped clears and expired
         // rows still require the exact-school gate and per-socket capability.
         if (!current || current.revision !== state.revision) return null;
+        await studentClassroomAccessApprovalForState(current);
         const lateSignInRequired = classpilotControlStateHasLateSignInOrigin(
           current.desiredState
         );
@@ -171,6 +175,7 @@ async function publishControlStateRows(
           : undefined;
         const delivered = serializeClasspilotStudentControlStateForDelivery({
           state: prepared.current,
+          studentClassroomAccessApproved: studentClassroomAccessApprovalFromCache(schoolId, prepared.current.desiredState),
           gateActive,
           acceptedCapabilities: realtime?.acceptedCapabilities ?? [],
           exactBinding: exactTarget,
@@ -199,7 +204,10 @@ async function publishControlStateRows(
           },
           classroomState,
         });
+        const sourceApprovalKey = studentClassroomAccessApprovalKeyForState(prepared.current);
         const classroomRequiredCapabilities = [
+          ...(sourceApprovalKey
+            ? ["classroomFocusScopeV1" as const, "preciseRestrictionResourcesV1" as const] : []),
           ...(requiredCapability ? [requiredCapability] : []),
           ...(delivered.classroomState.authPassThrough
             ? ["restrictionAuthPassThroughV1" as const]
@@ -215,6 +223,7 @@ async function publishControlStateRows(
           classroomRequiredCapability
           ? {
               ...exactTarget,
+              ...(sourceApprovalKey ? { requiredStudentClassroomApprovalKey: sourceApprovalKey } : {}),
               requiredCapability: classroomRequiredCapability,
               requiredCapabilities: classroomRequiredCapabilities,
             }
@@ -227,6 +236,7 @@ async function publishControlStateRows(
       sendToStudentBindingLocal(delivery.value.target, delivery.value.message, {
         requiredCapability: delivery.value.target.requiredCapability,
         requiredCapabilities: delivery.value.target.requiredCapabilities,
+        requiredStudentClassroomApprovalKey: delivery.value.target.requiredStudentClassroomApprovalKey,
       });
       const accepted = await publishWS(delivery.value.target, delivery.value.message);
       if (process.env.REDIS_URL && !accepted) throw new Error("Classroom clear publication unavailable");
@@ -288,6 +298,17 @@ export async function startManualClasspilotSession(options: {
   reused: boolean;
   manualToday?: Awaited<ReturnType<typeof enableClasspilotManualToday>>;
 }> {
+  let automaticClassroomPreparation: PreparedAutomaticClassroomAccess | null = null;
+  if (isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.schoolId })) {
+    const preflightDb = options.dbInstance ?? (await import("../db.js")).default;
+    await assertClasspilotSessionStartAccess(options.schoolId, options.teacherId, options.groupId, preflightDb);
+    const reviewedSession = await assertClasspilotClassStartReview({ schoolId: options.schoolId, actorId: options.teacherId,
+      groupId: options.groupId, expectedActiveSessionId: options.expectedActiveSessionId }, preflightDb);
+    if (!reviewedSession || reviewedSession.groupId !== options.groupId) {
+      automaticClassroomPreparation = await prepareClasspilotAutomaticClassroomAccessForGroup({ schoolId: options.schoolId,
+        groupId: options.groupId }, preflightDb);
+    }
+  }
   const outcome = await withTeachingSessionStartLock(
     options.schoolId,
     options.teacherId,
@@ -330,7 +351,7 @@ export async function startManualClasspilotSession(options: {
         groupId: options.groupId,
         teacherId: options.teacherId,
         requiredManualDate: manualDate,
-      }, lockedDb);
+      }, lockedDb, automaticClassroomPreparation);
       return {
         session,
         replacedSessionId: existing?.id,

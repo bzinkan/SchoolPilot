@@ -7,6 +7,8 @@ import { z } from "zod";
 import { type ErrorMonitor } from "../src/services/errorMonitor.js";
 import { resolveClasspilotMonitoringPolicy } from "../src/services/classpilotMonitoringPolicy.js";
 import { classpilotControlAuthorityRevisionForDelivery } from "../src/services/classpilotClassroomState.js";
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState,
+  studentClassroomAccessPublicationApprovedFromCache } from "../src/services/classpilotStudentClassroomAccess.js";
 import {
   reportStudentWebSocketAuthenticationFailure,
   type StudentWebSocketAuthStage,
@@ -25,7 +27,7 @@ const executable = ts.transpileModule(`async function bootstrap() { ${source.sli
 
 type WithheldReason = Parameters<typeof classpilotControlAuthorityRevisionForDelivery>[0]["delivery"]["withheldReason"];
 async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_token" | "inactive_session" | "not_entitled" | "peer_closed" | "retirement",
-  delivery: { withheldReason?: WithheldReason; supervision?: boolean } = {}) {
+  delivery: { withheldReason?: WithheldReason; supervision?: boolean; approvalWithdrawn?: boolean } = {}) {
   const messages: Array<{ type: string; message?: string }> = [];
   const closes: Array<{ code?: number; reason?: string }> = [];
   const diagnostics: string[] = [];
@@ -150,6 +152,9 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
         : { classroomState: { revision: retiredControlState.revision }, withheld: false };
     },
     classpilotControlAuthorityRevisionForDelivery,
+    studentClassroomAccessApprovalForState,
+    studentClassroomAccessApprovalKeyForState: delivery.approvalWithdrawn ? () => "a".repeat(64) : studentClassroomAccessApprovalKeyForState,
+    studentClassroomAccessPublicationApprovedFromCache: delivery.approvalWithdrawn ? () => false : studentClassroomAccessPublicationApprovedFromCache,
     prepareClasspilotFocusCleanupFrame: async () => null,
     isClasspilotCapabilityActive: () => true,
     resolveClasspilotScreenshotPolicy: async () => ({}),
@@ -176,6 +181,18 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
 }
 
 describe("student WebSocket bootstrap operational diagnostics", () => {
+  it("keeps shared-device authentication successful when content approval changes before final delivery", async () => {
+    const result = await bootstrapScenario(undefined, { approvalWithdrawn: true });
+    const frame = z.object({ type: z.literal("auth-success"), classroomState: z.null(),
+      exactBinding: z.object({ controlRevision: z.literal(0) }),
+      settings: z.object({ fab: z.object({ ownershipRevision: z.literal(0) }) }) }).parse(result.messages[0]);
+    assert.equal(frame.classroomState, null);
+    assert.deepEqual(result.messages.map(message => message.type), ["auth-success"]);
+    assert.equal(result.diagnostics.length, 0);
+    assert.equal(result.closes.length, 0);
+    assert.equal(result.counters.get("studentWebSocketAuthSuccess"), 1);
+    assert.equal(JSON.stringify(result.messages).includes("studentClassroomApprovalKey"), false);
+  });
   for (const stage of [
     "tenant_checkout", "session_resolution", "entitlement", "settings_protocol", "observation_hint",
     "authority_lock", "bootstrap_projection", "socket_delivery", "transaction_completion",

@@ -1098,7 +1098,7 @@ test('classroom dialogs freeze recipients when they open and send them as explic
     ['const timerMutation = useMutation', /postClassroomCommand\('timer', payload, snapshotRecipientOptions\(recipients\)\)/],
     ['const pollMutation = useMutation', /postClassroomCommand\('poll', \{ action: 'start', question, options \}, snapshotRecipientOptions\(recipients\)\)/],
     ['const openTabMutation = useMutation', /postActiveCommand\('open-tab', \{ url \}, snapshotRecipientOptions\(recipients\)\)/],
-    ['const applyFlightPathMutation = useMutation', /postActiveCommand\('apply-flight-path', \{ flightPathId \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const applyFlightPathMutation = useMutation', /postActiveCommand\('apply-flight-path', commandPayload \|\| \{ flightPathId \}, snapshotRecipientOptions\(recipients\)\)/],
     ['const applyBlockListMutation = useMutation', /postActiveCommand\('apply-block-list', \{ blockListId \}, snapshotRecipientOptions\(recipients\)\)/],
   ]) {
     assert.match(between(mutation, 'onSuccess'), post, `${mutation} must post the frozen recipients`);
@@ -1147,7 +1147,7 @@ test('classroom dialogs freeze recipients when they open and send them as explic
     ['const handleStartTimer = (event) => {', 'timerMutation', 'timer', "timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage, recipients });"],
     ['const handleCreatePoll = (event) => {', 'pollMutation', 'poll', 'pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions, recipients });'],
     ['const handleOpenTab = (event) => {', 'openTabMutation', 'open-tab', 'openTabMutation.mutate({ url: normalizedUrl, recipients });'],
-    ['const handleApplyFlightPath = (event) => {', 'applyFlightPathMutation', 'flight-path', 'applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });'],
+    ['const handleApplyFlightPath = (event) => {', 'applyFlightPathMutation', 'flight-path', 'applyFlightPathMutation.mutate({ flightPathId: flightPath.id, commandPayload, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });'],
     ['const handleApplyBlockList = (event) => {', 'applyBlockListMutation', 'block-list', 'applyBlockListMutation.mutate({ blockListId: selectedBlockListId, recipients });'],
   ]) {
     const source = between(handler, send);

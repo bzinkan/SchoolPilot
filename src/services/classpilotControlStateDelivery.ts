@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalFromCache, studentClassroomAccessApprovalKeyForState } from "./classpilotStudentClassroomAccess.js";
 import { retireLegacyTabFocusForStudentLocked } from "./classpilotFocusRetirement.js";
 import { prepareClasspilotFocusCleanupFrame } from "./classpilotFocusCleanup.js";
 import { sendToStudentBindingLocal } from "../realtime/ws-broadcast.js";
@@ -103,6 +104,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           ]);
           const state = await retireLegacyTabFocusForStudentLocked(transactionDb,
             { schoolId, studentId, state: storedState ?? null, reason: "reconnect" });
+          if (state) await studentClassroomAccessApprovalForState(state);
           const lateSignInRequired = !!state
             && classpilotControlStateHasLateSignInOrigin(state.desiredState);
           const focusCleanup = await prepareClasspilotFocusCleanupFrame(transactionDb, state,
@@ -164,6 +166,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           if (prepared.state) {
             const deliveredState = serializeClasspilotStudentControlStateForDelivery({
               state: prepared.state,
+              studentClassroomAccessApproved: studentClassroomAccessApprovalFromCache(schoolId, prepared.state.desiredState),
               gateActive,
               acceptedCapabilities: realtime?.acceptedCapabilities ?? [],
               exactBinding: exactTarget,
@@ -194,7 +197,10 @@ export async function syncClasspilotControlStatesToActiveDevices(
                 },
                 classroomState: deliveredState.classroomState,
               });
+              const sourceApprovalKey = studentClassroomAccessApprovalKeyForState(prepared.state);
               const classroomRequiredCapabilities = [
+                ...(sourceApprovalKey
+                  ? ["classroomFocusScopeV1" as const, "preciseRestrictionResourcesV1" as const] : []),
                 ...(requiredCapability ? [requiredCapability] : []),
                 ...(deliveredState.classroomState.authPassThrough
                   ? ["restrictionAuthPassThroughV1" as const]
@@ -211,6 +217,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
               const classroomTarget = classroomRequiredCapability
                 ? {
                     ...exactTarget,
+                    ...(sourceApprovalKey ? { requiredStudentClassroomApprovalKey: sourceApprovalKey } : {}),
                     requiredCapability: classroomRequiredCapability,
                     requiredCapabilities: classroomRequiredCapabilities,
                   }
@@ -255,6 +262,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
         const deliveredLocally = sendToStudentBindingLocal(publication.target, publication.message, {
           requiredCapability: publication.target.requiredCapability,
           requiredCapabilities: publication.target.requiredCapabilities,
+          requiredStudentClassroomApprovalKey: publication.target.requiredStudentClassroomApprovalKey,
         });
         if ((publication.message as { type?: unknown }).type === "fab-state-sync") {
           fabDeliveredLocally = deliveredLocally;

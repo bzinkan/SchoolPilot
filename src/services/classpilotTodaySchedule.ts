@@ -22,7 +22,9 @@ import { assertTodayScheduleWriteContract } from "./classpilotTodayScheduleContr
 import { applyClasspilotTodayTransitions, lockClasspilotTodayTransitionStudents } from "./classpilotTodayTransitions.js";
 import { classpilotTeachingSessionDeadline, classpilotTeachingSessionIsCurrent } from "./classpilotTeachingSessionWindow.js";
 import { withClasspilotSchedulePostCommitTransaction, lockInstructionalCalendarDate,
-  getHeartbeatTrackingSettingsForSchool } from "./storage.js";
+  getHeartbeatTrackingSettingsForSchool, prepareClasspilotAutomaticClassroomAccessForGroup } from "./storage.js";
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import type { PreparedAutomaticClassroomAccess } from "./classpilotAutomaticClassroomAccess.js";
 import { pushClasspilotSessionControlStates, runClasspilotFinalizationSideEffects } from "./classpilotSessionLifecycle.js";
 import { buildTodaySchedulePlan, reciprocalTodayCandidates, sameTodayRoster, signTodayScheduleReview,
   todayPlanReviewIdentity, todayScheduleDigest, todayScheduleError, todayWindowOverlaps,
@@ -508,7 +510,8 @@ function assertPlanBoundary(data: Facts, plan: TodaySchedulePlan, now: Date) {
 }
 
 async function applyPlan(database: Database, options: RequestContext, change: ClasspilotTodayChange, data: Facts, plan: TodaySchedulePlan,
-  clock: () => Date, accepted: boolean) {
+  clock: () => Date, accepted: boolean,
+  automaticClassroomPreparations: Readonly<Record<string, PreparedAutomaticClassroomAccess | null>> = {}) {
   const candidateAt = new Date(clock().getTime());
   const selectedSessionIds = new Set(data.classes.flatMap(group => group.meetings)
     .filter(meeting => plan.sourceMeetingKeys.includes(meeting.key) && meeting.sessionId).map(meeting => meeting.sessionId));
@@ -549,7 +552,7 @@ async function applyPlan(database: Database, options: RequestContext, change: Cl
       supersededLegacyChangeIds: legacyIds, cutoverAt: now.toISOString() } }))).returning();
   const transitions = await applyClasspilotTodayTransitions({ schoolId: options.schoolId, occurrenceIds: occurrences.map(row => row.id),
     outgoingSessionIds, liveTeacherIds: [plan.initiatorTeacherId, ...(accepted && plan.counterpartTeacherId ? [plan.counterpartTeacherId] : [])],
-    cutoverAt: now, dbInstance: database });
+    cutoverAt: now, dbInstance: database, automaticClassroomPreparations });
   await database.insert(classpilotSchoolSchedules).values({ schoolId: options.schoolId, config: data.context.config,
     revision: data.context.revision + 1, updatedBy: options.actorId }).onConflictDoUpdate({ target: classpilotSchoolSchedules.schoolId,
     set: { revision: sql`${classpilotSchoolSchedules.revision} + 1`, updatedAt: now, updatedBy: options.actorId } });
@@ -568,9 +571,50 @@ async function publishCommitted(options: RequestContext, outcome: { legacyIds: s
     outcome.legacyIds.length ? announceClasspilotScheduleChangeIds({ schoolId: options.schoolId, changeIds: outcome.legacyIds }) : Promise.resolve()]);
 }
 
+/** Prepare only an already-authorized immediate cutover, before its outer locks. */
+async function prepareTodayAutomaticClassroomAccess(options: RequestContext & {
+  reviewToken?: string; idempotencyKey?: string; changeId?: string; expectedRevision?: number;
+}, purpose: "apply" | "accept"): Promise<Record<string, PreparedAutomaticClassroomAccess | null>> {
+  if (!isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.schoolId }) || !isClasspilotTodayScheduleEnabled()) return {};
+  const database = options.dbInstance ?? db, now = options.now ?? new Date();
+  await assertClasspilotEntitled(options.schoolId, database);
+  await access(options.schoolId, options.actorId, database, true);
+  if (purpose === "apply" && options.idempotencyKey) {
+    const [existing] = await database.select({ id: classpilotTodayChanges.id }).from(classpilotTodayChanges).where(and(
+      eq(classpilotTodayChanges.schoolId, options.schoolId), eq(classpilotTodayChanges.requestedByUserId, options.actorId),
+      eq(classpilotTodayChanges.idempotencyKey, options.idempotencyKey))).limit(1);
+    if (existing) return {};
+  }
+  let reviewed: Awaited<ReturnType<typeof preview>>;
+  const claims = verifyTodayScheduleReview(options.reviewToken || "", { ...options, purpose, now });
+  if (purpose === "apply") {
+    if (!claims.input) fail("A complete review is required.", "TODAY_SCHEDULE_REVIEW_STALE");
+    reviewed = await preview({ ...options, input: claims.input }, database, now);
+    // A pending reciprocal request grants no authority over the other class.
+    if (reviewed.response.requiredAcceptance) return {};
+  } else {
+    if (!options.changeId) return {};
+    const { change, authority, permission } = await visibleChange({ ...options, changeId: options.changeId }, database);
+    if (change.status !== "pending") return {};
+    if (!authority.frozen || !permission.allowed || change.revision !== options.expectedRevision
+      || claims.changeId !== change.id || claims.revision !== change.revision)
+      fail("This request changed. Review it again.", "TODAY_SCHEDULE_REVIEW_STALE");
+    reviewed = await preview({ ...options, input: storedPlan(change).input }, database, now, "accept", change);
+    if (reviewed.fingerprint !== change.reviewSnapshot.fingerprint) return {};
+  }
+  if (!reviewed.plan || !reviewed.response.canApply || reviewed.fingerprint !== claims.fingerprint
+    || reviewed.plan.mode !== "remainder") return {};
+  const groupIds = [...new Set(reviewed.plan.after.filter(window => new Date(window.startsAt) <= now && new Date(window.endsAt) > now)
+    .map(window => window.groupId))];
+  const prepared = await Promise.all(groupIds.map(async groupId => [groupId,
+    await prepareClasspilotAutomaticClassroomAccessForGroup({ schoolId: options.schoolId, groupId }, database)] as const));
+  return Object.fromEntries(prepared);
+}
+
 export async function createClasspilotTodayScheduleChange(options: RequestContext & { reviewToken: string; idempotencyKey: string }) {
   if (typeof options.idempotencyKey !== "string" || !options.idempotencyKey.trim() || options.idempotencyKey.length > 128)
     fail("A unique request key is required.", "TODAY_SCHEDULE_IDEMPOTENCY_REQUIRED", 400);
+  const automaticClassroomPreparations = await prepareTodayAutomaticClassroomAccess(options, "apply");
   const outcome = await locked(options, async (database, clock) => {
     const now = clock();
     const [existing] = await database.select().from(classpilotTodayChanges).where(and(eq(classpilotTodayChanges.schoolId, options.schoolId),
@@ -606,7 +650,7 @@ export async function createClasspilotTodayScheduleChange(options: RequestContex
       action: reviewed.plan.action, affectedGroupIds: reviewed.plan.groupIds, requiresAcceptance: !!required });
     assertPlanBoundary(reviewed.data, reviewed.plan, clock());
     if (required) return { change, legacyIds: [], finalizations: [], startedSessionIds: [] };
-    return applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, false);
+    return applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, false, automaticClassroomPreparations);
   });
   await publishCommitted(options, outcome);
   return { change: serializeChange(outcome.change, options.actorId, false) };
@@ -615,6 +659,7 @@ export async function createClasspilotTodayScheduleChange(options: RequestContex
 export async function actOnClasspilotTodayScheduleChange(options: RequestContext & {
   changeId: string; action: "accept" | "decline" | "cancel"; expectedRevision: number; reviewToken?: string;
 }) {
+  const automaticClassroomPreparations = options.action === "accept" ? await prepareTodayAutomaticClassroomAccess(options, "accept") : {};
   const outcome = await locked(options, async (database, clock) => {
     const candidate = await visibleChange(options, database);
     await database.select({ id: groups.id }).from(groups).where(and(eq(groups.schoolId, options.schoolId),
@@ -664,7 +709,7 @@ export async function actOnClasspilotTodayScheduleChange(options: RequestContext
     if (change.cutoffAt <= commitAt || localDateInTimeZone(commitAt, reviewed.data.timeZone) !== change.scheduledDate
       || reviewed.plan.mode === "before_bell" && new Date(reviewed.plan.firstStartsAt) <= commitAt)
       fail("This period ended. Review a new change.", "TODAY_SCHEDULE_REVIEW_STALE");
-    return { ...await applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, true), stale: false };
+    return { ...await applyPlan(database, options, change, reviewed.data, reviewed.plan, clock, true, automaticClassroomPreparations), stale: false };
   });
   await publishCommitted(options, outcome);
   if (outcome.stale) fail("The schedule or live class changed. This request was closed; make a new review.", "TODAY_SCHEDULE_REVIEW_STALE");

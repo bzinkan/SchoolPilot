@@ -69,6 +69,7 @@ import billingRoutes from "./admin/billing.js";
 import attendanceRoutes from "./admin/attendance.js";
 import googleOAuthRoutes from "./google/oauth.js";
 import googleRosterConnectorRoutes from "./google/rosterConnector.js";
+import googleClassroomAccessRoutes from "./google/classroomAccess.js";
 import googleClassroomRoutes from "./google/classroom.js";
 import googleDirectoryRoutes from "./google/directory.js";
 import googleWorkspaceAuditRoutes from "./google/workspaceAudit.js";
@@ -469,6 +470,7 @@ router.use("/admin/attendance", attendanceRoutes);
 
 // Google integrations
 router.use("/google", googleOAuthRoutes);
+router.use("/google/roster-connector/classroom-access", googleClassroomAccessRoutes);
 router.use("/google/roster-connector", googleRosterConnectorRoutes);
 router.use("/google/classroom", googleClassroomRoutes);
 router.use("/google/directory", googleDirectoryRoutes);

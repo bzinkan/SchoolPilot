@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Badge } from "../../../components/ui/badge";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
+import { useAuth } from "../../../contexts/AuthContext";
+import ClassroomAccessSetup from "../components/ClassroomAccessSetup";
 
 function statusBadge(status) {
   const icon = status === "pass" ? CheckCircle2 : status === "fail" ? XCircle : TriangleAlert;
@@ -223,6 +225,7 @@ function ClassOwnershipIntegrity({ integrity, onOpenClasses, onOpenStaff }) {
 }
 
 export default function ITReadiness() {
+  const { activeSchoolId, user } = useAuth();
   const adminShell = useAdminShell();
   const { navigate } = useAdminNavigation();
   const { data, isLoading, refetch } = useQuery({
@@ -285,6 +288,7 @@ export default function ITReadiness() {
           className="bg-background"
           onConnected={() => refetch()}
         />
+        <ClassroomAccessSetup schoolId={activeSchoolId} viewerId={user?.id} />
 
         <Card>
           <CardHeader>

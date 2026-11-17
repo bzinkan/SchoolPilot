@@ -65,6 +65,8 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "student-classroom-admin.integration.test.ts",
+  "student-classroom-approval-migration.test.ts",
   "classpilot-classroom-focus-preview.integration.test.ts",
   "school-day-status.integration.test.ts",
   "classpilot-telemetry-registered-transports.integration.test.ts",

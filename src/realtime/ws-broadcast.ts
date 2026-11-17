@@ -10,6 +10,7 @@ import { PRECISE_RESTRICTION_RESOURCES_CAPABILITY } from "../services/restrictio
 import { classpilotPreciseCommandPayloadValid } from "../services/classpilotPreciseRestrictions.js";
 import { CLASSROOM_FOCUS_SCOPE_CAPABILITY } from "../services/classroomFocusScope.js";
 import { isClasspilotCapabilityActive } from "../services/classpilotProtocol.js";
+import { studentClassroomAccessPublicationApprovedFromCache } from "../services/classpilotStudentClassroomAccess.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -511,6 +512,7 @@ export type ExactStudentSocketBinding = {
   studentId: string;
   studentSessionId: string;
   deviceId: string;
+  requiredStudentClassroomApprovalKey?: string;
 };
 
 function validExactStudentSocketBinding(binding: ExactStudentSocketBinding): boolean {
@@ -560,8 +562,13 @@ export function sendToStudentBindingLocal(
   options: {
     requiredCapability?: string;
     requiredCapabilities?: readonly string[];
+    requiredStudentClassroomApprovalKey?: string;
   } = {}
 ): boolean {
+  const sourceKey = options.requiredStudentClassroomApprovalKey !== undefined
+    ? options.requiredStudentClassroomApprovalKey : binding.requiredStudentClassroomApprovalKey;
+  if (!studentClassroomAccessPublicationApprovedFromCache(binding.schoolId, sourceKey)
+    || sourceKey !== undefined && !isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, binding)) return false;
   const msgType = (message as { type?: string })?.type ?? "unknown";
   if (!validExactStudentSocketBinding(binding)) {
     console.log(`[WS-Local] Invalid exact student binding for ${msgType}`);

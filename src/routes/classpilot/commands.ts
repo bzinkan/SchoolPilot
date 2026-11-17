@@ -45,6 +45,7 @@ import { classpilotClassroomStates, classpilotCommands, classpilotCommandTargets
 import { parseAutomaticFlightPathStopOption } from "../../services/classpilotAutomaticFlightPathCommand.js";
 import { classpilotTeachingSessionIsCurrent } from "../../services/classpilotTeachingSessionWindow.js";
 import { previewClassroomFocusReview } from "../../services/classpilotClassroomFocusReview.js";
+import { previewStudentClassroomAccess } from "../../services/classpilotStudentClassroomAccess.js";
 
 const router = Router();
 
@@ -266,6 +267,32 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   return resolved;
 }
 
+router.post("/commands/classroom-access/preview", ...auth, async (req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    if (!requestHasAnySchoolRole(req, res, ["admin", "school_admin", "teacher"])) return res.status(403).json({ error: "Teacher or admin access required" });
+    const body = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return res.status(400).json({ error: "Review exact Classroom recipients." });
+    const authority = parseClasspilotActivityAuthority(body);
+    const ids = normalizeStudentIds(body.targetStudentIds);
+    if (!authority || !["focus", "flight-path"].includes(body.mode) || body.targetScope !== "students"
+      || !Array.isArray(body.targetStudentIds) || !ids.length || ids.length !== body.targetStudentIds.length
+      || Object.keys(body).some(key => !["mode", "teachingSessionId", "supervisionContextId", "targetScope", "targetStudentIds", "flightPathId", "expectedFlightPathUpdatedAt"].includes(key)))
+      return res.status(400).json({ error: "Review a nonempty exact student selection.", code: "STUDENT_CLASSROOM_ACCESS_REVIEW_INVALID" });
+    if (body.mode === "focus" && (body.flightPathId !== undefined || body.expectedFlightPathUpdatedAt !== undefined)
+      || body.mode === "flight-path" && (typeof body.flightPathId !== "string" || !body.flightPathId.trim() || body.flightPathId.length > 128
+        || typeof body.expectedFlightPathUpdatedAt !== "string" || body.expectedFlightPathUpdatedAt.length > 128 || !Number.isFinite(Date.parse(body.expectedFlightPathUpdatedAt))))
+      return res.status(400).json({ error: "Review the exact saved Flight Path version.", code: "STUDENT_CLASSROOM_ACCESS_REVIEW_INVALID" });
+    const targets = await resolveTargets(req, res, { ...body, commandType: body.mode === "focus" ? "lock-screen" : "apply-flight-path",
+      commandPayload: body.mode === "focus" ? { url: "https://classroom.google.com/" } : { flightPathId: body.flightPathId } });
+    if (targets.length !== ids.length || targets.some(target => target.stateAuthorized === false))
+      return res.status(409).json({ error: "Student ownership or availability changed. Review again.", code: "STUDENT_CLASSROOM_ACCESS_REVIEW_STALE" });
+    return res.json(await previewStudentClassroomAccess({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id,
+      authority: authority.supervisionContextId ? { ...authority, contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : authority,
+      mode: body.mode, targetStudentIds: ids, flightPathId: body.flightPathId, expectedFlightPathUpdatedAt: body.expectedFlightPathUpdatedAt }));
+  } catch (error) { next(error); }
+});
+
 router.post("/commands/classroom-focus/preview", ...auth, async (req, res, next) => {
   try {
     res.setHeader("Cache-Control", "no-store");
@@ -422,7 +449,7 @@ router.get("/commands/active-state", ...auth, async (req, res, next) => {
       const states = await db.select().from(classpilotClassroomStates).where(and(eq(classpilotClassroomStates.schoolId, context.schoolId),
         eq(classpilotClassroomStates.supervisionContextId, context.id), isNull(classpilotClassroomStates.clearedAt),
         or(isNull(classpilotClassroomStates.expiresAt), gt(classpilotClassroomStates.expiresAt, new Date()))));
-      return res.json({ states, transient: await getScheduledClassroomTransientState(context) });
+      return res.json({ states: states.map(publicClasspilotCommand), transient: await getScheduledClassroomTransientState(context) });
     }
     const teachingSessionId = String(req.query.teachingSessionId || "").trim();
     if (!teachingSessionId) return res.status(400).json({ error: "teachingSessionId query param required" });
@@ -435,7 +462,7 @@ router.get("/commands/active-state", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Class session not found" });
     }
     const states = await getActiveClasspilotClassroomStates(res.locals.schoolId!, teachingSessionId);
-    return res.json({ states });
+    return res.json({ states: states.map(publicClasspilotCommand) });
   } catch (err) {
     next(err);
   }

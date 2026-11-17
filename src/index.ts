@@ -3188,6 +3188,7 @@ export async function runStartupMigrations(): Promise<void> {
         delegated_admin_email TEXT,
         service_account_client_id TEXT,
         approved_scopes TEXT[] NOT NULL DEFAULT '{}'::text[],
+        classroom_access_approval JSONB,
         auth_mode TEXT NOT NULL DEFAULT 'service_account_key',
         status TEXT NOT NULL DEFAULT 'unverified',
         verified_at TIMESTAMP,

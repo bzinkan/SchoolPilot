@@ -19,6 +19,7 @@ import {
   getRosterServiceAccountInfo,
 } from "../../services/googleRosterConnector.js";
 import { isTransientGoogleError } from "../../util/transientGoogleError.js";
+import { announceStudentClassroomAccessApprovalChanged } from "../../services/googleClassroomAccess.js";
 
 const router = Router();
 
@@ -154,6 +155,7 @@ router.post("/verify", ...adminAuth, async (req, res, next) => {
       delegatedAdminEmail,
       serviceAccountClientId: serviceAccount.clientId,
       approvedScopes: [...GOOGLE_ROSTER_SCOPES],
+      classroomAccessApproval: null,
       authMode: serviceAccount.authMode,
       status: "verified",
       verifiedAt: new Date(),
@@ -161,6 +163,7 @@ router.post("/verify", ...adminAuth, async (req, res, next) => {
       lastError: null,
       connectedByUserId: req.authUser!.id,
     });
+    await announceStudentClassroomAccessApprovalChanged(schoolId);
 
     await logAudit({
       schoolId,
@@ -183,6 +186,7 @@ router.post("/verify", ...adminAuth, async (req, res, next) => {
       ...(isTransientGoogleError(err) ? {} : { status: "error" as const }),
       lastError: err?.message || "Google roster connector verification failed.",
     }).catch(() => {});
+    await announceStudentClassroomAccessApprovalChanged(schoolId);
     next(err);
   }
 });
@@ -191,9 +195,11 @@ router.delete("/", ...adminAuth, async (req, res, next) => {
   try {
     const connector = await updateGoogleRosterConnector(res.locals.schoolId!, {
       status: "disabled",
+      classroomAccessApproval: null,
       disabledAt: new Date(),
       lastError: null,
     });
+    await announceStudentClassroomAccessApprovalChanged(res.locals.schoolId!);
     if (connector) {
       await logAudit({
         schoolId: res.locals.schoolId!,

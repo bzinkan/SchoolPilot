@@ -58,7 +58,7 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', storedMode = null, precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false, manualTodayAllowed = true, manualTodayDenied = false, manualTodayStale = false } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', storedMode = null, precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false, automaticClassroom = false, classroomAccessEnabled, manualTodayAllowed = true, manualTodayDenied = false, manualTodayStale = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   if (storedMode) await page.addInitScript(mode => localStorage.setItem('sp_theme', mode), storedMode);
   if (route.startsWith('/classpilot/my-settings/manual-today')) await page.clock.setFixedTime(new Date('2026-10-30T18:00:00.000Z'));
@@ -139,7 +139,8 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', store
       state.automaticPolicy ||= { schemaVersion: 1, revision: 0, enabled: false, flightPathId: null, updatedBy: null };
       if (req.method() === 'PATCH') {
         if (state.automaticConflict) { state.automaticConflict = false; state.automaticPolicy = { ...state.automaticPolicy, revision: 2 }; return route.fulfill({ status: 409, json: { error: 'Class preset changed elsewhere.' } }); }
-        state.automaticPolicy = { ...state.automaticPolicy, revision: body.expectedRevision + 1, enabled: body.enabled, flightPathId: body.flightPathId, updatedBy: 'teacher-a' };
+        state.automaticPolicy = { ...state.automaticPolicy, revision: body.expectedRevision + 1, enabled: body.enabled, flightPathId: body.flightPathId, updatedBy: 'teacher-a',
+          ...(body.classroomAccess ? { schemaVersion: 2, classroomAccess: { mode: 'student-courses', approved: true } } : {}) };
       }
       return route.fulfill({ json: { policy: state.automaticPolicy, canManage: !state.coTeacher, eligible: state.automaticEligible ?? url.pathname.includes('/official-a/'),
         reasonCode: 'AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED', flightPath: state.automaticPolicy.flightPathId ? { id: state.automaticPolicy.flightPathId, flightPathName: state.automaticPolicy.flightPathId === 'primary-private' ? 'Primary teacher preset' : 'Research destinations' } : null } });
@@ -150,6 +151,10 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', store
       state.gradeVersion = 'grades-v3'; state.gradeLevels = body.gradeLevels;
       return route.fulfill({ json: { schoolId, version: state.gradeVersion, gradeLevels: state.gradeLevels } });
     }
+    if (url.pathname.endsWith('/flight-paths') && automaticClassroom) return route.fulfill({ json: {
+      flightPaths: [{ id: 'flight-a', flightPathName: 'Classroom work', allowedDomains: ['classroom.google.com'], updatedAt: '2026-11-16T20:00:00.000Z' }],
+      ...(classroomAccessEnabled === undefined ? {} : { features: { studentClassroomAccess: classroomAccessEnabled } }),
+    } });
     if (url.pathname.endsWith('/flight-paths') && automaticLibrary) return route.fulfill({ json: {
       flightPaths: [{ id: 'flight-a', flightPathName: 'My private destinations', allowedDomains: ['private.example.test'] }],
       library: [{ id: 'shared-flight', flightPathName: 'Shared science', allowedDomains: ['science.example.test'], visibility: 'school' }],
@@ -606,6 +611,69 @@ test('automatic class preset starts off, saves the selected class version for ne
     if (process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR) await page.screenshot({ path: path.join(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, 'automatic-flight-path-setup-mobile.png'), fullPage: true });
     assert.equal(state.requests.some(row => row.path.includes('/commands')), false);
     assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic Classroom preset reviews every students own courses and saves only its signed future-publication approval', { timeout: 60_000 }, async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a', automaticClassroom: true, classroomAccessEnabled: true });
+  const previews = [];
+  try {
+    await page.route('**/api/groups/official-a/automatic-flight-path/classroom-preview', async route => {
+      previews.push({ body: route.request().postDataJSON(), school: route.request().headers()['x-school-id'] });
+      await route.fulfill({ json: { schemaVersion: 1, purpose: 'student-classroom-access', mode: 'automatic-flight-path',
+        studentCount: 2, courseCount: 12, itemCount: 20, linkCount: 25, reviewToken: 'automatic-student-proof', expiresAt: Date.now() + 60_000,
+        scopes: [{ type: 'website', hostname: 'reading.example.test', url: 'https://reading.example.test', label: 'Entire website', description: 'Own assigned work only.' }], warnings: [] } });
+    });
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Use a saved Flight Path' }).check();
+    await card.getByLabel('Saved Flight Path', { exact: true }).selectOption('flight-a');
+    await card.getByTestId('student-classroom-summary').waitFor({ timeout: 8_000 });
+    assert.match(await card.innerText(), /current and future published Classroom work/);
+    assert.match(await card.innerText(), /all of their own Google Classroom courses/);
+    assert.deepEqual(previews, [{ school: 'school-a', body: { flightPathId: 'flight-a', expectedFlightPathUpdatedAt: '2026-11-16T20:00:00.000Z', expectedRevision: 0 } }]);
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+    assert.deepEqual(writes(state).filter(row => row.method === 'PATCH').map(row => row.body), [{ expectedRevision: 0, enabled: true, flightPathId: 'flight-a',
+      expectedFlightPathUpdatedAt: '2026-11-16T20:00:00.000Z', classroomAccess: { reviewToken: 'automatic-student-proof' } }]);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic Classroom preset keeps ordinary saves available when the server feature is absent or off', { timeout: 60_000 }, async () => {
+  for (const classroomAccessEnabled of [undefined, false]) {
+    const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a', automaticClassroom: true, classroomAccessEnabled });
+    try {
+      const card = page.getByTestId('card-automatic-flight-path');
+      await card.getByRole('radio', { name: 'Use a saved Flight Path' }).check();
+      await card.getByLabel('Saved Flight Path', { exact: true }).selectOption('flight-a');
+      const save = card.getByRole('button', { name: 'Save class preset' });
+      assert.equal(await save.isDisabled(), false, 'a legacy Classroom domain preset remains savable without enhanced Classroom access');
+      assert.equal(await card.getByTestId('student-classroom-summary').count(), 0);
+      assert.doesNotMatch(await card.innerText(), /all of their own Google Classroom courses|current and future published Classroom work/);
+      await save.click();
+      await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+      assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, enabled: true, flightPathId: 'flight-a' }]);
+      assert.equal(state.requests.some(row => row.path.endsWith('/classroom-preview')), false, 'the off feature never requests sources');
+      assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+  }
+});
+
+test('automatic Classroom preset never falls back to an ordinary save when enabled review is rejected', { timeout: 60_000 }, async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a', automaticClassroom: true, classroomAccessEnabled: true });
+  const previews = [];
+  try {
+    await page.route('**/api/groups/official-a/automatic-flight-path/classroom-preview', async route => {
+      previews.push(route.request().postDataJSON());
+      await route.fulfill({ status: 409, json: { code: 'STUDENT_CLASSROOM_ACCESS_UNAVAILABLE', error: 'Classroom access is unavailable. Review the school connection.' } });
+    });
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Use a saved Flight Path' }).check();
+    await card.getByLabel('Saved Flight Path', { exact: true }).selectOption('flight-a');
+    await card.getByText('Classroom access is unavailable. Review the school connection.').waitFor();
+    assert.equal(await card.getByRole('button', { name: 'Save class preset' }).isDisabled(), true);
+    assert.equal(previews.length, 1);
+    assert.equal(state.requests.some(row => row.method === 'PATCH'), false, 'a failed enhanced review never submits a legacy body');
   } finally { await page.close(); }
 });
 

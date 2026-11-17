@@ -196,6 +196,16 @@ export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
 // ============================================================================
 // Google Roster Connector - IT-managed Domain-Wide Delegation for imports
 // ============================================================================
+export type GoogleClassroomAccessApproval = {
+  schemaVersion: 1;
+  approvalId: string;
+  approvedByUserId: string;
+  approvedAt: string;
+  schoolId: string;
+  domain: string;
+  serviceAccountClientId: string;
+  delegatedAdminEmail: string;
+};
 export const googleRosterConnectors = pgTable(
   "google_roster_connectors",
   {
@@ -208,6 +218,7 @@ export const googleRosterConnectors = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    classroomAccessApproval: jsonb("classroom_access_approval").$type<GoogleClassroomAccessApproval | null>(),
     authMode: text("auth_mode").notNull().default("service_account_key"),
     status: text("status")
       .notNull()

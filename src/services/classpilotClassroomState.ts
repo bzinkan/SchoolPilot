@@ -9,6 +9,7 @@ import { focusAssignmentMatches, focusCapabilityAccepted, focusRecord, readFocus
   readFocusRestriction, type ClasspilotFocusRestriction } from "./classpilotFocus.js";
 import { CLASSROOM_FOCUS_SCOPE_CAPABILITY, isClassroomFocusWebsiteUrl, validateClassroomFocusScope,
   type ClassroomFocusScope } from "./classroomFocusScope.js";
+import { hasStudentClassroomAccessProvenance, studentClassroomRestrictionsValidForStudent } from "./classpilotStudentClassroomAccess.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   isWaypointLandingUrl,
@@ -114,6 +115,7 @@ export type ClasspilotClassroomStateSnapshot = {
       resource?: unknown;
       /** Server-reviewed published Classroom materials; never a legacy host projection. */
       classroomScope?: unknown;
+      classroomMaterials?: unknown;
     };
     flightPath: {
       active: boolean;
@@ -122,6 +124,7 @@ export type ClasspilotClassroomStateSnapshot = {
       name?: string | null;
       /** Section and resource entries of a precise Flight Path (see screenLock.resource). */
       resources?: unknown;
+      classroomMaterials?: unknown;
     };
     blockList: { active: boolean; blockedDomains: string[]; name?: string | null };
     attentionMode: { active: boolean; message?: string };
@@ -247,13 +250,17 @@ function preservedFlightPathResources(flightPath: unknown): { resources?: unknow
     ? { resources: objectValue(flightPath).resources }
     : {};
 }
+function preservedClassroomMaterials(value: unknown): { classroomMaterials?: unknown } {
+  const source = objectValue(value);
+  return Object.hasOwn(source, "classroomMaterials") ? { classroomMaterials: source.classroomMaterials } : {};
+}
 
 /** True when a restrictions object carries a precise-resource key, valid or not. */
 export function classpilotRestrictionsRequirePreciseCapability(restrictions: unknown): boolean {
   const source = objectValue(restrictions);
   return carriesPreciseRestrictionKey(source.screenLock, "resource")
     || Object.keys(preservedClassroomFocusScope(source.screenLock)).length > 0
-    || carriesPreciseRestrictionKey(source.flightPath, "resources");
+    || carriesPreciseRestrictionKey(source.flightPath, "resources") || hasStudentClassroomAccessProvenance(source);
 }
 
 /** Reads a desired snapshot (or a serialized classroom state) the way the serializer does. */
@@ -267,6 +274,7 @@ export function classpilotCommandPayloadRequiresPreciseCapability(
   commandType: string,
   payload: unknown
 ): boolean {
+  if (Object.hasOwn(objectValue(payload), "classroomAccessV1")) return true;
   if (commandType === "lock-screen") return carriesPreciseRestrictionKey(payload, "resource")
     || Object.keys(preservedClassroomFocusScope(payload)).length > 0;
   if (commandType === "apply-flight-path") return carriesPreciseRestrictionKey(payload, "resources");
@@ -340,6 +348,8 @@ export function classpilotPreciseRestrictionCapabilityRequired(options: {
   acceptedCapabilities: readonly string[];
 }): boolean {
   const desired = objectValue(options.desiredState);
+  if (hasStudentClassroomAccessProvenance(desired) && !["classroomFocusScopeV1", "preciseRestrictionResourcesV1", "scopedAuthorityChecksV1"]
+    .every(cap => options.acceptedCapabilities.includes(cap))) return true;
   const precise = classpilotPreciseRestrictionPayload(desired.restrictions ?? desired);
   if (precise.state === "none") return false;
   return precise.state === "invalid"
@@ -467,12 +477,14 @@ export function normalizeClasspilotRestrictions(value: unknown): ClasspilotClass
       ...(screenLock.domain ? { domain: String(screenLock.domain).slice(0, 253) } : {}),
       ...preservedScreenLockResource(screenLock),
       ...preservedClassroomFocusScope(screenLock),
+      ...preservedClassroomMaterials(screenLock),
     },
     flightPath: {
       active: flightPath.active === true,
       allowedDomains: stringList(flightPath.allowedDomains),
       ...(flightPath.name ? { name: String(flightPath.name).slice(0, 256) } : {}),
       ...preservedFlightPathResources(flightPath),
+      ...preservedClassroomMaterials(flightPath),
     },
     blockList: {
       active: blockList.active === true,
@@ -506,6 +518,7 @@ export function applyClasspilotControlCommand(
         url: payload.url ? String(payload.url).slice(0, 4_096) : null,
         ...preservedScreenLockResource(payload),
         ...preservedClassroomFocusScope(payload),
+        ...preservedClassroomMaterials(payload),
       };
       // Screen Lock overlays the independently configured Flight Path. The
       // lock wins while active, and a canonical screen-only unlock reveals
@@ -524,6 +537,7 @@ export function applyClasspilotControlCommand(
         allowedDomains: stringList(payload.allowedDomains),
         ...(payload.flightPathName ? { name: String(payload.flightPathName).slice(0, 256) } : {}),
         ...preservedFlightPathResources(payload),
+        ...preservedClassroomMaterials(payload),
       };
       break;
     case "remove-flight-path":
@@ -607,6 +621,9 @@ export function serializeClasspilotStudentControlState(
     .filter((value): value is Date => !!value)
     .sort((left, right) => left.getTime() - right.getTime())[0];
   const expired = !!effectiveExpiry && effectiveExpiry.getTime() <= now.getTime();
+  const normalized = normalizeClasspilotRestrictions(desired.restrictions ?? desired);
+  const { classroomMaterials: _screenProvenance, ...screenLock } = normalized.screenLock;
+  const { classroomMaterials: _pathProvenance, ...flightPath } = normalized.flightPath;
   return {
     schemaVersion: CLASSPILOT_CLASSROOM_STATE_SCHEMA_VERSION,
     revision: state.revision,
@@ -621,7 +638,7 @@ export function serializeClasspilotStudentControlState(
     // after being offline when the deadline passes.
     restrictions: expired
       ? emptyClasspilotRestrictions()
-      : normalizeClasspilotRestrictions(desired.restrictions ?? desired),
+      : { ...normalized, screenLock, flightPath },
   };
 }
 
@@ -637,6 +654,8 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   acceptedCapabilities: readonly string[];
   /** Internal pure-policy override; production callers use the live school gate. */
   classroomFocusScopeGateActive?: boolean;
+  /** Separately approved student-content access, read through the bounded school cache. */
+  studentClassroomAccessApproved?: boolean;
   exactBinding: ClasspilotExactStudentBinding | null;
   authPassThrough?: {
     gateActive: boolean;
@@ -654,6 +673,7 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     | "restriction_auth_update_required"
     | "precise_restriction_capability_required"
     | "classroom_focus_scope_capability_required"
+    | "student_classroom_access_unavailable"
     | "focus_tab_capability_required";
 } {
   const provenance = readClasspilotLateSignInDeliveryProvenance(options.state.desiredState);
@@ -682,6 +702,15 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   }
   let classroomState = serializeClasspilotStudentControlState(options.state, options.now);
   let restrictions = classroomState.restrictions;
+  const stateExpired = [options.state.scheduledEndAt, options.state.hardExpiresAt]
+    .some(deadline => !!deadline && deadline.getTime() <= (options.now ?? new Date()).getTime());
+  if (!stateExpired && hasStudentClassroomAccessProvenance(options.state.desiredState)
+    && (!options.studentClassroomAccessApproved || !exactBindingAuthorized
+      || !(options.classroomFocusScopeGateActive ?? isClasspilotCapabilityActive(CLASSROOM_FOCUS_SCOPE_CAPABILITY, { schoolId: options.state.schoolId }))
+      || !["classroomFocusScopeV1", "preciseRestrictionResourcesV1", "scopedAuthorityChecksV1"].every(cap => options.acceptedCapabilities.includes(cap))
+      || !studentClassroomRestrictionsValidForStudent(options.state.desiredState, options.state.schoolId, options.state.studentId))) {
+    return { classroomState: null, withheld: true, withheldReason: "student_classroom_access_unavailable" };
+  }
   if (restrictions.focus !== undefined) {
     const focus = readFocusRestriction(restrictions);
     const assignment = readFocusAssignment(options.state.desiredState);

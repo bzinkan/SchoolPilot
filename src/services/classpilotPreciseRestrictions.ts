@@ -1,6 +1,7 @@
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import { effectiveFlightPathAllowedDomains } from "./classpilotFlightPathDomains.js";
 import { isClassroomFocusWebsiteUrl, validateClassroomFocusScope } from "./classroomFocusScope.js";
+import { validateStudentClassroomFlightPath, studentClassroomRestrictionsValidForStudent } from "./classpilotStudentClassroomAccess.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   RestrictionResourceError,
@@ -123,6 +124,22 @@ export function classpilotPreciseCommandPayloadValid(commandType: string, payloa
   const data = payload && typeof payload === "object" && !Array.isArray(payload)
     ? payload as Record<string, unknown>
     : {};
+  if (Object.hasOwn(data, "classroomAccessV1")) {
+    const envelope = data.classroomAccessV1;
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return false;
+    const ref = envelope as Record<string, unknown>;
+    if (ref.schemaVersion !== 1 || ref.mode !== (commandType === "lock-screen" ? "focus" : "flight-path")
+      || !ref.payloadByStudent || typeof ref.payloadByStudent !== "object" || Array.isArray(ref.payloadByStudent)
+      || Buffer.byteLength(JSON.stringify(envelope), "utf8") > 512 * 1024) return false;
+    const entries = Object.entries(ref.payloadByStudent);
+    return entries.length > 0 && entries.length <= 500 && entries.every(([studentId, raw]) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+      const entry = raw as Record<string, unknown>, marker = entry.classroomMaterials as Record<string, unknown> | undefined;
+      return !!marker && typeof marker.schoolId === "string" && marker.studentId === studentId
+        && (commandType === "apply-flight-path" ? validateStudentClassroomFlightPath(entry)
+          : commandType === "lock-screen" && studentClassroomRestrictionsValidForStudent({ screenLock: { ...entry, active: true } }, marker.schoolId, studentId));
+    });
+  }
   if (commandType === "lock-screen") {
     if (data.classroomScope !== undefined) return !Object.prototype.hasOwnProperty.call(data, "resource")
       && isClassroomFocusWebsiteUrl(data.url) && !!validateClassroomFocusScope(data.classroomScope);

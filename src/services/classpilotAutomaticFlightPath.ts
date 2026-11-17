@@ -1,40 +1,62 @@
 import { z } from "zod";
 import { normalizeClasspilotRestrictions } from "./classpilotClassroomState.js";
 import { validateAllowedResourceList, type PreciseAllowedResource } from "./restrictionResources.js";
+import { validateStudentClassroomFlightPath } from "./classpilotStudentClassroomAccess.js";
 
 export type AutomaticFlightPathPolicy = {
-  schemaVersion: 1; revision: number; enabled: boolean; flightPathId: string | null; updatedBy: string | null;
+  schemaVersion: 1 | 2; revision: number; enabled: boolean; flightPathId: string | null; updatedBy: string | null;
+  classroomAccess?: AutomaticClassroomAccessApproval;
+};
+export type AutomaticClassroomAccessApproval = {
+  schemaVersion: 1; mode: "student-courses"; groupId: string; flightPathId: string;
+  primaryTeacherId: string; approvedBy: string; approvedAt: string;
+  approvalKey: string;
 };
 export type AutomaticFlightPathPayload = {
   flightPathId: string; flightPathName: string; allowedDomains: string[]; resources?: PreciseAllowedResource[];
+  /** Private server provenance; the common delivery projector strips it. */
+  classroomMaterials?: unknown;
 };
 export type AutomaticFlightPathState = {
-  schemaVersion: 1; revision: number; status: "inactive" | "active" | "off" | "unavailable";
+  schemaVersion: 1 | 2; revision: number; status: "inactive" | "active" | "off" | "unavailable";
   assignmentId: string | null; sourcePolicyRevision: number; flightPathId: string | null;
   flightPathUpdatedAt: string | null; name: string | null; payload: AutomaticFlightPathPayload | null;
   reasonCode: string | null; manualOverrideStudentIds: string[]; eligibleStudentIds: string[];
   unavailableStudentIds: string[];
   unavailableReasons: Record<string, string>; deferredStudentIds: string[];
+  /** Schema 2 never uses the shared base payload as a per-student fallback. */
+  perStudentPayloads?: Record<string, AutomaticFlightPathPayload>;
 };
-const policySchema = z.object({ schemaVersion: z.literal(1), revision: z.number().int().nonnegative(),
-  enabled: z.boolean(), flightPathId: z.string().min(1).nullable(), updatedBy: z.string().min(1).nullable() }).strict();
+const approvalSchema = z.object({ schemaVersion: z.literal(1), mode: z.literal("student-courses"),
+  groupId: z.string().min(1), flightPathId: z.string().min(1), primaryTeacherId: z.string().min(1),
+  approvedBy: z.string().min(1), approvedAt: z.string().datetime(), approvalKey: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const policyFields = { revision: z.number().int().nonnegative(),
+  enabled: z.boolean(), flightPathId: z.string().min(1).nullable(), updatedBy: z.string().min(1).nullable() };
+const policySchema = z.object({ schemaVersion: z.literal(1), ...policyFields }).strict();
+const classroomPolicySchema = z.object({ schemaVersion: z.literal(2), ...policyFields,
+  classroomAccess: approvalSchema }).strict();
 const payloadSchema = z.object({ flightPathId: z.string().min(1), flightPathName: z.string(),
-  allowedDomains: z.array(z.string().min(1)).max(1000), resources: z.array(z.unknown()).max(1000).optional() }).strict();
-const stateSchema = z.object({ schemaVersion: z.literal(1), revision: z.number().int().nonnegative(),
+  allowedDomains: z.array(z.string().min(1)).max(1000), resources: z.array(z.unknown()).max(1000).optional(),
+  classroomMaterials: z.unknown().optional() }).strict();
+const stateFields = { revision: z.number().int().nonnegative(),
   status: z.enum(["inactive", "active", "off", "unavailable"]), assignmentId: z.string().min(1).nullable(),
   sourcePolicyRevision: z.number().int().nonnegative(), flightPathId: z.string().min(1).nullable(),
   flightPathUpdatedAt: z.string().nullable(), name: z.string().nullable(), payload: payloadSchema.nullable(),
   reasonCode: z.string().nullable(), manualOverrideStudentIds: z.array(z.string().min(1)),
   eligibleStudentIds: z.array(z.string().min(1)), unavailableStudentIds: z.array(z.string().min(1)),
-  unavailableReasons: z.record(z.string(), z.string()).default({}), deferredStudentIds: z.array(z.string().min(1)).default([]) }).strict();
+  unavailableReasons: z.record(z.string(), z.string()).default({}), deferredStudentIds: z.array(z.string().min(1)).default([]) };
+const stateSchema = z.object({ schemaVersion: z.literal(1), ...stateFields }).strict();
+const classroomStateSchema = z.object({ schemaVersion: z.literal(2), ...stateFields,
+  perStudentPayloads: z.record(z.string().min(1).max(128), payloadSchema) }).strict();
 const originSchema = z.object({ schemaVersion: z.literal(1), assignmentId: z.string().min(1),
   teachingSessionId: z.string().min(1) }).strict();
 function record(value: unknown): Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 export function normalizeAutomaticFlightPathPolicy(value: unknown): AutomaticFlightPathPolicy {
-  const parsed = policySchema.safeParse(value);
+  const parsed = z.union([policySchema, classroomPolicySchema]).safeParse(value);
   return parsed.success && (!parsed.data.enabled || parsed.data.flightPathId !== null)
+    && (parsed.data.schemaVersion !== 2 || parsed.data.classroomAccess.flightPathId === parsed.data.flightPathId)
     ? parsed.data : { schemaVersion: 1, revision: 0, enabled: false, flightPathId: null, updatedBy: null };
 }
 export function emptyAutomaticFlightPathState(reasonCode: string | null = null): AutomaticFlightPathState {
@@ -43,7 +65,7 @@ export function emptyAutomaticFlightPathState(reasonCode: string | null = null):
     manualOverrideStudentIds: [], eligibleStudentIds: [], unavailableStudentIds: [], unavailableReasons: {}, deferredStudentIds: [] };
 }
 export function normalizeAutomaticFlightPathState(value: unknown): AutomaticFlightPathState {
-  const parsed = stateSchema.safeParse(value);
+  const parsed = z.union([stateSchema, classroomStateSchema]).safeParse(value);
   if (!parsed.success) return emptyAutomaticFlightPathState(value == null ? null : "AUTOMATIC_FLIGHT_PATH_STATE_INVALID");
   const state = parsed.data;
   if (state.payload && (!validateAllowedResourceList(state.payload.resources ?? [])
@@ -51,11 +73,31 @@ export function normalizeAutomaticFlightPathState(value: unknown): AutomaticFlig
     return emptyAutomaticFlightPathState("AUTOMATIC_FLIGHT_PATH_STATE_INVALID");
   if (state.status === "active" && (!state.assignmentId || !state.payload || state.flightPathId !== state.payload.flightPathId))
     return emptyAutomaticFlightPathState("AUTOMATIC_FLIGHT_PATH_STATE_INVALID");
+  if (state.schemaVersion === 2) {
+    const targets = new Set([...state.eligibleStudentIds, ...state.unavailableStudentIds]);
+    if (Object.keys(state.perStudentPayloads).length > 500
+      || Object.entries(state.perStudentPayloads).some(([studentId, payload]) => !targets.has(studentId)
+        || payload.flightPathId !== state.flightPathId || !validateAllowedResourceList(payload.resources ?? [])
+        || !validateStudentClassroomFlightPath(payload)
+        || record(payload.classroomMaterials).studentId !== studentId
+        || (!payload.allowedDomains.length && !payload.resources?.length))
+      || state.eligibleStudentIds.some(studentId => !Object.hasOwn(state.perStudentPayloads, studentId)))
+      return emptyAutomaticFlightPathState("AUTOMATIC_FLIGHT_PATH_STATE_INVALID");
+  }
   return state as AutomaticFlightPathState;
 }
-export function automaticFlightPathPolicyDto(value: unknown) {
+export function automaticFlightPathPolicyDto(value: unknown, currentApprovalKey?: string | null) {
   const policy = normalizeAutomaticFlightPathPolicy(value);
-  return { schemaVersion: policy.schemaVersion, revision: policy.revision, enabled: policy.enabled, flightPathId: policy.flightPathId };
+  return { schemaVersion: policy.schemaVersion, revision: policy.revision, enabled: policy.enabled, flightPathId: policy.flightPathId,
+    ...(policy.classroomAccess ? { classroomAccess: { mode: "student-courses" as const,
+      approved: !!currentApprovalKey && currentApprovalKey === policy.classroomAccess.approvalKey } } : {}) };
+}
+/** Generic group endpoints must not leak the private approval/generation. */
+export function publicGroupAutomaticFlightPath<T extends { automaticFlightPathPolicy?: unknown }>(group: T) {
+  return Object.hasOwn(group, "automaticFlightPathPolicy")
+    ? { ...group, automaticFlightPathPolicy: group.automaticFlightPathPolicy == null
+      ? null : automaticFlightPathPolicyDto(group.automaticFlightPathPolicy) }
+    : group;
 }
 export function automaticFlightPathStateDto(value: unknown) {
   const state = normalizeAutomaticFlightPathState(value);
@@ -96,7 +138,11 @@ export function automaticFlightPathDesiredState(options: {
   const state = normalizeAutomaticFlightPathState(options.state);
   let desired = { ...record(options.desiredState) };
   const origin = readAutomaticFlightPathOrigin(desired);
-  const enabled = state.status === "active" && !!state.assignmentId && !!state.payload
+  const payload = state.schemaVersion === 2
+    ? state.perStudentPayloads && Object.hasOwn(state.perStudentPayloads, options.studentId)
+      ? state.perStudentPayloads[options.studentId] : undefined
+    : state.payload;
+  const enabled = state.status === "active" && !!state.assignmentId && !!payload
     && !state.manualOverrideStudentIds.includes(options.studentId)
     && state.eligibleStudentIds.includes(options.studentId);
   if (origin && origin.teachingSessionId === options.teachingSessionId
@@ -109,7 +155,8 @@ export function automaticFlightPathDesiredState(options: {
   // automatic initialization never clears a Waypoint, lock, or Focus.
   if (restrictions.flightPath.active || restrictions.screenLock.active || restrictions.focus?.active) return desired;
   return { ...desired, restrictions: { ...restrictions, flightPath: { active: true,
-    name: state.payload!.flightPathName, allowedDomains: [...state.payload!.allowedDomains],
-    ...(state.payload!.resources ? { resources: state.payload!.resources } : {}) } },
+    name: payload!.flightPathName, allowedDomains: [...payload!.allowedDomains],
+    ...(payload!.resources ? { resources: payload!.resources } : {}),
+    ...(payload!.classroomMaterials !== undefined ? { classroomMaterials: payload!.classroomMaterials } : {}) } },
     automaticFlightPath: { schemaVersion: 1, assignmentId: state.assignmentId, teachingSessionId: options.teachingSessionId } };
 }

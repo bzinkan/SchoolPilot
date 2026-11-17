@@ -1,7 +1,7 @@
 import { classpilotCommandDeliveryPolicy } from "./classpilotCommandDelivery.js";
 import { readFocusOpenIntent } from "./classpilotFocus.js";
 
-const protectedFocusKeys = new Set(["focusAssignmentV1", "focusOpenIntentV1", "focusStatusV1", "focusExactAuthorityV1", "focusCleanupV1"]);
+const protectedFocusKeys = new Set(["focusAssignmentV1", "focusOpenIntentV1", "focusStatusV1", "focusExactAuthorityV1", "focusCleanupV1", "classroomAccessV1", "classroomMaterials"]);
 
 function isInternalTargetKey(key: string): boolean {
   const normalized = key.replace(/[_-]/g, "").toLowerCase();

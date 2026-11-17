@@ -27,7 +27,8 @@ import { useRestrictionScopePreview } from "../hooks/useRestrictionScopePreview"
 import RestrictionScopeReview from "../components/RestrictionScopeReview";
 
 const EMPTY_RESOURCE_LIST = Object.freeze({ own: Object.freeze([]), library: Object.freeze([]), libraryEnabled: false });
-const selectFlightPathList = (data) => teachingResourceList(data, 'flightPaths');
+const selectFlightPathList = (data) => ({ ...teachingResourceList(data, 'flightPaths'),
+  classroomAccessEnabled: data?.features?.studentClassroomAccess === true });
 // Precise Flight Path entries (videos, documents, forms, pages) are editable
 // only while the server reports preciseRestrictionResourcesV1 active for the
 // school; the School Library is not a prerequisite.
@@ -1058,6 +1059,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
             <AutomaticFlightPathSetup key={selectedGroupId} groupId={selectedGroupId} schoolId={currentUser.schoolId} viewerId={currentUser.id}
               primaryTeacherId={groups.find(group => group.id === selectedGroupId)?.teacherId} sharedPathsEnabled={flightPathData.libraryEnabled}
               flightPaths={[...flightPaths, ...flightPathData.library.filter(item => !flightPaths.some(own => own.id === item.id))]}
+              classroomAccessEnabled={flightPathData.classroomAccessEnabled === true}
               flightPathsError={flightPathsError} active={section === 'classes'} />
             {/* Subgroups Section */}
             <Card data-testid="card-subgroups">

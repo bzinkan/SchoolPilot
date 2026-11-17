@@ -11,6 +11,8 @@ import { focusRecord } from "../src/services/classpilotFocus.js";
 import { normalizePreciseWaypointResource } from "../src/services/restrictionResources.js";
 import { serializeClasspilotStudentControlState, serializeClasspilotStudentControlStateForDelivery } from "../src/services/classpilotClassroomState.js";
 import { localDateInTimeZone } from "../src/util/schoolTime.js";
+import { prepareAutomaticClassroomAccess, type PreparedAutomaticClassroomAccess } from "../src/services/classpilotAutomaticClassroomAccess.js";
+import { CLASSROOM_FOCUS_BASE_DOMAINS } from "../src/services/classroomFocusScope.js";
 
 process.env.REDIS_URL = "";
 const priorTodayMode = process.env.CLASSPILOT_TODAY_SCHEDULE_MODE;
@@ -45,9 +47,9 @@ const inSchool = <T>(fn: () => Promise<T>) => tenant({ schoolId: ids.school }, f
 type Binding = { studentId: string; deviceId: string; studentSessionId: string };
 type Fixture = { group: Group; path: FlightPath; bindings: Binding[]; session?: TeachingSession };
 
-async function refresh(binding: Binding, acceptedCapabilities = capabilities) {
+async function refresh(binding: Binding, acceptedCapabilities = capabilities, extensionVersion = "2.9.7") {
   await realtime.writeClasspilotRealtimeStatus({ schoolId: ids.school, ...binding, heartbeatId: randomUUID(), observedAt: Date.now(),
-    extensionVersion: "2.9.7", acceptedCapabilities, tabSnapshotRevision: 9,
+    extensionVersion, acceptedCapabilities, tabSnapshotRevision: 9,
     allOpenTabs: [{ tabRef: "automatic-path-exact-tab", url: "https://example.org/lesson", title: "Synthetic lesson" }] });
 }
 
@@ -96,11 +98,32 @@ async function configure(item: Fixture, options: { actorId?: string; enabled?: b
   });
 }
 
-async function start(item: Fixture, options: { actorId?: string; mode?: "live" | "scheduled_report" } = {}) {
+async function start(item: Fixture, options: { actorId?: string; mode?: "live" | "scheduled_report"; preparation?: PreparedAutomaticClassroomAccess | null } = {}) {
   item.session = await inSchool(() => storage.createTeachingSession({ groupId: item.group.id, teacherId: options.actorId ?? ids.teacher,
     sessionMode: options.mode ?? "live", startTime: new Date(Date.now() - 60_000), scheduledDate: new Date().toISOString().slice(0, 10),
-    scheduledTimezone: "UTC", scheduledStartAt: new Date(Date.now() - 60_000), scheduledEndAt: new Date(Date.now() + 3_600_000), scheduledState: "active" }));
+    scheduledTimezone: "UTC", scheduledStartAt: new Date(Date.now() - 60_000), scheduledEndAt: new Date(Date.now() + 3_600_000), scheduledState: "active" }, database, options.preparation));
   return item.session;
+}
+
+async function classroomFixture() {
+  const item = await fixture();
+  const path = await inSchool(() => storage.updateFlightPath(item.path.id, ids.school, { allowedDomains: ["classroom.google.com"] }));
+  assert.ok(path);
+  item.path = path;
+  const policy = { schemaVersion: 2 as const, revision: 1, enabled: true, flightPathId: path.id, updatedBy: ids.teacher,
+    classroomAccess: { schemaVersion: 1 as const, mode: "student-courses" as const, groupId: item.group.id,
+      flightPathId: path.id, primaryTeacherId: ids.teacher, approvedBy: ids.teacher, approvedAt: new Date().toISOString(), approvalKey: "a".repeat(64) } };
+  await admin.query("UPDATE groups SET automatic_flight_path_policy=$1::jsonb WHERE id=$2", [JSON.stringify(policy), item.group.id]);
+  item.group.automaticFlightPathPolicy = policy;
+  const sources = item.bindings.map((binding, index) => ({ studentId: binding.studentId, approvalKey: "a".repeat(64),
+    courseCount: 2, itemCount: 3, linkCount: 1, scope: { schemaVersion: 1 as const, sourceRevision: String(index + 1).repeat(64),
+      allowedDomains: [...CLASSROOM_FOCUS_BASE_DOMAINS, index ? "beta.example.org" : "alpha.example.org"], resources: [] } }));
+  const preparation = await prepareAutomaticClassroomAccess({ schoolId: ids.school, groupId: item.group.id,
+    primaryTeacherId: ids.teacher, policy, flightPath: path, studentIds: item.bindings.map(binding => binding.studentId) },
+  { enabled: true, resolveSources: async () => sources });
+  assert.equal(preparation?.status, "ready");
+  for (const binding of item.bindings) await refresh(binding, [...capabilities, "classroomFocusScopeV1"], "3.0.7");
+  return { item, preparation };
 }
 
 async function startManualToday(item: Fixture, actorId = ids.recoveryAdmin) {
@@ -711,6 +734,129 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     assert.equal((await reload(item)).endTime, null);
   });
 
+  test("public class and session routes omit private automatic Classroom scopes and approvals", async () => {
+    const previous = process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+    process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = "true";
+    const { createApp } = await import("../src/app.js");
+    const { signUserToken } = await import("../src/services/jwt.js");
+    const server = createServer(createApp());
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    const request = (endpoint: string, actorId: string, method = "GET", body?: Record<string, unknown>) => fetch(`${baseUrl}${endpoint}`, {
+      method, headers: { authorization: `Bearer ${signUserToken({ userId: actorId, email: `${actorId}@example.edu`, isSuperAdmin: false })}`,
+        "x-school-id": ids.school, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    try {
+      const { item, preparation } = await classroomFixture();
+      await start(item, { preparation });
+      for (const [endpoint, actorId] of [
+        ["/classpilot/teacher/groups?scope=mine", ids.teacher],
+        ["/classpilot/teacher/groups", ids.observerAdmin],
+        ["/classpilot/groups", ids.teacher],
+        ["/classpilot/admin/classes", ids.observerAdmin],
+      ]) {
+        const response = await request(endpoint!, actorId!);
+        assert.equal(response.status, 200, `class listing succeeds: ${endpoint}`);
+        const body = focusRecord(await response.json());
+        const rows = Array.isArray(body.groups) ? body.groups : body.classes;
+        assert.ok(Array.isArray(rows), `class listing has rows: ${endpoint}`);
+        const group = rows.find(row => focusRecord(row).id === item.group.id);
+        assert.ok(group, `the reviewed class remains in ${endpoint}`);
+        assert.equal(focusRecord(focusRecord(group).automaticFlightPathPolicy).enabled, true);
+        assert.doesNotMatch(JSON.stringify(group), /approvalKey|approvedBy|approvedAt|primaryTeacherId|updatedBy/,
+          `private approval fields cannot leave ${endpoint}`);
+      }
+      const sessionResponse = await request(`/classpilot/teaching-sessions/${item.session!.id}`, ids.teacher);
+      assert.equal(sessionResponse.status, 200);
+      const sessionBody = focusRecord(await sessionResponse.json());
+      const session = focusRecord(sessionBody.session);
+      assert.equal(focusRecord(session.automaticFlightPathState).status, "active");
+      assert.doesNotMatch(JSON.stringify(session), /perStudentPayloads|classroomMaterials|approvalKey|alpha.example|beta.example|sourceRevision/,
+        "session HTTP responses expose counts and status without source maps");
+      const update = await request(`/classpilot/admin/classes/${item.group.id}`, ids.observerAdmin, "PATCH", { description: "Updated public class description" });
+      assert.equal(update.status, 200, "class update remains available");
+      assert.doesNotMatch(await update.text(), /approvalKey|approvedBy|approvedAt|primaryTeacherId|updatedBy/,
+        "class updates also pass through the public projector");
+      const audit = await request("/admin/audit-logs?action=class.update", ids.observerAdmin);
+      assert.equal(audit.status, 200);
+      assert.doesNotMatch(await audit.text(), /approvalKey|approvedBy|approvedAt|primaryTeacherId|updatedBy/,
+        "class audit snapshots cannot expose the private approval through a later read");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      if (previous === undefined) delete process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+      else process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = previous;
+    }
+  });
+
+  test("prepared Classroom presets freeze separate student permissions through replay", async () => {
+    const previous = process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+    process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = "true";
+    try {
+      const { item, preparation } = await classroomFixture();
+      const session = await start(item, { preparation });
+      assert.equal(focusRecord(session.automaticFlightPathState).schemaVersion, 2);
+      const first = await restrictions(item), second = await restrictions(item, 1);
+      assert.ok(first.flightPath.allowedDomains.includes("alpha.example.org"));
+      assert.equal(first.flightPath.allowedDomains.includes("beta.example.org"), false);
+      assert.ok(second.flightPath.allowedDomains.includes("beta.example.org"));
+      assert.equal(second.flightPath.allowedDomains.includes("alpha.example.org"), false);
+      assert.equal(first.flightPath.allowedDomains.includes("google.com"), false);
+      assert.equal(Object.hasOwn(first.flightPath, "classroomMaterials"), false, "wire projection omits private provenance");
+      const stored = focusRecord(focusRecord((await control(item)).desiredState).restrictions);
+      assert.equal(focusRecord(focusRecord(stored.flightPath).classroomMaterials).studentId, item.bindings[0]!.studentId);
+      const frozen = structuredClone(session.automaticFlightPathState);
+      await inSchool(() => storage.updateFlightPath(item.path.id, ids.school, { allowedDomains: ["classroom.google.com", "later.example.org"] }));
+      await inSchool(() => storage.initializeAutomaticFlightPathForSession(session));
+      await inSchool(() => storage.initializeClasspilotStudentControlStatesForSession(session));
+      assert.deepEqual((await reload(item)).automaticFlightPathState, frozen);
+      assert.equal((await restrictions(item)).flightPath.allowedDomains.includes("later.example.org"), false);
+    } finally {
+      if (previous === undefined) delete process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+      else process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = previous;
+    }
+  });
+
+  test("a stale saved path preparation never falls back to broad Classroom websites", async () => {
+    const previous = process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+    process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = "true";
+    try {
+      const { item, preparation } = await classroomFixture();
+      await inSchool(() => storage.updateFlightPath(item.path.id, ids.school, { allowedDomains: ["classroom.google.com", "changed.example.org"] }));
+      const session = await start(item, { preparation });
+      assert.equal(focusRecord(session.automaticFlightPathState).status, "unavailable");
+      assert.equal(focusRecord(session.automaticFlightPathState).reasonCode, "STUDENT_CLASSROOM_ACCESS_PREPARATION_STALE");
+      assert.equal((await restrictions(item)).flightPath.active, false);
+      assert.equal(session.endTime, null, "source readiness must not fail class startup");
+    } finally {
+      if (previous === undefined) delete process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+      else process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = previous;
+    }
+  });
+
+  test("report-to-live promotion carries prepared per-student Classroom access exactly once", async () => {
+    const previous = process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+    process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = "true";
+    try {
+      const { item, preparation } = await classroomFixture();
+      const report = await start(item, { mode: "scheduled_report" });
+      assert.equal(report.automaticFlightPathState, null);
+      const promoted = await inSchool(() => storage.promoteScheduledReportSessionToLive({ schoolId: ids.school,
+        sessionId: report.id, automaticClassroomPreparation: preparation }));
+      assert.ok(promoted);
+      item.session = promoted;
+      assert.equal(focusRecord(promoted.automaticFlightPathState).status, "active");
+      assert.ok((await restrictions(item)).flightPath.allowedDomains.includes("alpha.example.org"));
+      assert.ok((await restrictions(item, 1)).flightPath.allowedDomains.includes("beta.example.org"));
+      assert.equal(await inSchool(() => storage.promoteScheduledReportSessionToLive({ schoolId: ids.school,
+        sessionId: report.id, automaticClassroomPreparation: preparation })), undefined);
+    } finally {
+      if (previous === undefined) delete process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+      else process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = previous;
+    }
+  });
+
   test("a website-only path may defer to a signed-out student only under the late-sign-in capability gate", async () => {
     const item = await fixture({ students: 1 });
     const binding = item.bindings[0]!;
@@ -737,5 +883,48 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
       await start(gated);
       assert.equal((await restrictions(gated)).flightPath.active, false);
     } finally { process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true"; }
+  });
+
+  test("rollback clears frozen Classroom maps and approvals before reconciliation can reuse them", async () => {
+    const previousClassroom = process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+    const previousPrecise = process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1;
+    process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = "true";
+    try {
+      const { item, preparation } = await classroomFixture();
+      await start(item, { preparation });
+      const ordinary = await fixture({ students: 1 });
+      await configure(ordinary);
+      await start(ordinary);
+      const clear = await import("../src/services/classpilotPreciseRestrictionClear.js");
+      const plan = await inSchool(() => clear.planClasspilotPreciseRestrictionClear(ids.school));
+      assert.ok(plan.automaticSessionStateCount > 0, "the clear inventory includes frozen automatic Classroom maps");
+      assert.ok(plan.automaticGroupPolicyCount > 0, "the clear inventory includes durable automatic Classroom approvals");
+      process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "false";
+      await admin.query("UPDATE teaching_sessions SET automatic_flight_path_state=jsonb_set(automatic_flight_path_state,'{name}','\"Changed after review\"'::jsonb) WHERE id=$1", [item.session!.id]);
+      await assert.rejects(inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({ schoolId: ids.school, expectedProof: plan.proof })),
+        (error: unknown) => focusRecord(error).code === "PRECISE_RESTRICTION_CLEAR_PROOF_MISMATCH",
+        "a JSON change without a declared revision still invalidates the reviewed clear");
+      const refreshed = await inSchool(() => clear.planClasspilotPreciseRestrictionClear(ids.school));
+      const result = await inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({ schoolId: ids.school, expectedProof: refreshed.proof }));
+      assert.equal(result.automaticSessionStatesCleared, refreshed.automaticSessionStateCount);
+      assert.equal(result.automaticGroupPoliciesDisabled, refreshed.automaticGroupPolicyCount);
+      const frozen = focusRecord((await reload(item)).automaticFlightPathState);
+      assert.equal(frozen.schemaVersion, 1);
+      assert.equal(frozen.status, "off");
+      assert.equal(Object.hasOwn(frozen, "perStudentPayloads"), false);
+      const policy = await inSchool(() => storage.getClasspilotAutomaticFlightPathPolicy({ schoolId: ids.school, groupId: item.group.id, actorId: ids.teacher }));
+      assert.equal(policy.policy.enabled, false);
+      const ordinaryPolicy = await inSchool(() => storage.getClasspilotAutomaticFlightPathPolicy({ schoolId: ids.school, groupId: ordinary.group.id, actorId: ids.teacher }));
+      assert.equal(ordinaryPolicy.policy.enabled, true, "ordinary automatic website presets stay configured");
+      await inSchool(() => storage.initializeClasspilotStudentControlStatesForSession(item.session!));
+      assert.equal((await restrictions(item)).flightPath.active, false);
+      assert.equal((await restrictions(ordinary)).flightPath.active, true);
+      assert.deepEqual(await inSchool(() => clear.inventoryClasspilotPreciseRestrictions()), []);
+    } finally {
+      if (previousClassroom === undefined) delete process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1;
+      else process.env.CLASSPILOT_CAP_CLASSROOM_FOCUS_SCOPE_V1 = previousClassroom;
+      if (previousPrecise === undefined) delete process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1;
+      else process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = previousPrecise;
+    }
   });
 });

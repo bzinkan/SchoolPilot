@@ -11,6 +11,12 @@ import {
   removeAutomaticFlightPathFromDesiredState, withoutAutomaticFlightPathOrigin,
   type AutomaticFlightPathState,
 } from "./classpilotAutomaticFlightPath.js";
+import { automaticClassroomReviewIdentity, automaticFlightPathContainsClassroom,
+  confirmAutomaticClassroomAccessReview, prepareAutomaticClassroomAccess,
+  previewAutomaticClassroomAccessReview, validateAutomaticClassroomPreparation,
+  unavailableAutomaticClassroomPreparation,
+  type AutomaticClassroomReviewContext, type PreparedAutomaticClassroomAccess,
+} from "./classpilotAutomaticClassroomAccess.js";
 import type { HeartbeatScreenshotOwnerRow } from "./classpilotHeartbeatScreenshotEvidence.js";
 import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
@@ -12693,7 +12699,8 @@ export async function aggregateClasspilotSessionUsage(
 
 export async function createTeachingSession(
   data: InsertTeachingSession & { groupId: string; teacherId: string; requiredManualDate?: string },
-  dbInstance: typeof db = db
+  dbInstance: typeof db = db,
+  automaticClassroomPreparation?: PreparedAutomaticClassroomAccess | null
 ): Promise<TeachingSession> {
   // teaching_sessions.school_id must mirror the parent group's school (RLS
   // WITH CHECK requires it). Derive it from the group rather than trusting the
@@ -12781,6 +12788,7 @@ export async function createTeachingSession(
       authoritativeSession.automaticFlightPathState = await initializeAutomaticFlightPathForSession(authoritativeSession, transactionDb, {
         // Only this newly inserted session can freeze a manual-day preset.
         manualTodayStartDate: !authoritativeSession.scheduledDate ? manualDate : undefined,
+        classroomPreparation: automaticClassroomPreparation,
       });
     }
     await initializeClasspilotStudentControlStatesForSession(authoritativeSession, transactionDb);
@@ -13032,6 +13040,7 @@ export async function promoteScheduledReportSessionToLive(
     schoolId: string;
     sessionId?: string;
     scheduledConflictId?: string;
+    automaticClassroomPreparation?: PreparedAutomaticClassroomAccess | null;
   },
   dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
@@ -13090,7 +13099,8 @@ export async function promoteScheduledReportSessionToLive(
       ))
       .returning();
     if (session) {
-      session.automaticFlightPathState = await initializeAutomaticFlightPathForSession(session, transactionDb);
+      session.automaticFlightPathState = await initializeAutomaticFlightPathForSession(session, transactionDb,
+        { classroomPreparation: data.automaticClassroomPreparation });
       // Reporting and live occurrences share the same session id and may have
       // identical restrictions. Becoming live changes the device's active
       // classroom authority, so that transition still needs a new ownership
@@ -22112,8 +22122,22 @@ export async function createClasspilotCommandWithTargets(
       if (!flightPathReviewedInstantMatches(path.updatedAt, lessonPayload.expectedFlightPathUpdatedAt))
         throw Object.assign(new Error("Flight Path changed since review; review its boundaries again"), { status: 409, code: "FLIGHT_PATH_REVIEW_STALE", expose: true });
       const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
+      const { classroomFlightPathBasePolicyHash, validateStudentClassroomFlightPath } = await import("./classpilotStudentClassroomAccess.js");
+      if (lessonPayload.classroomAccessV1 !== undefined) {
+        const envelope = focusRecord(lessonPayload.classroomAccessV1);
+        const map = focusRecord(envelope.payloadByStudent);
+        const expectedHash = classroomFlightPathBasePolicyHash(path);
+        if (envelope.schemaVersion !== 1 || envelope.mode !== "flight-path"
+          || Object.keys(map).length !== authoritativeTargets.length
+          || authoritativeTargets.some(target => {
+            const payload = focusRecord(map[target.studentId]), marker = focusRecord(payload.classroomMaterials);
+            return marker.studentId !== target.studentId || marker.schoolId !== commandData.schoolId
+              || marker.basePolicyHash !== expectedHash || payload.flightPathId !== path.id || !validateStudentClassroomFlightPath(payload);
+          })) throw Object.assign(new Error("Classroom Flight Path review changed"), { status: 409, code: "STUDENT_CLASSROOM_ACCESS_REVIEW_STALE", expose: true });
+      }
       commandData = { ...commandData, commandPayload: { ...classpilotFlightPathApplyPayload({ schoolId: commandData.schoolId, flightPath: path }),
-        expectedFlightPathUpdatedAt: lessonPayload.expectedFlightPathUpdatedAt } };
+        expectedFlightPathUpdatedAt: lessonPayload.expectedFlightPathUpdatedAt,
+        ...(lessonPayload.classroomAccessV1 !== undefined ? { classroomAccessV1: lessonPayload.classroomAccessV1 } : {}) } };
     }
     if (commandData.commandType === "open-tab" && typeof lessonPayload.afterRestrictionCommandId === "string") {
       const { classpilotRestrictionPrerequisiteCurrent } = await import("./classpilotLessonPrerequisites.js");
@@ -23802,7 +23826,9 @@ async function automaticFlightPathPolicyResult(group: Group, canManage: boolean,
   const [path] = policy.flightPathId ? await database.select({ id: flightPaths.id, flightPathName: flightPaths.flightPathName }).from(flightPaths)
     .where(and(eq(flightPaths.id, policy.flightPathId), eq(flightPaths.schoolId, group.schoolId))).limit(1) : [];
   const eligible = automaticFlightPathClassEligible(group);
-  return { policy: automaticFlightPathPolicyDto(policy), canManage, eligible,
+  const approvalKey = policy.classroomAccess?.groupId === group.id && policy.classroomAccess.primaryTeacherId === group.teacherId
+    ? await (await import("./googleClassroomAccess.js")).studentClassroomAccessApprovalKeyForSchool(group.schoolId) : null;
+  return { policy: automaticFlightPathPolicyDto(policy, approvalKey), canManage, eligible,
     reasonCode: eligible ? null : "AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED", flightPath: path || null };
 }
 
@@ -23811,10 +23837,80 @@ export async function getClasspilotAutomaticFlightPathPolicy(options: { schoolId
   return automaticFlightPathPolicyResult(group, canManage, dbInstance);
 }
 
+async function automaticClassroomRoster(schoolId: string, groupId: string, database: typeof db, teachingSessionId?: string) {
+  if (teachingSessionId) {
+    const rows = await database.select({ studentId: classpilotSessionStudents.studentId }).from(classpilotSessionStudents)
+      .where(and(eq(classpilotSessionStudents.schoolId, schoolId), eq(classpilotSessionStudents.teachingSessionId, teachingSessionId)));
+    return [...new Set(rows.map(row => row.studentId))].sort();
+  }
+  const rows = await database.select({ studentId: groupStudents.studentId }).from(groupStudents)
+    .innerJoin(students, and(eq(students.id, groupStudents.studentId), eq(students.schoolId, schoolId), eq(students.status, "active")))
+    .where(eq(groupStudents.groupId, groupId));
+  return [...new Set(rows.map(row => row.studentId))].sort();
+}
+
+export async function getClasspilotAutomaticClassroomReviewContext(options: {
+  schoolId: string; groupId: string; actorId: string; expectedRevision: number;
+  flightPathId: string; expectedFlightPathUpdatedAt: string;
+}, dbInstance: typeof db = db): Promise<AutomaticClassroomReviewContext> {
+  await assertClasspilotEntitled(options.schoolId, dbInstance);
+  const { group } = await automaticFlightPathPolicyAccess(options, dbInstance, true);
+  if (!automaticFlightPathClassEligible(group)) throw automaticFlightPathError("Choose a scheduled teaching class", "AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED");
+  const policy = normalizeAutomaticFlightPathPolicy(group.automaticFlightPathPolicy);
+  if (policy.revision !== options.expectedRevision) throw automaticFlightPathError("This class preset changed; review it again", "AUTOMATIC_FLIGHT_PATH_REVISION_CONFLICT");
+  const [path] = await dbInstance.select().from(flightPaths).where(and(eq(flightPaths.id, options.flightPathId), eq(flightPaths.schoolId, options.schoolId))).limit(1);
+  const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+  if (!path || path.teacherId !== group.teacherId && !(isSharedTeachingResourcesEnabled(options.schoolId) && (path.visibility === "school" || path.official)))
+    throw automaticFlightPathError("Choose the primary teacher's Flight Path or a shared school Flight Path", "AUTOMATIC_FLIGHT_PATH_NOT_ACCESSIBLE", 404);
+  const { flightPathReviewedInstantMatches } = await import("./classpilotLessonPrerequisites.js");
+  if (!flightPathReviewedInstantMatches(path.updatedAt, options.expectedFlightPathUpdatedAt))
+    throw automaticFlightPathError("This Flight Path changed; review it again", "FLIGHT_PATH_REVIEW_STALE");
+  return { schoolId: options.schoolId, actorId: options.actorId, groupId: group.id, primaryTeacherId: group.teacherId,
+    policyRevision: policy.revision, flightPath: path, studentIds: await automaticClassroomRoster(options.schoolId, group.id, dbInstance) };
+}
+
+export async function previewClasspilotAutomaticClassroomAccess(options: Parameters<typeof getClasspilotAutomaticClassroomReviewContext>[0], dbInstance: typeof db = db) {
+  const context = await getClasspilotAutomaticClassroomReviewContext(options, dbInstance);
+  return previewAutomaticClassroomAccessReview(context);
+}
+
+/** Provider work belongs before outer class/start/Today authority transactions. */
+export async function prepareClasspilotAutomaticClassroomAccessForGroup(options: {
+  schoolId: string; groupId: string; teachingSessionId?: string;
+}, dbInstance: typeof db = db): Promise<PreparedAutomaticClassroomAccess | null> {
+  if (!isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.schoolId })) return null;
+  await assertClasspilotEntitled(options.schoolId, dbInstance);
+  const [group] = await dbInstance.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).limit(1);
+  if (!group || !automaticFlightPathClassEligible(group)) return null;
+  const policy = normalizeAutomaticFlightPathPolicy(group.automaticFlightPathPolicy);
+  if (!policy.enabled || !policy.flightPathId || policy.schemaVersion === 1
+    && !isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.schoolId })) return null;
+  const [path] = await dbInstance.select().from(flightPaths).where(and(eq(flightPaths.schoolId, options.schoolId), eq(flightPaths.id, policy.flightPathId))).limit(1);
+  const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+  if (!path || path.teacherId !== group.teacherId && !(isSharedTeachingResourcesEnabled(options.schoolId) && (path.visibility === "school" || path.official))) return null;
+  const context = { schoolId: options.schoolId, groupId: group.id, primaryTeacherId: group.teacherId,
+    policy, flightPath: path, studentIds: await automaticClassroomRoster(options.schoolId, group.id, dbInstance, options.teachingSessionId) };
+  if (!automaticFlightPathContainsClassroom(path)) return null;
+  const { resolveClasspilotMonitoringPolicy } = await import("./classpilotMonitoringPolicy.js");
+  const tracking = await getHeartbeatTrackingSettingsForSchool(options.schoolId, dbInstance);
+  if (resolveClasspilotMonitoringPolicy(tracking).policyMode !== "full")
+    return unavailableAutomaticClassroomPreparation(context, "AUTOMATIC_FLIGHT_PATH_MONITORING_UNAVAILABLE", Date.now());
+  return prepareAutomaticClassroomAccess(context);
+}
+
 export async function updateClasspilotAutomaticFlightPathPolicy(options: {
   schoolId: string; groupId: string; actorId: string; expectedRevision: number; enabled: boolean;
   flightPathId: string | null; expectedFlightPathUpdatedAt?: string;
+  classroomAccess?: { reviewToken: string };
 }, dbInstance: typeof db = db) {
+  // Resolve Google before taking staff/class/path locks. The signed identity
+  // is checked again after those locks and immediately before the write.
+  if (options.classroomAccess && (!options.enabled || !options.flightPathId || !options.expectedFlightPathUpdatedAt))
+    throw automaticFlightPathError("Review an enabled Classroom Flight Path and its current saved version", "STUDENT_CLASSROOM_ACCESS_REVIEW_REQUIRED", 400);
+  const reviewed = options.enabled && options.classroomAccess
+    ? await confirmAutomaticClassroomAccessReview(await getClasspilotAutomaticClassroomReviewContext({ ...options,
+      flightPathId: options.flightPathId!, expectedFlightPathUpdatedAt: options.expectedFlightPathUpdatedAt || "" }, dbInstance), options.classroomAccess.reviewToken)
+    : null;
   return dbInstance.transaction(async (tx) => {
     const database = tx as unknown as typeof db;
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw automaticFlightPathError("School not found", "SCHOOL_NOT_FOUND", 404);
@@ -23832,6 +23928,14 @@ export async function updateClasspilotAutomaticFlightPathPolicy(options: {
         throw automaticFlightPathError("Choose the primary teacher's Flight Path or a shared school Flight Path", "AUTOMATIC_FLIGHT_PATH_NOT_ACCESSIBLE", 404);
       const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
       const payload = classpilotFlightPathApplyPayload({ schoolId: options.schoolId, flightPath: path });
+      if (automaticFlightPathContainsClassroom(path)
+        && (reviewed || isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: options.schoolId }))) {
+        if (!reviewed || !options.classroomAccess) throw automaticFlightPathError("Review students' Classroom access before saving this class preset", "STUDENT_CLASSROOM_ACCESS_REVIEW_REQUIRED");
+        const context = { schoolId: options.schoolId, actorId: options.actorId, groupId: group.id, primaryTeacherId: group.teacherId,
+          policyRevision: current.revision, flightPath: path, studentIds: await automaticClassroomRoster(options.schoolId, group.id, database) };
+        const { verifyStudentClassroomAccessReview } = await import("./classpilotStudentClassroomAccess.js");
+        verifyStudentClassroomAccessReview({ identity: automaticClassroomReviewIdentity(context), mode: "automatic-flight-path", reviewToken: options.classroomAccess.reviewToken });
+      } else if (reviewed) throw automaticFlightPathError("This Flight Path no longer includes Classroom", "FLIGHT_PATH_REVIEW_STALE");
       if (payload.allowedDomains.length > 1000) throw automaticFlightPathError("Flight Paths support at most 1,000 website rules", "CLASSROOM_RULE_LIMIT_EXCEEDED", 400);
       if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 48 * 1024)
         throw automaticFlightPathError("This Flight Path is too large for an automatic class restriction", "AUTOMATIC_FLIGHT_PATH_TOO_LARGE", 400);
@@ -23841,8 +23945,10 @@ export async function updateClasspilotAutomaticFlightPathPolicy(options: {
           throw automaticFlightPathError("This Flight Path changed; review it again", "FLIGHT_PATH_REVIEW_STALE");
       }
     }
-    const next = { schemaVersion: 1 as const, revision: current.revision + 1, enabled: options.enabled,
-      flightPathId: options.flightPathId, updatedBy: options.actorId };
+    const next = { schemaVersion: reviewed ? 2 as const : 1 as const, revision: current.revision + 1, enabled: options.enabled,
+      flightPathId: options.flightPathId, updatedBy: options.actorId, ...(reviewed ? { classroomAccess: reviewed.approval } : {}) };
+    if (reviewed && reviewed.expiresAt <= Date.now())
+      throw automaticFlightPathError("This Classroom review expired; review the class preset again", "STUDENT_CLASSROOM_ACCESS_REVIEW_STALE");
     const [updated] = await tx.update(groups).set({ automaticFlightPathPolicy: next })
       .where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).returning();
     await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
@@ -23854,7 +23960,7 @@ export async function updateClasspilotAutomaticFlightPathPolicy(options: {
 
 /** Freeze at the live start, never when revisiting an existing manual session. */
 export async function initializeAutomaticFlightPathForSession(session: TeachingSession, dbInstance: typeof db = db,
-  options: { manualTodayStartDate?: string } = {}): Promise<AutomaticFlightPathState> {
+  options: { manualTodayStartDate?: string; classroomPreparation?: PreparedAutomaticClassroomAccess | null } = {}): Promise<AutomaticFlightPathState> {
   if (!session.schoolId || (!session.scheduledDate && !session.manualExpiresAt)
     || session.sessionMode !== "live" || session.endTime) return emptyAutomaticFlightPathState();
   return dbInstance.transaction(async (tx) => {
@@ -23897,6 +24003,18 @@ export async function initializeAutomaticFlightPathForSession(session: TeachingS
             throw automaticFlightPathError("This Flight Path is too large for an automatic class restriction", "AUTOMATIC_FLIGHT_PATH_TOO_LARGE", 400);
           state = { ...state, status: "active", payload,
             name: path.flightPathName, flightPathUpdatedAt: path.updatedAt.toISOString() };
+          if (automaticFlightPathContainsClassroom(path)
+            && (policy.schemaVersion === 2 || isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: session.schoolId! }))) {
+            const preparation = validateAutomaticClassroomPreparation({ schoolId: session.schoolId!, groupId: group.id,
+              primaryTeacherId: group.teacherId, policy, flightPath: path, studentIds }, options.classroomPreparation);
+            if (!isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: session.schoolId! }) || preparation.status !== "ready") {
+              state = { ...state, status: "unavailable", payload: null,
+                reasonCode: !isClasspilotCapabilityActive("classroomFocusScopeV1", { schoolId: session.schoolId! })
+                  ? "CLASSROOM_FOCUS_DISABLED" : preparation.reasonCode || "STUDENT_CLASSROOM_ACCESS_PREPARATION_STALE" };
+            } else {
+              state = { ...state, schemaVersion: 2, perStudentPayloads: preparation.perStudentPayloads };
+            }
+          }
         } catch (error) {
           const code = (error as { code?: string }).code;
           if (!code) throw error;
@@ -23925,7 +24043,10 @@ export async function initializeAutomaticFlightPathForSession(session: TeachingS
           const live = !!binding && read?.status === "hit" && classpilotRealtimeFresh(read.snapshot);
           const capabilities = read?.status === "hit" ? read.snapshot.acceptedCapabilities ?? [] : [];
           let reason: string | undefined;
-          if (state.payload?.resources?.length && (!live || !capabilities.includes("preciseRestrictionResourcesV1"))) reason = "AUTOMATIC_FLIGHT_PATH_PRECISE_CAPABILITY_REQUIRED";
+          const studentPayload = state.schemaVersion === 2 ? state.perStudentPayloads?.[studentId] : state.payload;
+          if (state.schemaVersion === 2 && live && !["scopedAuthorityChecksV1", "preciseRestrictionResourcesV1", "classroomFocusScopeV1"].every(capability => capabilities.includes(capability)))
+            reason = "STUDENT_CLASSROOM_ACCESS_CAPABILITY_REQUIRED";
+          else if (studentPayload?.resources?.length && (!live || !capabilities.includes("preciseRestrictionResourcesV1"))) reason = "AUTOMATIC_FLIGHT_PATH_PRECISE_CAPABILITY_REQUIRED";
           else if (!live && (binding || !deferEnabled)) reason = "AUTOMATIC_FLIGHT_PATH_OFFLINE_UNSUPPORTED";
           else if (live && authRequired && !capabilities.includes("restrictionAuthPassThroughV1")) reason = "AUTOMATIC_FLIGHT_PATH_AUTH_CAPABILITY_REQUIRED";
           if (reason) { state.unavailableStudentIds.push(studentId); state.unavailableReasons[studentId] = reason; }
@@ -28762,6 +28883,48 @@ export async function markGoogleRosterConnectorSynced(
     .update(googleRosterConnectors)
     .set({ lastSyncAt: new Date(), updatedAt: new Date() })
     .where(eq(googleRosterConnectors.schoolId, schoolId));
+}
+
+/** The row-version token avoids JavaScript timestamp truncation in approval CAS. */
+export async function getGoogleClassroomAccessConnector(schoolId: string) {
+  const [connector] = await db.select({ ...getTableColumns(googleRosterConnectors), approvalVersion: sql<string>`xmin::text` })
+    .from(googleRosterConnectors).where(eq(googleRosterConnectors.schoolId, schoolId)).limit(1);
+  return connector;
+}
+
+/** Content-purpose approval cannot resurrect a concurrently changed connector. */
+export async function compareAndSetGoogleClassroomAccessScopes(
+  schoolId: string,
+  expected: Pick<GoogleRosterConnector, "id" | "schoolId" | "domain" | "status" | "delegatedAdminEmail" | "serviceAccountClientId" | "approvedScopes" | "updatedAt"> & { approvalVersion?: string },
+  approvedScopes: string[],
+  classroomAccessApproval: GoogleRosterConnector["classroomAccessApproval"],
+): Promise<GoogleRosterConnector | undefined> {
+  if (expected.schoolId !== schoolId || !expected.approvalVersion || !/^\d{1,20}$/.test(expected.approvalVersion)
+    || approvedScopes.some(scope => typeof scope !== "string" || !scope)) return undefined;
+  const [connector] = await db.update(googleRosterConnectors).set({ approvedScopes, classroomAccessApproval, updatedAt: new Date() }).where(and(
+    eq(googleRosterConnectors.schoolId, schoolId), eq(googleRosterConnectors.id, expected.id),
+    eq(googleRosterConnectors.domain, expected.domain), eq(googleRosterConnectors.status, expected.status),
+    expected.delegatedAdminEmail === null ? isNull(googleRosterConnectors.delegatedAdminEmail) : eq(googleRosterConnectors.delegatedAdminEmail, expected.delegatedAdminEmail),
+    expected.serviceAccountClientId === null ? isNull(googleRosterConnectors.serviceAccountClientId) : eq(googleRosterConnectors.serviceAccountClientId, expected.serviceAccountClientId),
+    sql`xmin::text = ${expected.approvalVersion}`, eq(googleRosterConnectors.approvedScopes, expected.approvedScopes),
+  )).returning();
+  return connector;
+}
+
+/** Narrow current-school identity used only by the student Classroom source purpose. */
+export async function getStudentForGoogleClassroomAccess(schoolId: string, studentId: string) {
+  const [student] = await db.select({ id: students.id, schoolId: students.schoolId, status: students.status,
+    email: students.email, googleUserId: students.googleUserId }).from(students)
+    .where(and(eq(students.schoolId, schoolId), eq(students.id, studentId))).limit(1);
+  return student;
+}
+
+export async function getGoogleClassroomVerificationStudents(schoolId: string) {
+  const candidates = await db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName })
+    .from(students).where(and(eq(students.schoolId, schoolId), eq(students.status, "active"),
+      isNotNull(students.googleUserId), ne(students.googleUserId, ""), isNotNull(students.email)))
+    .orderBy(students.lastName, students.firstName, students.id).limit(100);
+  return candidates.map(student => ({ id: student.id, name: `${student.firstName} ${student.lastName}`.trim() }));
 }
 
 // ============================================================================

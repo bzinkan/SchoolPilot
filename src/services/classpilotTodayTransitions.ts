@@ -5,6 +5,7 @@ import { createOrReuseScheduledReportSession, getUserById, lockClasspilotStudent
   promoteScheduledReportSessionToLive, type FinalizeTeachingSessionResult } from "./storage.js";
 import { finalizeClasspilotSession } from "./classpilotSessionLifecycle.js";
 import { canonicalTodayOccurrenceId } from "./classpilotTodayOccurrences.js";
+import type { PreparedAutomaticClassroomAccess } from "./classpilotAutomaticClassroomAccess.js";
 
 /** Acquire the complete authority scope before a reviewed cutover clock is captured. */
 export async function lockClasspilotTodayTransitionStudents(options: {
@@ -28,6 +29,7 @@ export async function lockClasspilotTodayTransitionStudents(options: {
 export async function applyClasspilotTodayTransitions(options: {
   schoolId: string; occurrenceIds: string[]; outgoingSessionIds: string[]; liveTeacherIds: string[];
   cutoverAt: Date; dbInstance: typeof db;
+  automaticClassroomPreparations?: Readonly<Record<string, PreparedAutomaticClassroomAccess | null>>;
 }): Promise<{ finalizations: FinalizeTeachingSessionResult[]; startedSessionIds: string[] }> {
   const database = options.dbInstance;
   const rows = options.occurrenceIds.length ? await database.select().from(classpilotTodayOccurrences).where(and(
@@ -57,7 +59,8 @@ export async function applyClasspilotTodayTransitions(options: {
     if (options.liveTeacherIds.includes(row.primaryTeacherIdSnapshot)) {
       if (session.sessionMode === "live" && !session.endTime) continue;
       if (session.endTime && row.source.preservedOccurrenceId) continue;
-      const live = await promoteScheduledReportSessionToLive({ schoolId: options.schoolId, sessionId: session.id }, database);
+      const live = await promoteScheduledReportSessionToLive({ schoolId: options.schoolId, sessionId: session.id,
+        automaticClassroomPreparation: options.automaticClassroomPreparations?.[row.groupId] }, database);
       if (!live) throw Object.assign(new Error("The replacement class could not start. Review today's schedule again."), {
         status: 409, code: "TODAY_SCHEDULE_START_FAILED",
       });
