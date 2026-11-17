@@ -5,6 +5,8 @@ import test from "node:test";
 import ts from "typescript";
 import { ClasspilotClassroomRecoveryCoordinator } from "../src/realtime/classpilotClassroomRecovery.js";
 import { classpilotClassroomStatePushFrame } from "../src/services/classpilotControlStateFrame.js";
+import { studentClassroomAccessApprovalForState, studentClassroomAccessApprovalKeyForState,
+  studentClassroomAccessPublicationApprovedFromCache } from "../src/services/classpilotStudentClassroomAccess.js";
 
 const source = readFileSync(new URL("../src/realtime/websocket.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const marker = source.indexOf('message.type === "classroom-state-request"');
@@ -16,7 +18,7 @@ const executable = ts.transpileModule(`async function recover() { ${source.slice
 }).outputText;
 
 function fixture(options: { closeAt?: "policy" | "lock" | "read" | "retire" | "cleanup";
-  denied?: boolean; withheld?: boolean; noState?: boolean; commitFailure?: boolean; sqlFailure?: boolean; sendFailure?: boolean } = {}) {
+  denied?: boolean; withheld?: boolean; noState?: boolean; commitFailure?: boolean; sqlFailure?: boolean; sendFailure?: boolean; approvalWithdrawn?: boolean } = {}) {
   let checkouts = 0, held = false, rollbacks = 0, sends = 0, epoch = 1;
   const frames: Array<{ type: string; classroomState?: unknown; exactBinding?: { studentSessionId: string } }> = [];
   const failures: unknown[] = [], counters: string[] = [], pending: Promise<unknown>[] = [];
@@ -53,6 +55,9 @@ function fixture(options: { closeAt?: "policy" | "lock" | "read" | "retire" | "c
     async getClasspilotSsoPolicyForSchool() { return { policy: {}, revision: 0 }; },
     async retireLegacyTabFocusForStudentLocked() { closeAt("retire"); return options.noState ? null : { revision: 8 }; },
     serializeClasspilotStudentControlStateForDelivery() { return { classroomState: { revision: 8 }, withheld: !!options.withheld }; },
+    studentClassroomAccessApprovalForState,
+    studentClassroomAccessApprovalKeyForState: options.approvalWithdrawn ? () => "a".repeat(64) : studentClassroomAccessApprovalKeyForState,
+    studentClassroomAccessPublicationApprovedFromCache: options.approvalWithdrawn ? () => false : studentClassroomAccessPublicationApprovedFromCache,
     isClasspilotCapabilityActive() { return true; },
     async prepareClasspilotFocusCleanupFrame() { closeAt("cleanup"); return null; },
   };
@@ -106,6 +111,16 @@ test("authority denial and capability withholding are distinct recovery outcomes
   assert.equal(withheld.frames.length, 0);
   assert.ok(withheld.counters.includes("classroomRecoveryWithheld"));
   assert.equal(withheld.counters.includes("classroomRecoveryTransmitted"), false);
+});
+
+test("content approval withdrawn before final recovery send withholds only the snapshot and keeps the socket authenticated", async () => {
+  const f = fixture({ approvalWithdrawn: true });
+  await f.run();
+  assert.equal(f.frames.length, 0);
+  assert.equal(f.ws.readyState, 1);
+  assert.equal(f.failures.length, 0);
+  assert.ok(f.counters.includes("classroomRecoveryWithheld"));
+  assert.equal(f.counters.includes("classroomRecoveryDenied"), false);
 });
 
 test("real frame admission coalesces recovery bursts before queueing and preserves ACK order", async () => {
