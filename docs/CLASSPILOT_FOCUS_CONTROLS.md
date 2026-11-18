@@ -15,6 +15,17 @@ unsupported or offline recipient never receives a broader website fallback.
 The student tile's open padlock starts current-website Focus directly for that
 student and requires a fresh HTTP(S) page.
 
+An **Entire website** Focus on `classroom.google.com` includes the same fixed
+Google work websites as a Classroom Flight Path: `docs.google.com`,
+`drive.google.com`, `sheets.google.com`, `slides.google.com`, `forms.google.com`
+and `forms.gle`. Students can use those work apps and their document copies;
+Google Search and unrelated websites remain blocked. The preview lists the
+effective websites while retaining only the teacher's selected Classroom URL as
+the authoring input. School and teacher website blocks keep their priority.
+This fixed website bundle reads no assignments and needs no Google import or
+DWD approval. **This resource only** and Section restrictions retain their
+specific boundaries and do not inherit the website bundle.
+
 Use each student's checkbox to select recipients for the toolbar's Set Focus
 and Stop Focus actions. Clicking the tile body opens its screenshot preview;
 it does not select the student. The toolbar shows its explicit selection count
@@ -80,6 +91,11 @@ extension advertisements cannot override capability withdrawal. Observe has no
 classroom commands.
 
 ## Outcomes and release boundary
+
+The Classroom Google work bundle requires matching extension navigation and
+browser-rule enforcement from the separate ClassPilot release. The ordinary
+`lock-screen` URL payload stays unchanged; an expanded server preview alone does
+not establish that an installed client enforces the bundle.
 
 Realtime capability metadata accepts at most 64 entries, each a nonempty trimmed
 string of at most 64 characters, with stable deduplication. Invalid or oversized
