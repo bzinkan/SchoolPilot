@@ -63,7 +63,37 @@ test("Classroom import preview does not turn generated companion hosts into save
   assert.deepEqual(preview.authoring.resourceLinks, ["https://classroom.google.com"]);
 });
 
-test("Focus website previews remain independent of the Flight Path bundle", async () => {
-  const preview = await previewRestrictionResources("fixture", { purpose: "waypoint", boundary: "website", url: "https://classroom.google.com" }, { env });
-  assert.deepEqual(preview.scopes.map(scope => scope.hostname), ["classroom.google.com"]);
+test("ordinary Classroom website Focus previews the same Google work bundle without import or capability gates", async () => {
+  const url = "https://classroom.google.com/c/123";
+  const preview = await previewRestrictionResources("fixture", { purpose: "waypoint", boundary: "website", url }, { env: {} });
+  assert.deepEqual(preview.scopes.map(scope => scope.hostname), ["classroom.google.com", ...companions]);
+  assert.deepEqual(preview.effectiveAllowedDomains, ["classroom.google.com", ...companions]);
+  assert.deepEqual(preview.authoring, { allowedDomains: ["classroom.google.com"], resources: [], url });
+  assert.equal(preview.scopes[0]!.url, url, "the selected Classroom landing remains unchanged");
+  assert.equal(preview.warnings.length, 7);
+  for (const denied of ["google.com", "google.co.uk", "search.google.com", "unrelated.example"]) {
+    assert.equal(preview.effectiveAllowedDomains.includes(denied), false);
+  }
+});
+
+test("ordinary Focus adds Google work only for the exact normalized Classroom website", async () => {
+  for (const url of ["https://CLASSROOM.GOOGLE.COM/c/123", "https://www.classroom.google.com./c/123"]) {
+    const preview = await previewRestrictionResources("fixture", { purpose: "waypoint", boundary: "website", url }, { env: {} });
+    assert.deepEqual(preview.effectiveAllowedDomains, ["classroom.google.com", ...companions]);
+  }
+  for (const host of ["foo.classroom.google.com", "classroom.google.com.evil.example", "google.com", "docs.google.com", "ixl.com"]) {
+    const preview = await previewRestrictionResources("fixture", { purpose: "waypoint", boundary: "website", url: `https://${host}/work` }, { env: {} });
+    assert.deepEqual(preview.effectiveAllowedDomains, [host]);
+  }
+});
+
+test("specific Classroom section and Google resource Focus previews remain narrow", async () => {
+  for (const url of ["https://classroom.google.com/c/123/a/456", "https://docs.google.com/document/d/abcdefghijklmnopqrstuvwxyz/edit"]) {
+    const preview = await previewRestrictionResources("fixture", { purpose: "waypoint", boundary: "resource", url }, { env });
+    assert.deepEqual(preview.effectiveAllowedDomains, []);
+    assert.deepEqual(preview.authoring.allowedDomains, []);
+    assert.equal(preview.scopes.length, 1);
+    assert.notEqual(preview.scopes[0]!.type, "website");
+    assert.equal(preview.authoring.resources.length, 1);
+  }
 });

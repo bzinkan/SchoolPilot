@@ -1,6 +1,10 @@
 import { Button } from '../../../components/ui/button';
 
 export default function RestrictionScopeReview({ review, disabled = false }) {
+  const classroomWebsiteFocus = review.preview?.purpose === 'waypoint' && review.preview.boundary === 'website'
+    && ['classroom.google.com', 'docs.google.com', 'drive.google.com', 'sheets.google.com',
+      'slides.google.com', 'forms.google.com', 'forms.gle']
+      .every(hostname => review.preview.effectiveAllowedDomains?.includes(hostname));
   return <div className="space-y-3" data-testid="restriction-scope-review">
     <Button type="button" variant="outline" disabled={disabled || review.pending} onClick={() => void review.review()} data-testid="button-review-restriction-scope">
       {review.pending ? 'Reviewing scope…' : review.preview ? 'Review scope again' : 'Review allowed scope'}
@@ -8,9 +12,10 @@ export default function RestrictionScopeReview({ review, disabled = false }) {
     {review.error && <p role="alert" className="text-sm text-destructive">{review.error}</p>}
     {review.preview && <section aria-label="Reviewed allowed scope" className="space-y-3 rounded-md border bg-muted/30 p-3 text-sm">
       <p className="font-medium">Reviewed allowed scope</p>
-      {review.preview.purpose !== 'waypoint' && review.preview.effectiveAllowedDomains?.includes('classroom.google.com') && (
-        <p className="text-sm">Classroom includes Google work apps and all files in those apps. School and teacher block rules still apply.</p>
+      {(classroomWebsiteFocus || (review.preview.purpose !== 'waypoint' && review.preview.effectiveAllowedDomains?.includes('classroom.google.com'))) && (
+        <p className="text-sm">Classroom includes Google work apps and all files in those apps. {classroomWebsiteFocus && 'Google Search stays blocked. '}School and teacher block rules still apply.</p>
       )}
+      {classroomWebsiteFocus && <p className="text-xs text-muted-foreground">Google work access in Classroom Focus requires ClassPilot extension 3.0.9 or newer.</p>}
       {review.preview.scopes.length === 0 ? <p>No usable entries were found.</p> : <ul className="space-y-3">
         {review.preview.scopes.map((scope, index) => <li key={`${scope.url}:${index}`}>
           <p className="font-medium">{scope.label}</p><p className="break-all text-xs">{scope.url}</p>

@@ -8634,6 +8634,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.repeat) return; if (recipientConfirmPending('lock-screen')) focusRecipientSendButton(e); else handleConfirmLockScreen(e); } }} data-testid="input-lock-screen-url" />
                 <p className="text-xs text-muted-foreground">{classroomFocusRequested ? "Classroom includes each student's own courses and assigned websites reviewed below." : preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
                   ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
+                  : lockScreenEffectiveBoundary === 'website' && isClassroomFocusUrl(lockScreenUrl)
+                    ? 'Classroom includes Google work apps and all files in those apps with ClassPilot extension 3.0.9 or newer. Google Search stays blocked.'
                   : DOMAIN_RESTRICTION_URL_HELP}</p>
                 {preciseRestrictionResourcesEnabled && (
                   <fieldset className="space-y-2 pt-1" data-testid="lock-screen-boundary">

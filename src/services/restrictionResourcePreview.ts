@@ -73,7 +73,7 @@ function buildPreview(
   purpose: RestrictionResourcePreview["purpose"], hosts: string[], resources: PreciseAllowedResource[],
 ): RestrictionResourcePreview {
   const allowedDomains = [...new Set(hosts.map(websiteHostname))];
-  const effectiveAllowedDomains = purpose === "waypoint" ? [...allowedDomains] : effectiveFlightPathAllowedDomains(allowedDomains);
+  const effectiveAllowedDomains = effectiveFlightPathAllowedDomains(allowedDomains);
   const scopes: RestrictionScopePreview[] = effectiveAllowedDomains.map(hostname => ({
     type: "website", hostname, url: `https://${hostname}`, label: "Entire website",
     description: `Every page on ${hostname} and its subdomains is allowed.`,
