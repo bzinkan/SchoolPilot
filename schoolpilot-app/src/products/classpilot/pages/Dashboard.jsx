@@ -50,6 +50,7 @@ import { useStudentClassroomAccessPreview } from '../hooks/useStudentClassroomAc
 import { classroomFocusPayload, classroomFlightPathPayload, flightPathIncludesClassroom, isClassroomFocusUrl, supportsClassroomFocus } from '../lib/classroomFocus';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
+import AppPicker from '../components/AppPicker';
 import AutomaticFlightPathStatus from '../components/AutomaticFlightPathStatus';
 import { useAutomaticFlightPathSession } from '../hooks/useAutomaticFlightPathSession';
 import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
@@ -8582,6 +8583,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <DialogHeader><DialogTitle>Open Tab on Student Devices</DialogTitle></DialogHeader>
           <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('open-tab')} />
           <div className="space-y-4 py-4">
+            <AppPicker key={commandControlScopeKey} selectedUrl={openTabUrl} disabled={openTabMutation.isPending}
+              onSelect={(app) => setOpenTabUrl(app.launchUrl)} />
             <div className="space-y-2">
               <Label htmlFor="open-tab-url">URL to Open</Label>
               <Input id="open-tab-url" type="url" placeholder="https://example.com" value={openTabUrl} onChange={(e) => setOpenTabUrl(e.target.value)} onKeyDown={(e) => {
@@ -8630,6 +8633,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             {lockScreenMode === 'current' && <p className="text-xs text-muted-foreground">Each signed-in student's current page is the starting point. Browsing stays on that student's website, which may differ for each student. Choose a specific link to review one shared resource or Section.</p>}
             {lockScreenMode === "url" && (
               <div className="space-y-2">
+                <AppPicker key={commandControlScopeKey} selectedUrl={lockScreenUrl} disabled={lockScreenMutation.isPending}
+                  onSelect={(app) => setLockScreenUrl(app.launchUrl)} />
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.repeat) return; if (recipientConfirmPending('lock-screen')) focusRecipientSendButton(e); else handleConfirmLockScreen(e); } }} data-testid="input-lock-screen-url" />
                 <p className="text-xs text-muted-foreground">{classroomFocusRequested ? "Classroom includes each student's own courses and assigned websites reviewed below." : preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'

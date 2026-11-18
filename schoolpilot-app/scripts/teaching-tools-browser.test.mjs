@@ -76,6 +76,7 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', store
     let body = null;
     if (req.method() !== 'GET') { try { body = req.postDataJSON(); } catch { body = null; } }
     state.requests.push({ method: req.method(), path: url.pathname, search: url.search, schoolId, body });
+    if (url.pathname === '/api/classpilot/apps' && req.method() === 'GET') return route.fulfill({ json: { canManageSchoolApps: ['admin', 'school_admin'].includes(role), apps: [{ key: 'builtin:ixl', kind: 'app', source: 'common', name: 'IXL', launchUrl: 'https://www.ixl.com/', allowedDomains: ['ixl.com'], iconKey: 'ixl', saved: false, favorite: false, canEdit: false, revision: 1 }] } });
     if (url.pathname === '/api/classpilot/groups/manual-today' && req.method() === 'GET') return route.fulfill({ json: state.manualToday });
     const manualTodayMatch = url.pathname.match(/^\/api\/classpilot\/groups\/([^/]+)\/manual-today$/);
     if (manualTodayMatch && req.method() === 'POST') {

@@ -110,7 +110,7 @@ const LEGACY_ADMIN_KEYS = new Set([
   '/api/admin/teachers', '/api/admin/teacher-students', '/api/admin/users',
   '/api/users/staff', '/api/admin/audit-logs', '/api/sessions/all', '/api/teacher/groups',
   '/api/admin/analytics/summary', '/api/admin/analytics/by-teacher', '/api/admin/analytics/by-group',
-  '/api/settings', '/classpilot/admin/settings', '/api/classpilot/admin/settings', '/api/flight-paths', '/api/classpilot/enrollment-key', '/api/classpilot/it-readiness',
+  '/api/settings', '/classpilot/admin/settings', '/api/classpilot/admin/settings', '/api/classpilot/apps', '/api/flight-paths', '/api/classpilot/enrollment-key', '/api/classpilot/it-readiness',
   '/api/classpilot/admin/sso-policy', '/google/roster-connector',
   '/api/classroom/courses', '/api/classroom/resources', '/api/directory/users', '/api/directory/orgunits',
   '/api/mailpilot/setup/info', '/api/mailpilot/alerts', '/api/mailpilot/alerts/stats',

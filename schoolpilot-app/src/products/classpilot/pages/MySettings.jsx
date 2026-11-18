@@ -25,6 +25,9 @@ import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceLi
 import { restrictionResourceLabel, restrictionResourceUrl } from "../lib/restrictionResourceMatcher";
 import { useRestrictionScopePreview } from "../hooks/useRestrictionScopePreview";
 import RestrictionScopeReview from "../components/RestrictionScopeReview";
+import AppPicker from "../components/AppPicker";
+import AppLibraryManager from "../components/AppLibraryManager";
+import { appendAppDomains } from "../lib/appLibrary";
 
 const EMPTY_RESOURCE_LIST = Object.freeze({ own: Object.freeze([]), library: Object.freeze([]), libraryEnabled: false });
 const selectFlightPathList = (data) => ({ ...teachingResourceList(data, 'flightPaths'),
@@ -681,6 +684,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
           <section hidden={section !== "websites"} className="space-y-6" aria-label="Website tools">
             <h2 className="text-xl font-semibold">Website tools</h2>
             <ClassroomWebsiteImport schoolId={currentUser.schoolId} viewerId={currentUser.id} preciseResourcesEnabled={preciseResourcesEnabled} />
+            <AppLibraryManager scope="personal" active={section === "websites"} />
             {/* Flight Paths Section */}
             <Card data-testid="card-flight-paths">
               <CardHeader>
@@ -1301,6 +1305,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
               />
             </div>
             <div className="space-y-2">
+              <AppPicker mode="flight-path" disabled={toolBusy} onAddDomains={domains => setFlightPathAllowedDomains(current => appendAppDomains(current, domains))} />
               <Label htmlFor="flight-path-domains">Allowed Domains</Label>
               <Input
                 id="flight-path-domains"

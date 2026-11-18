@@ -22,6 +22,7 @@ export default defineConfig({
     "./src/schema/passpilotAppointments.ts",
     "./src/schema/gopilot.ts",
     "./src/schema/classpilot.ts",
+    "./src/schema/classpilotApps.ts",
     "./src/schema/classpilotNative.ts",
     "./src/schema/classpilotWindows.ts",
     "./src/schema/classpilotWindowsHistory.ts",

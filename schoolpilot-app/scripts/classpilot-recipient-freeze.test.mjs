@@ -873,3 +873,50 @@ test('Select All excludes signed-out students while individual saved restriction
     assert.deepEqual(commands, []); assert.deepEqual(pageErrors, []);
   } finally { await page.close(); }
 });
+
+const APP_BUTTON_FIXTURE = { key: 'builtin:ixl', kind: 'app', source: 'common', name: 'IXL', launchUrl: 'https://www.ixl.com/', allowedDomains: ['ixl.com'], iconKey: 'ixl', saved: false, favorite: false, canEdit: false, revision: 1 };
+async function appButtonFixture(page) {
+  await page.route('**/api/classpilot/apps', route => route.fulfill({ json: { apps: [APP_BUTTON_FIXTURE], canManageSchoolApps: false } }));
+}
+
+test('app shortcut selects an Open URL destination without sending or widening its frozen students', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, tick } = await classPage([ADA, BEN]);
+  try {
+    await appButtonFixture(page); await tick(ADA);
+    await page.getByTestId('button-open-tab').click();
+    const dialog = page.getByTestId('dialog-open-tab');
+    await dialog.getByTestId('app-button-builtin:ixl').click();
+    assert.equal(await dialog.getByTestId('input-open-tab-url').inputValue(), APP_BUTTON_FIXTURE.launchUrl);
+    assert.deepEqual(commands, [], 'choosing an app only selects its destination');
+    assert.equal(await dialog.getByTestId('button-confirm-open-focus').count(), 0, 'retired tab Focus is not offered');
+    await page.evaluate(id => document.querySelector(`[data-testid="checkbox-select-student-${id}"]`)?.click(), BEN);
+    await dialog.getByTestId('button-confirm-open-tab').click();
+    await waitUntil(() => commands.length === 1, 'Open URL uses its original explicit recipients');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA]);
+    assert.equal(commands[0].commandType, 'open-tab');
+    assert.deepEqual(commands[0].commandPayload, { url: APP_BUTTON_FIXTURE.launchUrl });
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('app shortcut fills website Focus while preserving its current lock-screen contract and frozen students', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, tick } = await classPage([ADA, BEN]);
+  try {
+    await appButtonFixture(page); await tick(ADA);
+    await page.getByTestId('button-lock-screen').click();
+    const dialog = page.getByTestId('dialog-lock-screen');
+    await dialog.getByTestId('radio-lock-screen-specific').check();
+    await dialog.getByTestId('app-button-builtin:ixl').click();
+    assert.equal(await dialog.getByTestId('input-lock-screen-url').inputValue(), APP_BUTTON_FIXTURE.launchUrl);
+    assert.deepEqual(commands, [], 'choosing an app never starts Focus');
+    await page.evaluate(id => document.querySelector(`[data-testid="checkbox-select-student-${id}"]`)?.click(), BEN);
+    await dialog.getByTestId('button-confirm-lock-screen').click();
+    await waitUntil(() => commands.length === 1, 'Focus confirms for its original explicit recipients');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA]);
+    assert.equal(commands[0].commandType, 'lock-screen');
+    assert.deepEqual(commands[0].commandPayload, { url: APP_BUTTON_FIXTURE.launchUrl });
+    assert.equal(JSON.stringify(commands).includes('focusAfterOpen'), false);
+    assert.equal(JSON.stringify(commands).includes('focus-tab'), false);
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});

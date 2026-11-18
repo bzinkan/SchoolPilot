@@ -32,6 +32,7 @@ async function fixture(t, route = '/classpilot/settings?section=browsing') {
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, method = request.method(), schoolId = request.headers()['x-school-id'];
     if (pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture' } });
+    if (pathname === '/api/classpilot/apps' && method === 'GET') return route.fulfill({ json: { apps: [], canManageSchoolApps: true } });
     if (method !== 'GET') state.writes.push({ pathname, method, body: request.postDataJSON(), schoolId });
     if (state.pending === pathname && method !== 'GET') await new Promise(resolve => { state.release = resolve; });
     if (pathname === '/api/classpilot/admin/settings' && method === 'GET') return route.fulfill(state.readError ? { status: state.readStatus, json: { error: 'Synthetic refresh unavailable' } } : { json: { ...state.settings, schoolId, schoolName: schoolId === 'school-b' ? 'Other School' : state.settings.schoolName } });

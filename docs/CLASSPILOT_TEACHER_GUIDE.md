@@ -10,6 +10,20 @@ Prepare, start, guide, monitor, and wrap up an exact-authority ClassPilot class.
 
 
 
+### Save and choose app buttons
+
+**Who can use this:** Teacher or administrator
+
+Choose common apps, school websites, or your own saved buttons instead of typing an address each time.
+
+1. **Create a personal button.** In Website tools, My Apps lets you add a website using its name and address. Your personal buttons stay private to you in this school. You can also add a website directly while choosing a classroom destination.
+2. **Save your favorites.** Browse common and school apps, add frequently used tools to My Apps, and star favorites to show them first. Administrators maintain school buttons; your saved and favorite choices are personal.
+3. **Choose, then confirm.** In Open URL or Focus, choose an individual app to fill the address. Choosing a button sends nothing. Review the students and the displayed website or resource scope, then confirm Open or Set Focus. Existing browser capability checks and per-student outcomes still apply.
+4. **Build a Flight Path.** Select apps in the Flight Path editor, then choose Add selected apps to append their websites. The Google Classroom bundle adds Classroom and its supported Google work websites. Existing Classroom scope reviews still apply before students receive a restriction. Individual Docs, Slides, Sheets, and Forms buttons open different tools but allow their shared docs.google.com website. Review the displayed website access before saving.
+5. **Reuse deliberately.** Editing or deleting a button does not change websites already saved in a Flight Path. School blocks and sign-in rules still apply. If the library cannot load, retry or enter the website manually. Automatic discovery of Clever apps is not part of this release.
+
+[Open Website tools](/classpilot/my-settings)
+
 ### Prepare your class
 
 **Who can use this:** Teacher or administrator

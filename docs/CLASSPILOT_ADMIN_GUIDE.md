@@ -159,6 +159,18 @@ Configure eligible pairs and approve dated exceptions without rewriting recurrin
 
 
 
+### Maintain school app buttons
+
+**Who can use this:** Administrator or school administrator
+
+Share reliable website shortcuts with teachers through the school app catalog.
+
+1. **Add a school website.** In Browsing & monitoring, School Apps lets an administrator add a name and website address. Teachers can then choose that button while preparing Open URL, Focus, or a Flight Path.
+2. **Keep shared addresses current.** Administrators can edit or delete school buttons. Changes affect future choices only; existing Flight Paths keep their saved websites. Teachers can save and favorite school buttons but cannot edit their shared definitions.
+3. **Review the actual access.** A custom button permits its website when added to a Flight Path. It does not bypass school website blocks or sign-in policies. Common Google tools retain website-level access, including the shared Google Docs website. Teacher personal buttons and favorites remain private.
+
+[Open Browsing & monitoring](/classpilot/settings?section=browsing)
+
 ### Configure school settings and privacy boundaries
 
 **Who can use this:** Administrator or school administrator

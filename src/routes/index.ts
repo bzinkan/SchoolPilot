@@ -38,6 +38,7 @@ import teachingSessionRoutes from "./classpilot/sessions.js";
 import groupRoutes from "./classpilot/groups.js";
 import adminClassRoutes from "./classpilot/adminClasses.js";
 import flightPathRoutes from "./classpilot/flightPaths.js";
+import classpilotAppsRoutes from "./classpilot/apps.js";
 import classToolsRoutes from "./classpilot/classTools.js";
 import chatRoutes from "./classpilot/chat.js";
 import dashboardRoutes from "./classpilot/dashboard.js";
@@ -443,6 +444,7 @@ router.use("/classpilot/admin/instructional-calendar", instructionalCalendarRout
 router.use("/classpilot/admin/sso-policy", classpilotSsoPolicyRoutes);
 router.use("/classpilot/groups", groupRoutes);
 router.use("/classpilot/flight-paths", flightPathRoutes);
+router.use("/classpilot/apps", classpilotAppsRoutes);
 router.use("/classpilot", chatRoutes);
 router.use("/classpilot", classToolsRoutes);
 router.use("/classpilot", commandsRoutes);

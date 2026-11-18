@@ -39,6 +39,9 @@ import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db, { runWithDatabaseTransaction } from "../db.js";
+import { classpilotAppButtons, classpilotAppButtonPreferences } from "../schema/classpilotApps.js";
+import { AppButtonError, appButtonView, commonClasspilotApps, normalizeAppWebsite,
+  type AppButtonActor } from "./classpilotApps.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel, lockPrivateChatAdoption,
@@ -36530,5 +36533,125 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
       { schoolDate, timezone, now });
     const status = await getClasspilotManualTodayStatus(options.schoolId, options.actorId, now, transactionDb);
     return { ...status, class: status.classes.find(row => row.id === group.id)!, finalizations, deadlineUpdatedSessionIds };
+  });
+}
+
+// App definitions are school-scoped. Even administrators cannot discover a
+// colleague's private shortcuts; only school definitions have shared visibility.
+const visibleAppButton = (schoolId: string, actor: AppButtonActor) => and(
+  eq(classpilotAppButtons.schoolId, schoolId),
+  or(eq(classpilotAppButtons.scope, "school"), and(eq(classpilotAppButtons.scope, "personal"), eq(classpilotAppButtons.ownerTeacherId, actor.teacherId))),
+);
+const appButtonMissing = () => new AppButtonError(404, "CLASSPILOT_APP_NOT_FOUND", "App button not found");
+const appButtonForbidden = () => new AppButtonError(403, "CLASSPILOT_APP_READ_ONLY", "Only school administrators can change school apps");
+const appButtonConflict = () => new AppButtonError(409, "CLASSPILOT_APP_CONFLICT", "This app button changed elsewhere. Review the latest version before saving or deleting.");
+type AppButtonTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function authorizeAppButtonActor(tx: AppButtonTransaction, schoolId: string, actor: AppButtonActor, write = true): Promise<AppButtonActor> {
+  // Match classroom settings' canonical lifecycle order. A queued request
+  // rechecks entitlement and membership only after any staff transition wins.
+  if (write && !await lockStaffAssignmentLifecycleSchool(tx, schoolId)) {
+    throw new AppButtonError(403, "CLASSPILOT_NOT_ENTITLED", "School is unavailable");
+  }
+  await assertClasspilotEntitled(schoolId, tx, { lock: true });
+  const [staff] = await tx.select().from(users).where(eq(users.id, actor.teacherId)).for("share");
+  const memberships = await tx.select().from(schoolMemberships).where(and(eq(schoolMemberships.schoolId, schoolId),
+    eq(schoolMemberships.userId, actor.teacherId), eq(schoolMemberships.status, "active"),
+    inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]))).for("share");
+  if (!staff || !memberships.length) {
+    throw new AppButtonError(403, "CLASSPILOT_APPS_FORBIDDEN", "An active authorized school membership is required");
+  }
+  return { teacherId: actor.teacherId, isAdmin: memberships.some(row => row.role === "admin" || row.role === "school_admin") };
+}
+
+async function auditSchoolAppButton(tx: AppButtonTransaction, schoolId: string, actor: AppButtonActor, id: string, action: "created" | "updated" | "deleted") {
+  // School configuration changes are audited atomically. URLs can contain
+  // assignment identifiers, so only the definition's opaque identity is logged.
+  await tx.insert(auditLogs).values({ schoolId, userId: actor.teacherId,
+    action: `classpilot.app.school.${action}`, entityType: "classpilot_app_button", entityId: id });
+}
+
+async function lockedAppButton(tx: AppButtonTransaction, schoolId: string, key: string, actor: AppButtonActor) {
+  const id = /^saved:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(key)?.[1];
+  if (!id) throw appButtonMissing();
+  const [row] = await tx.select().from(classpilotAppButtons)
+    .where(and(visibleAppButton(schoolId, actor), eq(classpilotAppButtons.id, id))).for("update");
+  if (!row) throw appButtonMissing();
+  return row;
+}
+
+export async function getClasspilotAppLibrary(schoolId: string, actor: AppButtonActor) {
+  return db.transaction(async tx => {
+    const currentActor = await authorizeAppButtonActor(tx, schoolId, actor, false);
+    const [buttons, preferences] = await Promise.all([
+      tx.select().from(classpilotAppButtons).where(visibleAppButton(schoolId, currentActor)).orderBy(asc(classpilotAppButtons.name), asc(classpilotAppButtons.id)),
+      tx.select().from(classpilotAppButtonPreferences).where(and(eq(classpilotAppButtonPreferences.schoolId, schoolId), eq(classpilotAppButtonPreferences.teacherId, actor.teacherId))),
+    ]);
+    const prefs = new Map(preferences.map(row => [row.appKey, row]));
+    const common = commonClasspilotApps.map(app => ({ ...app, revision: 1, allowedDomains: [...app.allowedDomains],
+      ...(app.effectiveAllowedDomains ? { effectiveAllowedDomains: [...app.effectiveAllowedDomains] } : {}),
+      ...(app.includedApps ? { includedApps: [...app.includedApps] } : {}),
+      saved: prefs.get(app.key)?.saved ?? false, favorite: prefs.get(app.key)?.favorite ?? false, canEdit: false }));
+    return { apps: [...common, ...buttons.map(row => appButtonView(row, prefs.get(`saved:${row.id}`), currentActor))], canManageSchoolApps: currentActor.isAdmin };
+  });
+}
+
+export async function createClasspilotAppButton(schoolId: string, actor: AppButtonActor, input: { scope: "personal" | "school"; name: string; launchUrl: string }) {
+  const normalized = normalizeAppWebsite(input.launchUrl);
+  return db.transaction(async tx => {
+    const currentActor = await authorizeAppButtonActor(tx, schoolId, actor);
+    if (input.scope === "school" && !currentActor.isAdmin) throw appButtonForbidden();
+    const [row] = await tx.insert(classpilotAppButtons).values({ schoolId, ownerTeacherId: input.scope === "personal" ? actor.teacherId : null,
+      scope: input.scope, name: input.name, launchUrl: normalized.launchUrl }).returning();
+    if (!row) throw new Error("App button insert did not return a row");
+    const saved = input.scope === "personal";
+    if (saved) await tx.insert(classpilotAppButtonPreferences).values({ schoolId, teacherId: actor.teacherId, appKey: `saved:${row.id}`, saved: true, favorite: false });
+    else await auditSchoolAppButton(tx, schoolId, actor, row.id, "created");
+    return appButtonView(row, { saved, favorite: false }, currentActor);
+  });
+}
+
+export async function updateClasspilotAppButton(schoolId: string, actor: AppButtonActor, key: string, input: { name: string; launchUrl: string; expectedRevision: number }) {
+  if (commonClasspilotApps.some(app => app.key === key)) throw new AppButtonError(403, "CLASSPILOT_APP_READ_ONLY", "Common apps cannot be changed");
+  const normalized = normalizeAppWebsite(input.launchUrl);
+  return db.transaction(async tx => {
+    const currentActor = await authorizeAppButtonActor(tx, schoolId, actor);
+    const existing = await lockedAppButton(tx, schoolId, key, currentActor);
+    if (existing.scope === "school" && !currentActor.isAdmin) throw appButtonForbidden();
+    if (existing.revision !== input.expectedRevision) throw appButtonConflict();
+    const [row] = await tx.update(classpilotAppButtons).set({ name: input.name, launchUrl: normalized.launchUrl, revision: existing.revision + 1, updatedAt: new Date() })
+      .where(and(eq(classpilotAppButtons.id, existing.id), eq(classpilotAppButtons.schoolId, schoolId))).returning();
+    if (!row) throw appButtonMissing();
+    if (row.scope === "school") await auditSchoolAppButton(tx, schoolId, actor, row.id, "updated");
+    const [pref] = await tx.select().from(classpilotAppButtonPreferences).where(and(eq(classpilotAppButtonPreferences.schoolId, schoolId),
+      eq(classpilotAppButtonPreferences.teacherId, actor.teacherId), eq(classpilotAppButtonPreferences.appKey, key)));
+    return appButtonView(row, pref, currentActor);
+  });
+}
+
+export async function deleteClasspilotAppButton(schoolId: string, actor: AppButtonActor, key: string, expectedRevision: number) {
+  if (commonClasspilotApps.some(app => app.key === key)) throw new AppButtonError(403, "CLASSPILOT_APP_READ_ONLY", "Common apps cannot be changed");
+  await db.transaction(async tx => {
+    const currentActor = await authorizeAppButtonActor(tx, schoolId, actor);
+    const row = await lockedAppButton(tx, schoolId, key, currentActor);
+    if (row.scope === "school" && !currentActor.isAdmin) throw appButtonForbidden();
+    if (row.revision !== expectedRevision) throw appButtonConflict();
+    await tx.delete(classpilotAppButtonPreferences).where(and(eq(classpilotAppButtonPreferences.schoolId, schoolId), eq(classpilotAppButtonPreferences.appKey, key)));
+    await tx.delete(classpilotAppButtons).where(and(eq(classpilotAppButtons.schoolId, schoolId), eq(classpilotAppButtons.id, row.id)));
+    if (row.scope === "school") await auditSchoolAppButton(tx, schoolId, actor, row.id, "deleted");
+  });
+}
+
+export async function setClasspilotAppButtonPreference(schoolId: string, actor: AppButtonActor, key: string, input: { saved: boolean; favorite: boolean }) {
+  return db.transaction(async tx => {
+    const currentActor = await authorizeAppButtonActor(tx, schoolId, actor);
+    const common = commonClasspilotApps.find(app => app.key === key);
+    const custom = common ? null : await lockedAppButton(tx, schoolId, key, currentActor);
+    await tx.insert(classpilotAppButtonPreferences).values({ schoolId, teacherId: actor.teacherId, appKey: key, ...input })
+      .onConflictDoUpdate({ target: [classpilotAppButtonPreferences.schoolId, classpilotAppButtonPreferences.teacherId, classpilotAppButtonPreferences.appKey],
+        set: { ...input, updatedAt: new Date() } });
+    return common ? { ...common, ...input, revision: 1, allowedDomains: [...common.allowedDomains],
+      ...(common.effectiveAllowedDomains ? { effectiveAllowedDomains: [...common.effectiveAllowedDomains] } : {}),
+      ...(common.includedApps ? { includedApps: [...common.includedApps] } : {}), canEdit: false } : appButtonView(custom!, input, currentActor);
   });
 }
