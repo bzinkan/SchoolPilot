@@ -21,6 +21,7 @@ import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigrati
 import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
 import { assertClasspilotHeartbeatScreenshotEvidence, installClasspilotHeartbeatScreenshotEvidence } from "./db/classpilotHeartbeatScreenshotEvidenceInstallation.js";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "./db/classpilotPrivateChatLifecycleMigration.js";
+import { CLASSPILOT_APPS_SQL } from "./db/classpilotAppsMigration.js";
 import { CLASSPILOT_WINDOWS_BROWSER_SQL } from "./db/classpilotWindowsBrowserMigration.js";
 import { CLASSPILOT_WINDOWS_ACTIVITY_PARENTS_SQL } from "./db/classpilotWindowsActivityParentsMigration.js";
 import { CLASSPILOT_WINDOWS_HISTORY_SQL } from "./db/classpilotWindowsHistoryMigration.js";
@@ -5014,6 +5015,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
   await pool.query(PASSPILOT_APPOINTMENTS_SQL);
   await pool.query(CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL);
+  await pool.query(CLASSPILOT_APPS_SQL);
   await pool.query(CLASSPILOT_NATIVE_VISIBILITY_SQL);
   await pool.query(CLASSPILOT_WINDOWS_BROWSER_SQL);
   await pool.query(CLASSPILOT_WINDOWS_HISTORY_SQL);

@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 
 import {
   RLS_GLOBAL_TABLES,
+  RLS_CURRENT_PRODUCTION_TABLES,
   RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES,
   RLS_POST_EXPAND_PRODUCTION_TABLES,
   RLS_REVIEWED_ENABLEMENT_REQUESTS,
@@ -45,6 +46,7 @@ type Registry = {
     classpilotNativeVisibilityPostExpand: RegistryInventory;
     classpilotWindowsBrowserPostExpand: RegistryInventory;
     classpilotTodaySchedulePostExpand: RegistryInventory;
+    classpilotAppsPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -96,6 +98,19 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("app buttons append one complete reviewed bundle after the immutable Today schedule inventory", () => {
+    const target = registry.inventories.classpilotAppsPostExpand;
+    assert.ok(target, "The app button inventory must be registered");
+    const tables = ["classpilot_app_buttons", "classpilot_app_button_preferences"];
+    assert.deepEqual(target.tables, [...registry.inventories.classpilotTodaySchedulePostExpand.tables, ...tables]);
+    assert.equal(target.count, 142);
+    assert.equal(target.sha256, sha256(target.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotApps, tables);
+    assert.deepEqual(RLS_CURRENT_PRODUCTION_TABLES, target.tables);
+    assert.equal(isReviewedRlsEnforcementRequest(tables), true);
+    assert.equal(isReviewedRlsEnforcementRequest(tables.slice(0, 1)), false);
+    assert.equal(isReviewedRlsEnforcementRequest([...tables].reverse()), false);
+  });
   it("adds today's two-table admission after the immutable Windows inventory", () => {
     const previous = registry.inventories.classpilotWindowsBrowserPostExpand;
     const current = registry.inventories.classpilotTodaySchedulePostExpand;
@@ -291,7 +306,7 @@ describe("semantic RLS registry", () => {
     // CI admits the reviewed PassPilot rule bundle and the usage rollup table
     // ahead of production, which keeps the observed 121-table baseline until a
     // later adoption PR.
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotTodaySchedulePostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotAppsPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

@@ -37,3 +37,4 @@ export * from "./classpilotTeacherPreferences.js";
 export * from "./importProcessingStages.js";
 
 export * from "./classpilotWindowsHistory.js";
+export * from "./classpilotApps.js";

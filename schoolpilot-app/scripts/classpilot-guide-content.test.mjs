@@ -37,6 +37,7 @@ const validRoutes = new Set([
   "/classpilot/settings",
   "/classpilot/settings?section=school",
   "/classpilot/settings?section=appearance",
+  "/classpilot/settings?section=browsing",
   "/classpilot/students",
 ]);
 

@@ -15,6 +15,7 @@ import SettingsSaveState from '../components/admin/SettingsSaveState';
 import MonitoringHoursSettings from '../components/MonitoringHoursSettings';
 import { MonitoringDigestSettings } from '../components/MonitoringInterruptionsPanel';
 import SchoolDataMaintenance from '../components/admin/SchoolDataMaintenance';
+import AppLibraryManager from '../components/AppLibraryManager';
 import { SETTINGS_SECTIONS } from '../lib/adminNavigation';
 import { DASHBOARD_THEME_PRESETS } from '../../../shared/themes/presets';
 import { DEFAULT_CALENDAR_HOLIDAYS, localDateString } from '../../../shared/themes/calendar';
@@ -234,6 +235,7 @@ function SettingsWorkspace({ currentUser, school, refetchUser }) {
       </>}</SectionEditor> : null}
     </section>
     <section hidden={section !== 'browsing'} aria-label="Browsing and monitoring" className="space-y-5">
+      <AppLibraryManager scope="school" active={section === 'browsing'} />
       <SectionEditor {...common} section="classroom" title="Browsing defaults" description="Set school-wide tab limits and educational domains used to classify classroom activity." saveLabel="Save browsing defaults">{editor => <><div className="space-y-2"><Label htmlFor="school-max-tabs">Maximum tabs per student</Label><Input id="school-max-tabs" type="number" min="1" max="100" value={editor.draft.maxTabsPerStudent ?? ''} onChange={event => editor.update('maxTabsPerStudent', event.target.value)} /><p className="text-xs text-muted-foreground">Choose 1 to 100, or leave blank for no school-wide tab limit.</p></div><div className="space-y-2"><Label htmlFor="school-allowed-domains">Educational domains (comma-separated)</Label><textarea id="school-allowed-domains" className="min-h-24 w-full rounded-md border bg-background p-3 text-sm" value={editor.draft.allowedDomains.join(',')} onChange={event => editor.update('allowedDomains', event.target.value.split(','))} /><p className="text-sm text-muted-foreground">These domains help classify educational activity. They do not suppress safety alerts or override website blocks.</p></div></>}</SectionEditor>
       <SectionEditor {...common} section="blockedWebsites" title="Blocked websites" description="Block matching websites in the monitored Chrome profile." saveLabel="Save blocked websites">{editor => <><Label htmlFor="school-blocked-domains">Website domains (comma-separated)</Label><textarea id="school-blocked-domains" className="min-h-24 w-full rounded-md border bg-background p-3 text-sm" value={editor.draft.blockedDomains.join(',')} onChange={event => editor.update('blockedDomains', event.target.value.split(','))} /><p className="text-sm text-muted-foreground">Website rules do not disable Chrome features, extensions, apps, Incognito, Guest, or other profiles. Blocking lens.google.com blocks that website; school IT manages Chrome's built-in Lens features.</p></>}</SectionEditor>
       <MonitoringHoursSettings settings={{ ...settings.sections.monitoring, schoolTimezone: settings.schoolTimezone }} schoolId={schoolId} queryKey={queryKey} />

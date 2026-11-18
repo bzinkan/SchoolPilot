@@ -14,6 +14,7 @@ import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigrati
 import { classpilotUsageRollupDaysMigration } from "./classpilotUsageRollupDaysMigration.js";
 import { classpilotHeartbeatScreenshotEvidenceMigration } from "./classpilotHeartbeatScreenshotEvidenceMigration.js";
 import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChatLifecycleMigration.js";
+import { classpilotAppsMigration } from "./classpilotAppsMigration.js";
 import { classpilotWindowsBrowserMigration } from "./classpilotWindowsBrowserMigration.js";
 import { classpilotWindowsActivityParentsMigration } from "./classpilotWindowsActivityParentsMigration.js";
 import { classpilotWindowsHistoryMigration } from "./classpilotWindowsHistoryMigration.js";
@@ -577,6 +578,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotTelemetryIdempotencyMigration,
   heartbeatPrefixIndexRetirementMigration,
   googleStudentClassroomAccessMigration,
+  classpilotAppsMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

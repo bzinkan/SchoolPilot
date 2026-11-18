@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[]; passpilotAppointments: string[]; classpilotPrivateChatLifecycle:string[]; classpilotWindowsBrowser:string[]; classpilotTodaySchedule:string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[]; passpilotAppointments: string[]; classpilotPrivateChatLifecycle:string[]; classpilotApps:string[]; classpilotWindowsBrowser:string[]; classpilotTodaySchedule:string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -41,6 +41,7 @@ const rlsRegistry = JSON.parse(
     classpilotNativeVisibilityPostExpand: { count: number; tables: string[] };
     classpilotWindowsBrowserPostExpand: { count: number; tables: string[] };
     classpilotTodaySchedulePostExpand: { count: number; tables: string[] };
+    classpilotAppsPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -72,6 +73,21 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("app buttons admit both reviewed tables together on API and worker", () => {
+    const previous = rlsRegistry.inventories.classpilotTodaySchedulePostExpand.tables;
+    const tables = ["classpilot_app_buttons", "classpilot_app_button_preferences"];
+    assert.deepEqual(rlsRegistry.reviewedEnablementRequests.classpilotApps, tables);
+    const table = tables.join(",");
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table });
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table, expectedPreviousTables: previous });
+    assert.deepEqual(environmentValue(api, "RLS_ENABLED_TABLES")?.split(","), rlsRegistry.inventories.classpilotAppsPostExpand.tables);
+    for (const incomplete of [tables[0], tables[1], [...tables].reverse().join(",")]) {
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: incomplete }), /reviewed/);
+    }
+  });
   it("admits Today schedule tables atomically after Windows without preloading production", () => {
     const previous = rlsRegistry.inventories.classpilotWindowsBrowserPostExpand.tables;
     const tables = rlsRegistry.reviewedEnablementRequests.classpilotTodaySchedule;
@@ -368,6 +384,7 @@ describe("one-release RLS table enablement", () => {
       ...["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"],
       ...rlsRegistry.reviewedEnablementRequests.classpilotWindowsBrowser,
       ...rlsRegistry.reviewedEnablementRequests.classpilotTodaySchedule,
+      ...rlsRegistry.reviewedEnablementRequests.classpilotApps,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

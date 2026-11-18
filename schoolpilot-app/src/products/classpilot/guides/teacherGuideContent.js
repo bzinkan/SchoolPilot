@@ -2,6 +2,19 @@ export const teacherGuidePhases = ["Prepare", "Start", "Guide", "Monitor", "Wrap
 
 export const teacherGuideTopics = [
   {
+    id: "app-buttons", phase: "Prepare", title: "Save and choose app buttons",
+    summary: "Choose common apps, school websites, or your own saved buttons instead of typing an address each time.",
+    keywords: ["apps", "buttons", "favorites", "website", "classroom", "ixl", "quill", "docs", "slides", "forms"],
+    role: "Teacher or administrator", route: "/classpilot/my-settings", routeLabel: "Open Website tools",
+    steps: [
+      { title: "Create a personal button", body: "In Website tools, My Apps lets you add a website using its name and address. Your personal buttons stay private to you in this school. You can also add a website directly while choosing a classroom destination." },
+      { title: "Save your favorites", body: "Browse common and school apps, add frequently used tools to My Apps, and star favorites to show them first. Administrators maintain school buttons; your saved and favorite choices are personal." },
+      { title: "Choose, then confirm", body: "In Open URL or Focus, choose an individual app to fill the address. Choosing a button sends nothing. Review the students and the displayed website or resource scope, then confirm Open or Set Focus. Existing browser capability checks and per-student outcomes still apply." },
+      { title: "Build a Flight Path", body: "Select apps in the Flight Path editor, then choose Add selected apps to append their websites. The Google Classroom bundle adds Classroom and its supported Google work websites. Existing Classroom scope reviews still apply before students receive a restriction. Individual Docs, Slides, Sheets, and Forms buttons open different tools but allow their shared docs.google.com website. Review the displayed website access before saving." },
+      { title: "Reuse deliberately", body: "Editing or deleting a button does not change websites already saved in a Flight Path. School blocks and sign-in rules still apply. If the library cannot load, retry or enter the website manually. Automatic discovery of Clever apps is not part of this release." },
+    ],
+  },
+  {
     id: "prepare-your-class",
     phase: "Prepare",
     title: "Prepare your class",

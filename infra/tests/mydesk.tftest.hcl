@@ -427,11 +427,27 @@ run "classpilot_today_schedule_target" {
   }
   assert {
     condition = (
-      length(local.rls_post_expand_tables) == 140 &&
       length(local.rls_configured_tables) == 140 &&
       toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotWindowsBrowserPostExpand.tables, ["classpilot_today_changes", "classpilot_today_occurrences"])) &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The preserved Today schedule target must append exactly the reviewed change and occurrence tables after the preserved 138-table Windows inventory."
+  }
+}
+
+run "classpilot_apps_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotAppsPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 142 &&
+      length(local.rls_configured_tables) == 142 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotTodaySchedulePostExpand.tables, ["classpilot_app_buttons", "classpilot_app_button_preferences"])) &&
       toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
     )
-    error_message = "The Today schedule target must append exactly the reviewed change and occurrence tables after the preserved 138-table Windows inventory."
+    error_message = "The current app-button inventory must preserve the historical 140 tables and append only the two app-button tables."
   }
 }

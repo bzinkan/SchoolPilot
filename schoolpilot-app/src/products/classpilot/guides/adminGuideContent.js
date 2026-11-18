@@ -2,6 +2,17 @@ export const adminGuidePhases = ["Launch", "People and Classes", "Policies", "Op
 
 export const adminGuideTopics = [
   {
+    id: "school-app-buttons", phase: "Policies", title: "Maintain school app buttons",
+    summary: "Share reliable website shortcuts with teachers through the school app catalog.",
+    keywords: ["apps", "buttons", "school apps", "website", "favorites", "catalog"],
+    role: "Administrator or school administrator", route: "/classpilot/settings?section=browsing", routeLabel: "Open Browsing & monitoring",
+    steps: [
+      { title: "Add a school website", body: "In Browsing & monitoring, School Apps lets an administrator add a name and website address. Teachers can then choose that button while preparing Open URL, Focus, or a Flight Path." },
+      { title: "Keep shared addresses current", body: "Administrators can edit or delete school buttons. Changes affect future choices only; existing Flight Paths keep their saved websites. Teachers can save and favorite school buttons but cannot edit their shared definitions." },
+      { title: "Review the actual access", body: "A custom button permits its website when added to a Flight Path. It does not bypass school website blocks or sign-in policies. Common Google tools retain website-level access, including the shared Google Docs website. Teacher personal buttons and favorites remain private." },
+    ],
+  },
+  {
     id: "admin-workspace", phase: "Launch", title: "Find your way around the Admin Panel",
     summary: "Overview is your starting point. One menu organizes school administration on desktop and phone.",
     keywords: ["overview", "admin menu", "navigation", "students", "staff", "maintenance"],
