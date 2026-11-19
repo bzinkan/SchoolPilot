@@ -146,6 +146,9 @@ test('ClassPilot guides use the real app router and authorized entry points', { 
         assert.equal(await f.page.locator('a[href^="/classpilot/admin"], a[href^="/classpilot/settings"]').count(), 0);
         const search = f.page.getByRole('textbox', { name: 'Search the flight plan', exact: true });
         await search.fill('signed out');
+        // The router can update history before React commits the filtered view.
+        // An already-visible topic cannot establish that the search rendered.
+        await f.page.locator('#guide-search-results').filter({ hasText: 'matching “signed out”' }).waitFor();
         assert.equal(new URL(f.page.url()).searchParams.get('q'), 'signed out');
         await f.page.locator('#topic-waypoints-and-flight-paths').waitFor();
         assert.match(await f.page.locator('#guide-search-results').textContent(), /matching “signed out”/);
@@ -153,6 +156,7 @@ test('ClassPilot guides use the real app router and authorized entry points', { 
         await f.page.getByRole('heading', { name: 'No route matches that search', exact: true }).waitFor();
         assert.equal(await f.page.locator('details[id^="topic-"]').count(), 0);
         await f.page.getByRole('button', { name: 'Clear search', exact: true }).click();
+        await f.page.locator('#guide-search-results').filter({ hasText: `${teacherGuideTopics.length} topics in this guide` }).waitFor();
         assert.equal(new URL(f.page.url()).searchParams.has('q'), false);
         const topic = teacherGuideTopics.find(item => item.id === 'open-url-and-tabs');
         await f.page.locator('aside').getByRole('button', { name: `${topic.phase} ${topic.title}`, exact: true }).click();
