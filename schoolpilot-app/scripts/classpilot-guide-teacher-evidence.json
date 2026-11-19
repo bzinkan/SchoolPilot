@@ -1,0 +1,233 @@
+{
+  "app-buttons": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/components/AppPicker.jsx",
+      "schoolpilot-app/src/products/classpilot/components/AppLibraryManager.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/MySettings.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-apps.test.mjs",
+      "schoolpilot-app/scripts/teaching-tools-browser.test.mjs"
+    ],
+    "notes": "Checked personal/school/common collections, favorites, choice-before-command, appended website scope, and saved-path independence. Describes displayed bundle scope without asserting managed-client enforcement or adoption."
+  },
+  "prepare-your-class": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/MySettings.jsx",
+      "schoolpilot-app/src/products/classpilot/components/TeachingDefaults.jsx",
+      "schoolpilot-app/src/products/classpilot/components/AutomaticFlightPathSetup.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/TodaySchedule.jsx",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/teaching-tools-browser.test.mjs",
+      "schoolpilot-app/scripts/automatic-flight-path.test.mjs",
+      "schoolpilot-app/scripts/today-schedule-browser.test.mjs"
+    ],
+    "notes": "Checked official versus personal class editing, future-only automatic presets, co-teacher read-only preset access, inherited tab defaults, and today-only period permissions. School Library/sharing remains conditional on the school rollout."
+  },
+  "dashboard-theme": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/components/DashboardThemeCard.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/MySettings.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/dashboard-theme-calendar.test.mjs",
+      "schoolpilot-app/scripts/dashboard-theme-isolation.test.mjs",
+      "schoolpilot-app/scripts/teaching-tools-browser.test.mjs"
+    ],
+    "notes": "Checked disabled/locked school states, school versus personal calendar, exact Save theme and upload labels, displayed library limit, image fit, light/dark replacement, and optional class-bound kiosk theme. Themes do not alter commands or status meaning."
+  },
+  "schedule-changes": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/ScheduleChanges.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/TodaySchedule.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-schedule-changes.test.mjs",
+      "schoolpilot-app/scripts/today-schedule-browser.test.mjs"
+    ],
+    "notes": "Checked future-date Planned time swaps versus Today’s schedule, school-gated teacher requests, acceptance/approval, decision sections, and revision-conflict refresh. Removed obsolete same-day instructions from the future-date workflow."
+  },
+  "start-and-resync": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/DashboardClassActions.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/TodaySchedule.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+      "src/routes/classpilot/sessions.ts",
+      "docs/CLASSPILOT_AUTOMATIC_CLASS.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/dashboard-activity.test.mjs",
+      "schoolpilot-app/scripts/classpilot-read-recovery.test.mjs",
+      "schoolpilot-app/scripts/classpilot-session-lifecycle.test.mjs",
+      "schoolpilot-app/scripts/today-schedule-browser.test.mjs"
+    ],
+    "notes": "Checked picker/start separation, current assignment transitions, room persistence across bells/reload, read-only reporting occurrences, read retry versus manual Resync, server rejection of scheduled mid-block resync, exact today-swap acceptance, skip, and end controls."
+  },
+  "read-dashboard-status": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/lib/studentMonitoringDisplay.js",
+      "schoolpilot-app/src/products/classpilot/components/StudentTile.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-read-recovery.test.mjs",
+      "schoolpilot-app/scripts/focus-controls.test.mjs"
+    ],
+    "notes": "Checked exact monitoring labels, explicit signed-out preview exclusion, delegated ownership, preview age independent of heartbeat freshness, revision transitions, and checked read retry. Supported provider sign-in is described conditionally; no universal sign-in pass-through claim."
+  },
+  "target-and-interpret-results": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/commandDeliveryTruth.js",
+      "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+      "docs/CLASSPILOT_FOCUS_CONTROLS.md",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-command-context.test.mjs",
+      "schoolpilot-app/scripts/focus-controls.test.mjs",
+      "schoolpilot-app/scripts/dashboard-activity.test.mjs"
+    ],
+    "notes": "Checked frozen explicit recipient reviews, unavailable subset confirmation, cleared-selection refusal, saved versus received/completed outcomes, failed/unavailable/expired preservation, and server-authoritative student sign-out. Live late-sign-in restriction delivery is off; no queued-delivery reassurance for undelivered restrictions."
+  },
+  "open-url-and-tabs": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/ClassroomActions.jsx",
+      "schoolpilot-app/src/products/classpilot/components/StudentTile.jsx",
+      "docs/CLASSPILOT_FOCUS_CONTROLS.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/focus-controls.test.mjs",
+      "schoolpilot-app/scripts/classpilot-command-context.test.mjs",
+      "schoolpilot-app/scripts/classpilot-dashboard-load-state.test.mjs"
+    ],
+    "notes": "Checked Open URL and Classroom assignment open-only behavior, Manage Tabs/View Tabs, exact opaque tab identity, duplicate addresses, bulk close label, and tab limits. Bring Forward is a capability-gated one-time activation; Set Focus and Stop Focus are separate toolbar restrictions."
+  },
+  "waypoints-and-flight-paths": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/AutomaticFlightPathSetup.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/commandDeliveryTruth.js",
+      "docs/CLASSPILOT_FOCUS_CONTROLS.md",
+      "docs/CLASSPILOT_PRECISE_SCOPE_INTERFACES.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/focus-controls.test.mjs",
+      "schoolpilot-app/scripts/restriction-resource-matcher.test.mjs",
+      "schoolpilot-app/scripts/automatic-flight-path.test.mjs",
+      "schoolpilot-app/scripts/teaching-tools-browser.test.mjs"
+    ],
+    "notes": "Checked website versus item/Section boundaries, review-before-command, current-page freshness, no precise-to-website fallback, independent Stop Focus cleanup and refusal, automatic whole-session off, and preserved overrides. Precise resources/sign-in support remain conditional on school/client support; removed late-sign-in portal behavior while its live gate is off."
+  },
+  "focus-and-communication": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/ClassToolsContent.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+      "docs/CLASSPILOT_AUTOMATIC_CLASS.md",
+      "docs/CLASSPILOT_FOCUS_CONTROLS.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/dashboard-activity.test.mjs",
+      "schoolpilot-app/scripts/classpilot-command-context.test.mjs",
+      "schoolpilot-app/scripts/focus-controls.test.mjs"
+    ],
+    "notes": "Checked independent Block List, Focus, Flight Path, Attention and tab-limit removal, Eyes up/Release attention labels, and full classroom tools for eligible scheduled/ad hoc supervision. Removed the obsolete smaller-coverage-tool-set claim; Observe does not acquire command authority."
+  },
+  "class-tools-workspace": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/ClassToolsPanel.jsx",
+      "schoolpilot-app/src/products/classpilot/components/ClassToolsContent.jsx",
+      "schoolpilot-app/src/products/classpilot/components/ChatWorkspace.jsx",
+      "schoolpilot-app/src/products/classpilot/hooks/useClassTools.js",
+      "src/config/classpilotClassTools.ts"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/chat-roster.test.mjs",
+      "schoolpilot-app/scripts/private-chat-lifecycle.test.mjs",
+      "schoolpilot-app/scripts/classpilot-messages-roster-browser.test.mjs",
+      "schoolpilot-app/scripts/classpilot-command-context.test.mjs"
+    ],
+    "notes": "Checked phase-0 core panel, oldest-first raised hands/Mark helped, roster search and read-only conversations, recipient-aware announcements, pause versus messaging off, quick polls, and start/stop timer. Live Class tools school-phase JSON is absent and source defaults to phase 0; omitted enriched help, templates/routines, lessons/work status, exit tickets, timer pause/extend, participation and presentation. Private lifecycle actions remain readiness-gated."
+  },
+  "student-drawer-and-history": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/components/StudentTile.jsx",
+      "schoolpilot-app/src/products/classpilot/components/StudentDetailDrawer.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/studentMonitoringDisplay.js",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-read-recovery.test.mjs",
+      "schoolpilot-app/scripts/browsing-activity.test.mjs",
+      "tests/classpilot-browsing-history.test.ts"
+    ],
+    "notes": "Checked Details versus enlarged preview, Screens/Timeline/History labels, exact current authority, authorized historical intervals, distinct empty/error/unavailable states, and contextual interpretation of titles/categories/stills. Does not promise whole-day teacher history."
+  },
+  "coverage-workflow": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Coverage.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/SupervisionSessionDialog.jsx",
+      "schoolpilot-app/src/products/classpilot/components/TemporaryRoomDialog.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+      "docs/CLASSPILOT_AUTOMATIC_CLASS.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/dashboard-activity.test.mjs",
+      "schoolpilot-app/scripts/classpilot-dashboard-load-state.test.mjs",
+      "schoolpilot-app/scripts/classpilot-coverage-summary.test.mjs",
+      "tests/classpilot-coverage-summary.test.ts"
+    ],
+    "notes": "Checked Claim into My room, existing-deadline preservation, room persistence across bells/reload, legacy Claimed separation and personally held Combine, full eligible supervision tools, receiving-room/group Send and explicit available-subset review. Checked room removal versus exact whole-room End, offline release, frozen-roster stale review, counts, testing purpose/end and actual supervised-interval summaries."
+  },
+  "wrap-up-and-troubleshoot": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/DashboardClassActions.jsx",
+      "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+      "src/routes/classpilot/sessions.ts",
+      "docs/CLASSPILOT_AUTOMATIC_CLASS.md",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-session-lifecycle.test.mjs",
+      "schoolpilot-app/scripts/classpilot-read-recovery.test.mjs",
+      "schoolpilot-app/scripts/dashboard-activity.test.mjs"
+    ],
+    "notes": "Checked scheduled/manual end confirmation labels, settlement before summary email, Past sessions, logout not ending class, manual-only roster Resync, checked read refresh, and room lifetime independent of bells. Web/API source verification does not establish extension package identity or managed-client adoption."
+  }
+}

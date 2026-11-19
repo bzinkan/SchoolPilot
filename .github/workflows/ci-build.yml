@@ -819,13 +819,15 @@ jobs:
 
   # The 30 release-focused ClassPilot and kiosk gates used to run serially inside
   # the frontend job (~11-12 min). They need no build output - none of them reads
-  # dist/ - so they run here as four parallel shards. Shard boundaries are
+  # dist/ - so they run here as parallel shards. Shard boundaries are
   # deliberate: shards 1, 2 and 4 hold the suites that use a pid-suffixed Vite cacheDir
   # and port 0; every suite that spawns `vite --strictPort` on a fixed port or uses
   # the default node_modules/.vite cacheDir is in shard 3, serial, exactly as it was.
   # Two shards must therefore never share a runner. The root `npm ci` is required:
   # shard 2's schedule-profiles suite imports tsx from the root node_modules and
   # tsImports root src/services/*.ts.
+  # Shard 5 checks the guides through the real router with its own port/cache;
+  # keep it separate from shard 3's existing content and fixed-port checks.
   frontend-release-gates:
     name: Frontend release-focused gates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -836,7 +838,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
 
     steps:
       - uses: actions/checkout@v7

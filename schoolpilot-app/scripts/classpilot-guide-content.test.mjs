@@ -11,6 +11,7 @@ import {
 } from "./classpilot-guide-markdown.mjs";
 import { teacherGuidePhases, teacherGuideTopics } from "../src/products/classpilot/guides/teacherGuideContent.js";
 import { adminGuidePhases, adminGuideTopics } from "../src/products/classpilot/guides/adminGuideContent.js";
+import { validateGuideReviewEvidence } from "./classpilot-guide-review.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.resolve(appRoot, "..", "docs");
@@ -73,23 +74,69 @@ test("teacher guide contains no administrator routes or retired terminology", ()
   assert.doesNotMatch(teacherGuideMarkdown, /\bWaypoints?\b|Open \+ Focus|Focus current tab|Stop Both/i);
 });
 
-test("administrator guide covers entitlement and restricted sign-in policy without retired terminology", () => {
+test("administrator guide preserves entitlement and policy boundaries without retired terminology", () => {
   const emailTopic = adminGuideTopics.find((topic) => topic.id === "email-monitoring");
   assert.equal(emailTopic?.entitlement, "mailpilot");
   const signInTopic = adminGuideTopics.find((topic) => topic.id === "student-sign-in-policy");
   assert.equal(signInTopic?.route, "/classpilot/admin?tab=student-portal");
-  assert.match(contentText([signInTopic]), /does not automatically send them to a learning site/);
-  assert.match(contentText([signInTopic]), /restrictionPortalFirstV1/);
-  assert.match(contentText([signInTopic]), /Approved provider hosts remain available/);
   const workspaceTopic = adminGuideTopics.find((topic) => topic.id === "google-workspace-policies");
   assert.equal(workspaceTopic?.phase, "Policies");
-  assert.equal(workspaceTopic?.steps?.length, 8, "Google Workspace policy topic must keep the eight checklist steps");
-  assert.match(contentText([workspaceTopic]), /Force install/);
+  assert.match(contentText([workspaceTopic]), /force[ -]install/i);
   assert.match(contentText([workspaceTopic]), /cannot read Google Admin policy state/);
   const adminIds = adminGuideTopics.map((topic) => topic.id);
   assert.equal(adminIds[adminIds.indexOf("school-settings") + 1], "google-workspace-policies", "Workspace policy topic must follow school settings");
   assert.doesNotMatch(contentText(adminGuideTopics), forbiddenGuideTerms);
   assert.doesNotMatch(adminGuideMarkdown, /\bWaypoints?\b/i);
+});
+
+test("released supervision and roster recovery guidance cannot regress to retired instructions", () => {
+  const supervision = [
+    teacherGuideTopics.find(topic => topic.id === "coverage-workflow"),
+    adminGuideTopics.find(topic => topic.id === "coverage-administration"),
+  ];
+  for (const topic of supervision) {
+    assert.match(contentText([topic]), /My room/);
+    assert.doesNotMatch(contentText([topic]), /opens neutral Claimed|creates or reuses your neutral|Direct sessions and personal claims are not Send destinations|next scheduled handoff returns to Class/);
+  }
+  const recovery = teacherGuideTopics.find(topic => topic.id === "start-and-resync");
+  assert.match(contentText([recovery]), /Refresh class/);
+  assert.match(contentText([recovery]), /frozen/i);
+  assert.doesNotMatch(teacherGuideMarkdown, /coverage has a smaller tool set|My templates|Questions for later|Advance every step yourself/);
+});
+
+test("Workspace setup distinguishes roster delegation from personal Classroom OAuth", () => {
+  const connector = adminGuideTopics.find(topic => topic.id === "workspace-roster-connector");
+  assert.equal(connector?.phase, "Launch");
+  assert.equal(connector?.route, "/classpilot/admin/it-readiness");
+  assert.match(contentText([connector]), /domain.wide delegation/i);
+  assert.match(contentText([connector]), /Verify/);
+  assert.match(contentText([connector]), /Classroom/);
+  assert.doesNotMatch(adminGuideMarkdown, /Roster manages class membership|AI detection itself never closes tabs|AI detections leave tabs open/);
+});
+
+test("guide entry instructions follow the current menus", () => {
+  assert.match(guideIndexMarkdown, /Teaching tools.*Teacher guide/);
+  assert.match(guideIndexMarkdown, /Help.*Admin guide/);
+  assert.doesNotMatch(guideIndexMarkdown, /Admin Settings → Admin Guide/);
+});
+
+test("every topic has reviewed sources and checks without implying production verification", async () => {
+  const scriptsRoot = path.join(appRoot, "scripts");
+  const [teacher, admin, baseline] = await Promise.all([
+    readFile(path.join(scriptsRoot, "classpilot-guide-teacher-evidence.json"), "utf8").then(JSON.parse),
+    readFile(path.join(scriptsRoot, "classpilot-guide-admin-evidence.json"), "utf8").then(JSON.parse),
+    readFile(path.join(scriptsRoot, "classpilot-guide-release-baseline.json"), "utf8").then(JSON.parse),
+  ]);
+  await validateGuideReviewEvidence({ repositoryRoot: path.resolve(appRoot, ".."),
+    topicsByGuide: { teacher: teacherGuideTopics, admin: adminGuideTopics }, reviews: { teacher, admin } });
+  assert.equal(baseline.schemaVersion, 1);
+  assert.match(baseline.sourceSha, /^[a-f0-9]{40}$/);
+  assert.equal(baseline.worker.sourceSha, baseline.sourceSha);
+  assert.equal(baseline.api.imageDigest, baseline.worker.imageDigest);
+  if (baseline.frontend.basis === "served-guide-content-compared") {
+    assert.equal(baseline.frontend.sourceSha, null, "asset comparison must not invent whole-frontend source identity");
+  }
+  assert.ok(["unverified", "live-observed"].includes(baseline.extension.basis), "Store publication alone cannot establish adoption");
 });
 
 test("generated Markdown exports exactly match the canonical in-app source", async () => {

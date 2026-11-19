@@ -48,7 +48,7 @@ export function renderGuideMarkdown({ title, description, phases, topics }) {
 
 export const teacherGuideMarkdown = renderGuideMarkdown({
   title: "ClassPilot Teacher Guide",
-  description: "Prepare, start, guide, monitor, and wrap up an exact-authority ClassPilot class.",
+  description: "Practical steps for preparing class, using classroom tools, supervising students, and finishing a session.",
   phases: teacherGuidePhases,
   topics: teacherGuideTopics,
 });
@@ -64,8 +64,8 @@ export const guideIndexMarkdown = `# ClassPilot Guides
 
 ClassPilot maintains separate role-specific guides. The structured in-app content is canonical; the Markdown files are generated exports checked for drift.
 
-- [Teacher Guide](./CLASSPILOT_TEACHER_GUIDE.md) — available in **Teaching tools → Teacher guide** to teachers and administrators.
-- [Administrator Guide](./CLASSPILOT_ADMIN_GUIDE.md) — available in **Admin Settings → Admin Guide** only to administrators and super administrators with ClassPilot school context.
+- [Teacher Guide](./CLASSPILOT_TEACHER_GUIDE.md) — available in **Teaching tools → Help → Teacher guide** to teachers and administrators.
+- [Administrator Guide](./CLASSPILOT_ADMIN_GUIDE.md) — available in **Admin Panel → Help → Admin guide** only to administrators and super administrators with ClassPilot school context.
 
 Regenerate the exports from \`schoolpilot-app\` with:
 
