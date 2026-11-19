@@ -14,13 +14,12 @@ Launch, govern, operate, and support ClassPilot across the complete school admin
 
 **Who can use this:** Administrator or school administrator
 
-Overview is your starting point. One menu organizes school administration on desktop and phone.
+Use Overview and the Admin menu to reach school tasks on desktop or phone.
 
-1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates.
-2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes.
-3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Adoption & health, Monitored Browser Time when turned on, and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
-4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
-5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
+1. **Start at Overview.** Check the saved school-year dates and configuration notices. Missing dates and a failed refresh are different states.
+2. **Choose a destination.** People & classes contains staff, students, and official classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes.
+3. **Find operations and reports.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Monitored Browser Time, Adoption & health, and Audit logs. Settings holds school policies, Appearance, Student portal, IT readiness, and maintenance.
+4. **Navigate without losing a draft.** On a phone, open Admin menu and expand a section. Moving between scheduling or settings sections preserves drafts. Leaving an unsaved editor asks whether to keep editing or discard; navigation never saves automatically and waits for pending work.
 
 [Open Overview](/classpilot/admin)
 
@@ -28,13 +27,13 @@ Overview is your starting point. One menu organizes school administration on des
 
 **Who can use this:** Administrator or school administrator
 
-School-year dates have their own page and do not require an A/B rotation setup.
+Save school-year dates, the instructional calendar, and bells before relying on automatic classes.
 
-1. **Review the saved dates.** Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview’s missing-date notice links here.
-2. **Enter both dates.** Use School year starts and School year ends. Dates come from your school’s actual calendar; no year boundaries are guessed. Ordinary bell periods are in Bells & rotation, with optional A/B settings in an expandable section.
-3. **Preview and save.** Preview changes shows scheduling impacts and blockers. Save reviewed schedule saves the complete reviewed configuration, including changed year dates, bells, rotation, and date overrides. The editor lists the changed sections. Classes already in progress retain their saved times.
-4. **Keep closures separate.** Calendar manages monthly holidays and closures through its own save and verification process. Special schedules manages reusable testing and dated profiles. Moving between sections keeps drafts; a newer saved revision requires review rather than replacing unsaved work.
-5. **Verify the result.** After saving, check Overview. It refreshes from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration.
+1. **Enter both school-year dates.** Open School year and check the saved school timezone. Set the actual start and end dates. School-year setup does not require A/B rotation.
+2. **Review bells and rotation.** In Bells & rotation, define named periods and bell profiles. Classes linked to a period follow its timetable; fixed-time classes keep their configured times. Configure A/B rotation only when used.
+3. **Preview the complete change.** Preview changes lists scheduling impacts, changed sections, and blockers. Save reviewed schedule saves the reviewed year dates, bells, rotation, and date overrides together. Recorded classes retain their frozen times.
+4. **Save calendar closures separately.** Calendar has its own save and verification. Mark closures or an instructional makeup day, including the weekday it should follow when appropriate. Review the resulting A/B sequence and class meetings.
+5. **Verify saved values.** Check Overview after saving. If a refresh fails, reload the saved state. A newer revision requires another review before saving an older draft.
 
 [Open School year](/classpilot/admin/scheduling?section=school-year)
 
@@ -42,17 +41,31 @@ School-year dates have their own page and do not require an A/B rotation setup.
 
 **Who can use this:** Administrator or school administrator
 
-Bring staff, students, classes, schedules, and managed Chromebooks online in a safe order.
+Prepare school identity, people, schedules, and managed Chrome, then verify a small pilot.
 
-1. **Establish school identity.** Confirm the school name, Workspace domain, timezone, and active ClassPilot entitlement.
-2. **Create people and classes.** Add staff, import students, configure shared-device PINs when used, and build official classes with teachers, rosters, and schedules.
-3. **Configure managed Chrome.** Generate a setup key, place the ClassPilot managed policy in Google Admin, and force-install the correct extension ID for the intended organizational units.
-4. **Review the calendar and readiness.** Confirm instructional dates, Google connection status, extension check-ins, and every IT Readiness warning before the first live class.
-5. **Pilot before expanding.** Test with separate administrator, teacher, and student accounts on managed Chromebooks before enabling a whole school.
+1. **Confirm school identity.** Check the school name, Workspace domain, timezone, school-year dates, and active ClassPilot entitlement.
+2. **Prepare staff and students.** Choose an import path. Verify the Workspace Roster Connector before Directory imports, then review staff, student records, and shared-device PINs where used.
+3. **Build official classes.** Assign primary teachers and co-teachers, exact student rosters, and recurring schedules. Preview school calendar and special-day changes before applying them.
+4. **Configure managed Chrome.** Use Sign-in & devices for the setup key and generated managed policy. School IT force-installs the correct extension for the intended student users and applies the relevant ChromeOS device policies.
+5. **Verify before expanding.** Review IT Readiness and test separate administrator, teacher, and student accounts on managed Chromebooks. Confirm sign-in, a current class, student tiles, and the actions actually available to that school and client.
 
-> **Check before continuing:** A public Store version does not prove managed Chromebooks have adopted it. Use device check-ins and accepted capabilities.
+> **Check before continuing:** A Store listing or successful setup save does not prove Chromebook adoption. Check managed policy and current student-device behavior.
 
 [Open IT Readiness](/classpilot/admin/it-readiness)
+
+### Connect the Google Workspace roster
+
+**Who can use this:** Administrator or school administrator, with a Google Workspace super administrator for delegation
+
+Have school IT authorize and verify read-only Directory and Classroom roster access.
+
+1. **Open the connector in IT Readiness.** Find Google Workspace Roster Connector. Confirm the school domain and that the server reports its service account configured. A server-configuration warning needs SchoolPilot support.
+2. **Copy the displayed client and scopes.** Use Copy Client ID and Copy Scopes. In Google Admin domain-wide delegation, a Workspace super administrator authorizes that exact client ID with those read-only scopes. Do not substitute credentials from personal Classroom OAuth or Email Monitoring.
+3. **Verify from SchoolPilot.** Return to the connector, enter a delegated administrator email in the school’s configured Workspace domain, and choose Verify. Verification checks Directory and Classroom access. Read the result and Last verified/Last sync values; verification does not itself import people or classes.
+4. **Run the intended import.** Import Workspace staff or students from their respective pages, or review the available Classroom class import. Resolve source identities and inspect import results. OneRoster and Clever roster integrations remain separate connections.
+5. **Disable and revoke separately.** Disable stops connector imports locally. To fully revoke Google access, remove that client’s delegation in Google Admin. This connector does not grant Gmail, Drive, Calendar, or write access.
+
+[Open Workspace Roster Connector](/classpilot/admin/it-readiness)
 ## People and Classes
 
 
@@ -61,14 +74,16 @@ Bring staff, students, classes, schedules, and managed Chromebooks online in a s
 
 **Who can use this:** Administrator or school administrator
 
-Create staff, assign the least privilege, and keep lifecycle actions auditable.
+Keep one identity per person and review assignments before removing school access.
 
-1. **Create or import staff.** Add staff individually or use an available Workspace import. Staff email domains must match the school’s configured Workspace domain.
-2. **Assign roles intentionally.** Use administrator, school administrator, teacher, and office roles according to job duties. Review multi-role staff instead of relying only on the displayed primary role.
-3. **Handle account support.** Use password reset and lifecycle actions from the staff record. Avoid sharing temporary credentials in tickets or guide notes.
-4. **Review active sessions and logs.** Use current session information and audit logs to investigate changes before disabling or removing access.
+1. **Add or import staff.** Use Add Staff, CSV, or the verified Workspace import. Check the exact school email and review imported, updated, skipped, and error results. A name alone is not an identity match.
+2. **Resolve identity warnings.** For the same person, use Edit existing email or Reactivate. Choose This is a different person only when two people truly share a name. Imports do not automatically create a conflicting identity.
+3. **Correct email on the existing record.** Select the staff row by name and email, then save the email correction by itself. The staff member must sign in again. Reopen the editor afterward to save name or role changes separately. Multi-school identities can require Super Admin review.
+4. **Choose an appropriate role.** Teacher and School Admin can hold teaching assignments. Office Staff is non-teaching. Review the school access being changed and any other roles; a display name does not establish authority.
+5. **Review removal or teaching-role loss.** Use the guided transition. End the listed active workflows, then choose an explicit action for every assignment. Required ownership needs an eligible replacement; optional relationships may be removed. Refresh a stale review before continuing.
+6. **Restore access deliberately.** Reactivate the existing former-staff identity to keep its history connected, then review current roles and assignments. Password reset is a separate support action; keep credentials out of tickets and exports.
 
-> **Check before continuing:** Disabling or deleting access can interrupt active work. Verify the exact staff record and school first.
+> **Check before continuing:** Removing school access retains historical records. Do not delete and recreate a staff account to correct an email.
 
 [Open Staff accounts](/classpilot/admin?tab=staff)
 
@@ -76,14 +91,14 @@ Create staff, assign the least privilege, and keep lifecycle actions auditable.
 
 **Who can use this:** Administrator or school administrator
 
-Use student records for identity and roster membership—not as a device-assignment screen.
+Maintain school student identities and the PINs used on shared Chromebooks.
 
-1. **Choose an import path.** Create students manually or import by CSV or Workspace. Review validation results and resolve duplicates by exact school identity.
-2. **Complete student identity.** Confirm names, school email addresses, student IDs, and grade levels. These fields support sign-in and class imports.
-3. **Manage PINs.** Generate, reset, or print shared-device PINs only for the students who need them. Treat printed PIN sheets as protected school records.
-4. **Use bulk actions narrowly.** Filter and review the selected students before applying a bulk change.
+1. **Choose an import path.** Use manual entry, CSV, Google Classroom, or Workspace Directory. Directory imports require the verified Workspace Roster Connector. Review validation and import results before assuming every student was added.
+2. **Check student identity.** Confirm the student name, school email, and grade. Students and the Student Roster tab use school student records. Official class membership is managed in Classes.
+3. **Prepare shared-device sign-in.** When shared Chromebook sign-in is enabled, students use Grade, Name, and a four-digit PIN when their Chrome profile email is unavailable. Generate Missing PINs, or explicitly reset the selected students or grade. Older PINs may need one reset before they can be displayed.
+4. **Review bulk scope and exports.** Check the selected students before grade changes, PIN resets, or removal. Print PIN Roster and CSV/Excel exports can expose PINs; handle them as school records.
 
-> **Flight note:** Students holds school student records. Roster manages class membership. Neither page manually binds a student to a Chromebook.
+> **Flight note:** Rosters is not a student-to-device assignment screen. Chromebook Status describes extension records; Classes holds official class rosters.
 
 [Open Students](/classpilot/students)
 
@@ -91,42 +106,29 @@ Use student records for identity and roster membership—not as a device-assignm
 
 **Who can use this:** Administrator or school administrator
 
-Use extension check-in data to troubleshoot deployment and readiness.
+Read extension check-ins separately from school student records.
 
-1. **Separate records from devices.** Use student and class pages for people. Use Chromebook status for managed browser check-ins and extension readiness.
-2. **Check version and freshness.** Compare the reported extension version, last check-in, and accepted capabilities. Unknown or old clients remain unavailable for features they cannot enforce safely.
-3. **Repair through Google Admin.** Confirm organizational-unit targeting, force-install status, and managed policy. Then allow the Chromebook to reconnect and report current capability data.
-4. **Avoid manual pairing.** Student authority is established by authenticated session and managed-device continuity, not by assigning a device ID in the admin interface.
+1. **Open Chromebook Status.** In Rosters, choose Chromebook Status. The table shows status, extension ID, name, location, version, and last check-in. Student Roster shows school student identities instead.
+2. **Check freshness and version.** Connected, Recently seen, Offline, and Never checked in describe the last check-in. They do not prove a screenshot is current or a particular classroom tool is supported. This table does not display accepted capabilities.
+3. **Verify deployment in Google Admin.** Check student organizational-unit targeting, force installation, and the generated managed policy. Reconnect the Chromebook and refresh its check-in. Feature-specific readiness can require additional evidence, such as the Student portal preflight.
+4. **Keep identity separate.** Use student records for student corrections and Classes for membership. Editing an extension name or location does not assign a student to that Chromebook.
 
-[Open Roster and Chromebook status](/classpilot/roster)
+[Open Rosters and Chromebook Status](/classpilot/roster)
 
 ### Build classes, rosters, and schedules
 
 **Who can use this:** Administrator or school administrator
 
-Official classes define teacher authority, student membership, and scheduled session windows.
+Set official teachers and rosters, then review recurring and special-day schedules.
 
-1. **Create or import.** Create an official class or import from Google Classroom, then verify its school, name, and source.
-2. **Assign teaching staff.** Set one primary teacher and any appropriate co-teachers. These assignments control who can start and operate the class.
-3. **Build the roster.** Add the exact students who belong in the class. A student can belong to more than one official class.
-4. **Configure the recurring window.** Set each class’s weekdays, term dates, A days/B days/both, and fixed times or named period. Use People & classes → Classes for rosters and Calendar & schedules for school-year dates, bells, special schedules, and Schedule changes.
-5. **Separate saved plans from applied dates.** Calendar & schedules → Special schedules has two sections: Saved profiles holds reusable plans, and Applied dates shows their dated uses. Each saved-profile row summarizes configured testing blocks, custom class times and skipped-class rules. No schedule changes configured means the profile has none of those settings, even if classes are included. Including a class does not mean its time changed; actual changes depend on which classes meet on each applied date. The next date is strictly after today in the school’s timezone, excluding cancelled applications and dates without eligible class changes or testing blocks. Applied today appears separately. No future dates does not mean today’s schedule was cancelled.
-6. **Build a special-day profile.** Open Calendar & schedules → Special schedules and create a named plan such as NWEA. Choose Preview schedule for, then Load regular schedule or Start blank. Day planner keeps classes, testing and review together. Timeline uses compact rows aligned to one shared time axis, with a sticky time header and pinned row labels while scrolling. It shows regular times as thin bars beside proposed class and testing bars. List offers the same editing controls and is the initial mobile view; Timeline remains available with horizontal scrolling. Skipped and unchanged classes remain visible.
-7. **Read the school-hours timeline.** Timeline uses the exact start and end of the school’s enabled, valid daytime Monitoring Hours. Time edits never expand the axis. Disabled or unconfigured hours use a labeled 08:00–16:00 display default. Unavailable, invalid or overnight configured hours show the editable List until the hours can be read or corrected. Class and testing times outside school hours remain visible, labeled and editable; their bars are clipped to the axis without changing their times. This display behavior adds no scheduling, saving or application restrictions.
-8. **Choose the view you need.** Use School, Class or Teacher view, then filter by grade, class, teacher or search. In School view, testing appears alongside classes within each participating grade, using checked student associations. A mixed-grade block appears under every participating grade as linked views of one block: editing any occurrence updates them all, and counts and the 30-block limit include it once. Testing with an unknown association remains visible with that status. Teacher view includes co-teachers and duties across grades. Class view includes testing associated with that class’s students, with participation counts when available. Display filters and collapsed grades do not change which classes the profile includes; included classes, custom-time rules, skipped classes and testing blocks have separate counts.
-9. **Edit directly in Day planner.** Click a class name or bar to open its controls in that row. Explicitly include an outside class before changing it, then choose Keep existing schedule, Custom time or Does not meet. Restore regular schedule removes that class’s override. For example, shorten Homeroom from 8:30–9:10 to 8:30–9:00 before 9:00 testing. The proposed bar updates immediately. Undo last change restores draft edits; nothing automatically shortens, skips, moves or reassigns ordinary classes.
-10. **Choose an existing class for a time.** Open a class’s row editor and choose Class for this time. Find an existing class, then explicitly choose Swap class times or Use selected class; original does not meet. The first option exchanges the two proposed windows; the second puts the selected class in this window and marks the original class Does not meet. Review both classes’ before and after times before Update draft, which explicitly includes both classes. Class identities, teachers and rosters stay intact. Cancel leaves the draft unchanged, and Undo last change reverses the complete placement together. Save and choose application dates separately; each class’s saved rule applies only on dates when that class is eligible to meet.
-11. **Work through overlaps.** The concise whole-profile issue summary remains visible while filtering; expand it for explanations, then click an issue to reveal and focus the affected class or testing block, including rows hidden by display filters. A checked conflict shades only the exact overlapping time on both affected bars. Conflicts, allowed overlaps and incomplete checks have distinct text labels. Background checks are advisory, so you can keep editing and save complete blocks with unresolved scheduling conflicts. Missing or failed checks never mean the day is conflict-free.
-12. **Add testing groups together.** In Day planner, choose Add testing groups. Search or filter by category and grade, select groups across pages, set a common time window, and review staff. A sole eligible assignment is prefilled; it does not guarantee availability at that time. Each group becomes a separate editable block, within the 30-block limit. Click its name or bar to change its group, staff or times. Create group opens the same group editor without leaving your profile. Saving that group is independent: discarding the profile does not delete it.
-13. **Read what follows testing.** After testing summarizes the checked testing roster at that block’s end. Students may return to a class, continue in another testing block, have a gap until their next class, or have no later class. Multiple matching classes and unavailable information stay explicit; neither is a confirmed return destination. Counts can differ within one testing group, and the application preview checks every selected date separately. This is a schedule preview, not a student transfer or an instruction to release live supervision.
-14. **Remember the preview date.** Save profile saves the displayed preview date for every administrator across browsers and devices. New profiles and older profiles without a saved date start with today in the school’s timezone. Reopening or duplicating a profile uses its saved preview date. In the saved planner, changing only the date shows Save preview date and Discard date change; save or discard it before Choose dates & apply. Unsaved date changes stay with your draft across display changes and failed saves. Customize this use initially compares the first selected application date; Save as new profile saves the date currently displayed with the new profile.
-15. **Save, then choose dates.** Saving opens the exact saved profile without activating it. Open profile returns to Day planner and its saved preview date. Choose dates & apply selects actual dates, Preview application checks them, and Apply reviewed dates applies the reviewed plan. Saved edits never rewrite existing applications. Normal schedules resume outside applied dates. Bell profiles, rotation and calendar exceptions remain separate scheduling tools, and recorded occurrences retain their frozen times.
-16. **Review applied dates and testing status.** In Applied dates, expand an application to inspect its dates and testing details. Scheduled, Applied today, Past date and Cancelled describe the date’s relationship to the school calendar. Testing has separate statuses: Finished means that testing window ended, not that later class changes or other dates have finished. Earlier and cancelled applications keeps older entries together in a collapsed history section. Expanding or collapsing details does not alter any schedule.
-17. **Cancel the whole application before it starts.** Cancel application opens a confirmation listing every date in that application. Cancel all applied dates cancels the whole application, not only the date you are viewing; Keep application leaves it unchanged. Cancellation must occur before the earliest affected original class, proposed class or testing start across all its dates, and restoring the regular schedule must pass conflict checks. Apply dates separately when they need independent cancellation. After a start, use End testing for an owned active session or the scheduling editor’s available block actions; remaining class changes and recorded schedules stay in place. Scheduled deadlines remain controlled by scheduling.
-18. **Delete a past application from history.** Delete from history is available only after every application date is past in the school’s timezone and its supervision has ended. Review the named confirmation: this removes the application’s overview history entry while retaining the reusable profile, full application snapshots, activity reports and audit history. Applications with today’s or future dates, or ongoing supervision, cannot be removed from history. If completion cannot be confirmed, refresh status before trying again.
-19. **Return to Scheduling.** Use Back to scheduling in the planner header to return to the profile list. An unchanged saved profile closes immediately; unsaved profile or preview-date changes require the existing discard confirmation. Save first to keep those changes. Switching Timeline/List or display filters keeps the draft intact.
-20. **Delete an unused reusable profile.** In Saved profiles, open the row’s more-actions menu and choose Delete profile. Confirm the profile name. This removes the reusable profile only and cannot be undone: applied dates, scheduled or active testing, supervision records and history remain unchanged. Applied dates keeps the saved application names and shows Saved profile deleted, including in Earlier and cancelled applications. Use Cancel application separately when an eligible dated schedule should stop; deleting its profile is never cancellation. If another administrator changed the profile or schedule, refresh and reopen the deletion confirmation.
-21. **Archive or delete official classes deliberately.** For official class rosters, archive when history must remain available. Delete only when the UI confirms the action is appropriate and irreversible consequences are understood. Class deletion is separate from deleting a reusable schedule profile.
+1. **Create or import an official class.** Open Classes. Create a class or review a Google Classroom import. Assign one primary teacher, any eligible co-teachers, and the exact students. Rosters holds school student records; it does not replace this class roster.
+2. **Configure recurring meetings.** Set weekdays, optional term dates, A/B applicability, and fixed times or a named period. Calendar closures, school-year bounds, and the selected bell profile determine which meetings occur.
+3. **Build a special-day profile.** In Special schedules → Saved profiles, choose a preview date and Load regular schedule or Start blank. Use Day planner in Timeline or List. Filters only change the view; explicitly include classes before choosing Custom time or Does not meet.
+4. **Review placements and testing.** Class for this time can swap two proposed windows or place a selected class and skip the original. Review both changes; Update draft and Undo keep the placement together. Add testing groups with explicit staff and times. Testing does not automatically shorten or cancel ordinary classes.
+5. **Resolve review findings.** Use the whole-profile issue summary even when rows are filtered. Missing checks are unavailable, not conflict-free. A complete reusable profile can be saved with advisory conflicts; actual-date preview enforces application blockers. After testing is a roster-based preview, not a live transfer.
+6. **Save the profile, then apply dates.** Save profile preserves its preview date for administrators but activates nothing. Choose dates & apply, preview each selected date, then Apply reviewed dates. Customize this use changes that application only. Later saved-profile edits do not rewrite existing applications.
+7. **Inspect applied dates.** Applied dates distinguishes upcoming, today, past, and cancelled uses. Testing Finished describes that testing window, not every class adjustment or application date. Saved profiles with no future dates may still be applied today.
+8. **Cancel separately from deletion.** Cancel application reviews the entire application and all its dates, testing blocks, and class adjustments. It is unavailable once the first affected window starts. Delete profile removes the reusable plan while preserving applied schedules and history; it does not cancel testing. Use any history-removal action only for eligible completed history.
 
 [Open Classes](/classpilot/admin/classes)
 
@@ -134,12 +136,13 @@ Official classes define teacher authority, student membership, and scheduled ses
 
 **Who can use this:** Administrator or school administrator
 
-Map external records to the school and review concrete changes before applying them.
+Review OneRoster or Clever changes before applying an external roster.
 
-1. **Validate and map.** Upload a complete OneRoster 1.1/1.2 bulk ZIP or configure an authorized Clever district connection. Choose the matching school and resolve ambiguous people and classes.
-2. **Review the changes.** Read before-and-after values and the named student and teacher additions/removals. Preserve manual contributions unless you explicitly adopt them. Approve only the current preview.
-3. **Read the result.** Apply the reviewed plan, inspect saved outcomes, and resolve conflicts before retrying. An omitted student is not automatically deactivated.
-4. **Enable Clever deliberately.** Complete the initial reviewed import and district pilot before enabling nightly sync at 2:00 a.m. school time. Empty, incomplete or unusually large-removal snapshots are held for review.
+1. **Choose the correct connector.** Open Classes → Roster integrations. Upload a complete OneRoster 1.1/1.2 bulk ZIP, or configure an authorized Clever district connection. These imports are separate from the Workspace Roster Connector and personal Google Classroom OAuth.
+2. **Map school and people.** Map the external organization to the existing school. Resolve exact-email or student-number conflicts. Teachers must map to active teaching staff; imports do not create administrator access or staff invitations.
+3. **Review every change.** Read the named student and teacher additions/removals and before-and-after fields. Existing manual contributions remain protected unless explicitly adopted. Apply only the current reviewed preview; changed rosters require a fresh review.
+4. **Check outcomes before retrying.** Inspect import history and saved results. A missing source student is not automatically deactivated. A partially completed import can retain committed work, so review its outcome before resuming.
+5. **Enable nightly Clever sync deliberately.** Complete the first reviewed import and district validation before enabling nightly sync from 2:00 a.m. school time. Empty, incomplete, unresolved, or unusually large-removal snapshots are held for review. Provider and vendor compatibility still require a real pilot.
 
 [Open Class Management](/classpilot/admin/classes)
 
@@ -147,12 +150,12 @@ Map external records to the school and review concrete changes before applying t
 
 **Who can use this:** Administrator or school administrator
 
-Configure eligible pairs and approve dated exceptions without rewriting recurring schedules.
+Review dated changes without replacing recurring schedules.
 
-1. **Define eligible pairs.** Pair active scheduled classes whose periods meet the compatibility rules.
-2. **Review requests.** Approve or deny teacher requests according to school policy, timing, and the reason provided.
-3. **Create an administrator change.** Create a dated change directly when needed and record a clear reason.
-4. **Cancel before the boundary.** Cancel an approved future change only before either effective class begins. Use history for an auditable record.
+1. **Set the school policy and pairs.** Open Schedule changes. Configure the request policy and eligible active class pairs; review the compatibility information shown.
+2. **Review a dated request.** Check both classes, effective times, teacher request, and reason before approving or denying. Administrators can create a dated change directly when needed.
+3. **Cancel before either class starts.** An approved change can be cancelled only before either effective class begins. Use history to confirm the decision; changing the request policy does not cancel an already approved change.
+4. **Keep today-only teacher swaps separate.** Teaching tools → Today’s schedule has its own same-day workflow and Allow teacher period swaps setting. Regular times return tomorrow; administrator all-day manual recovery is separate.
 
 [Open schedule changes](/classpilot/admin/classes/schedule-changes)
 ## Policies
@@ -163,11 +166,11 @@ Configure eligible pairs and approve dated exceptions without rewriting recurrin
 
 **Who can use this:** Administrator or school administrator
 
-Share reliable website shortcuts with teachers through the school app catalog.
+Keep shared website shortcuts current for teachers.
 
-1. **Add a school website.** In Browsing & monitoring, School Apps lets an administrator add a name and website address. Teachers can then choose that button while preparing Open URL, Focus, or a Flight Path.
-2. **Keep shared addresses current.** Administrators can edit or delete school buttons. Changes affect future choices only; existing Flight Paths keep their saved websites. Teachers can save and favorite school buttons but cannot edit their shared definitions.
-3. **Review the actual access.** A custom button permits its website when added to a Flight Path. It does not bypass school website blocks or sign-in policies. Common Google tools retain website-level access, including the shared Google Docs website. Teacher personal buttons and favorites remain private.
+1. **Add a school website.** Open Browsing & monitoring → School Apps. Add the name and website address teachers should choose in Open URL, Focus, or Flight Paths.
+2. **Maintain the shared button.** Administrators can edit or delete school buttons. Existing Flight Paths keep their saved websites. Teachers can save and favorite school buttons; their personal buttons and favorites stay private.
+3. **Check the destination.** A button is a website shortcut. Review its actual address before using it in a restriction. Existing website rules and sign-in requirements still apply; a button does not grant account access.
 
 [Open Browsing & monitoring](/classpilot/settings?section=browsing)
 
@@ -175,22 +178,17 @@ Share reliable website shortcuts with teachers through the school app catalog.
 
 **Who can use this:** Administrator or school administrator
 
-Set school-wide defaults without confusing them with an individual administrator’s teaching tools.
+Save each school policy explicitly and check its actual availability.
 
-1. **Review school identity.** School details shows the canonical saved school name and timezone. These are read-only here; use an authorized school-profile editor or contact your SchoolPilot administrator. School-year dates remain under Calendar & schedules.
-2. **Set browsing defaults.** Browsing & monitoring separates school tab limits and educational domains, blocked websites, and monitoring hours. Each group has its own Save. Educational domains affect activity classification, not safety approvals. AI detections leave tabs open for administrator review.
-3. **Set monitoring hours.** Configure school-local tracking hours and the after-hours choice: Off, Safety only, or Full. Safety only retains actual unsuppressed safety alerts without ordinary browsing history, screenshots or teacher presence; unsupported clients stop after-hours monitoring.
-4. **Choose an optional summary copy.** The Central Email Recipient setting can receive a copy of completed class, testing and Coverage activity summaries. Each supervisor still receives only the students and time intervals they supervised. This setting does not replace Safety Center notifications or announce schedule changes.
-5. **Configure sign-in.** Sign-in & devices contains staff password access, shared Chromebook sign-in, and setup keys. Toggles remain drafts until their Save button is used. Key rotation is a separate confirmed action.
-6. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
-7. **Set workflow policy.** Configure schedule-change policy beside the workflow under Calendar & schedules → Schedule changes. Student Portal configuration stays in its own Settings destination.
-8. **Respect data boundaries.** Data & maintenance contains activity retention and the existing destructive device/history cleanup. Use the separate Save for retention. Cleanup requires confirmation and is not a roster-editing tool.
+1. **Check school identity.** School details displays the saved name and timezone. Request changes through the authorized school-profile editor. School-year dates and bells stay under Calendar & schedules.
+2. **Save browsing sections separately.** Browsing defaults, Blocked websites, and Monitoring hours each have their own Save. Educational domains classify activity; they do not approve safety content. Saving a website block is separate from confirmation that a Chromebook enforced it.
+3. **Review monitoring hours and availability.** Set days and times in the school timezone, then Save monitoring hours. The form offers Off, Safety only, and Full monitoring after hours. Safety-only collection needs a separate school rollout and compatible client; selecting it alone does not activate that feature.
+4. **Save staff notifications.** Central email copy can copy completed class, testing, and Coverage summaries and browser safety emails to one staff member. It does not replace administrator safety notifications or copy password, billing, parent, or student emails. The monitoring-interruption digest has its own Save.
+5. **Configure sign-in and enrollment.** Staff password access and shared Chromebook sign-in have separate saves. Setup-key generation or confirmed rotation is an immediate separate action; deploy the generated managed policy through Google Admin. Student portal configuration has its own destination and rollout checks.
+6. **Separate personal teaching tools.** Personal Flight Paths and Block Lists belong to their owner. School Library sharing and Official resources are available only at enabled schools; administrators can govern Official items there.
+7. **Use maintenance for its stated purpose.** Save activity-history retention separately. Device and monitoring cleanup permanently removes the listed device/history data and requires cleanup access and confirmation. Extensions must register again; this is not a class-roster editor.
 
-> **Flight note:** Personal Flight Paths and Block Lists are in Teaching tools and stay private to their owner unless the owner shares them. When the School Library is available for your school, administrators can mark shared items Official there; teachers can apply or copy an Official item, and only administrators can change it.
-
-> **Flight note:** Staff notifications contains the central email recipient and daily monitoring interruption digest, each with an explicit Save.
-
-> **Flight note:** Section navigation preserves drafts. If settings change elsewhere, compare your draft with the latest saved values before choosing what to save.
+> **Flight note:** Moving between settings sections preserves drafts. When another editor saves a newer revision, compare the latest values before saving your draft.
 
 [Open School Settings](/classpilot/settings?section=school)
 
@@ -198,20 +196,17 @@ Set school-wide defaults without confusing them with an individual administrator
 
 **Who can use this:** Google Workspace administrator, with an Administrator or school administrator ClassPilot account
 
-Apply the standard Chrome and sign-in policies that force-install ClassPilot and close the common student bypasses.
+Apply the Google policies appropriate to student ChromeOS devices and browser users.
 
-1. **Force-install the extension.** In Google Admin Console open Devices → Chrome → Apps & extensions → Users & browsers, select the student organizational unit, add the ClassPilot extension by ID, and set Installation policy to Force install. Without this step no monitoring happens.
-2. **Restrict sign-in to the school domain.** Open Devices → Chrome → Settings → Device → Sign-in settings and set Sign-in restriction to *@yourschool.org using the school’s actual domain. Personal Gmail sign-in is the most common way to bypass monitoring.
-3. **Disable Guest mode.** On the same Sign-in settings page set Guest mode to Disable guest mode. Browse as Guest on the login screen is a one-click bypass of every monitoring policy.
-4. **Disable adding new users at sign-in.** On the same page turn Allow adding new users off so students cannot add a personal Google account at the login screen and sidestep the sign-in restriction.
-5. **Block Incognito and developer tools for students.** Open Devices → Chrome → Settings → Users & browsers → Security on the student organizational unit. Set Incognito mode to Disallow incognito mode and Developer tools to Never allow use of built-in developer tools. Incognito tabs are invisible to the extension, and developer tools can disable it.
-6. **Force browser sign-in.** Under Users & browsers → Sign-in settings set Browser sign-in settings to Force users to sign-in to use the browser so user-level policies always apply.
-7. **Trust the ClassPilot web app when API access is restricted.** If the district restricts third-party API access, open Security → Access and data control → API controls → Manage Third-Party App Access, add ClassPilot by its OAuth client ID, and set Access to Trusted. This lets administrators connect Workspace for roster import and directory reads.
-8. **Verify on a student Chromebook.** Confirm the Force-installed badge on a student device under Apps & extensions, that a personal Gmail sign-in is rejected, that no Browse as Guest button appears at the login screen, and that a test student appears on the teacher dashboard within about 30 seconds.
+1. **Target the correct students.** In Google Admin, open Devices → Chrome → Apps & extensions and select Users & browsers. Choose the intended student organizational unit or supported group, add the verified ClassPilot extension ID, and force-install it. Add the generated managed policy to that extension.
+2. **Review ChromeOS device sign-in.** Under Chrome device settings, search the relevant sign-in and Guest policies. Restrict device sign-in to approved school accounts and disable Guest browsing as school policy requires. Verify the enrolled-device scope and account exceptions before rollout.
+3. **Review user and browser policies.** For student users, review Incognito, developer-tools, secondary-account, and browser sign-in settings as applicable. Google distinguishes ChromeOS user settings from enrolled desktop browser settings; apply the controls supported by the managed environment.
+4. **Authorize the correct Google access.** Use the Workspace Roster Connector’s displayed client ID and exact scopes for roster delegation. Personal Classroom OAuth may need separate district app approval. Use the district’s API-access policy rather than assuming every app must be marked Trusted.
+5. **Verify on a managed student device.** Allow time for Google policy propagation, then inspect chrome://policy and the installed extension. Test approved school sign-in and blocked alternate access paths, followed by a current ClassPilot class. Policy propagation can take up to 24 hours; no fixed tile-arrival time is guaranteed.
 
-> **Flight note:** Expect 10–15 minutes for the required and recommended settings plus 2–3 minutes for API controls. Identifying the right organizational unit is the slow part.
+> **Flight note:** Google Admin labels and policy availability vary by management scope. Search the policy name and use Google’s current help when the console differs.
 
-> **Check before continuing:** ClassPilot cannot read Google Admin policy state. IT Readiness reports extension check-ins and Google connectivity, not whether these policies are applied; verify them in Admin Console.
+> **Check before continuing:** IT Readiness cannot read Google Admin policy state. Verify effective policies and student behavior on managed devices.
 
 [Open IT Readiness](/classpilot/admin/it-readiness)
 
@@ -219,17 +214,15 @@ Apply the standard Chrome and sign-in policies that force-install ClassPilot and
 
 **Who can use this:** Administrator or school administrator
 
-Choose the portal students open after ClassPilot sign-in while Focus or a Flight Path remains active.
+Configure approved sign-in hosts and check school rollout and Chromebook readiness separately.
 
-1. **Open Admin Panel → Settings → Student portal.** Review rollout and Chromebook readiness, then enable the Student Portal during Focus and Flight Paths. Only school administrators can configure it.
-2. **Choose Clever as the first portal.** Select Clever under First portal after ClassPilot sign-in to start restricted students there. They then choose a teacher-approved learning destination from the portal; completing provider sign-in does not automatically send them to a learning site.
-3. **Configure providers.** Use the built-in Google or Clever profile, enter the district Clever launch address when required, or add a bounded custom provider for the school’s identity system.
-4. **Approve exact hosts.** Prefer exact hostnames. Allow subdomains only when the provider genuinely requires them. Lookalikes, wildcards, public suffixes, local addresses, and unsafe URLs are rejected.
-5. **Resolve policy conflicts.** Attention, school blocks, and teacher blocks remain higher priority than sign-in pass-through. Resolve warnings when an approved provider is also blocked.
-6. **Verify the student flow.** Test ClassPilot sign-in, Clever, any Google Accounts handoff, and the return to the portal. Confirm the student stays there until choosing a teacher-approved destination, and that an unapproved site remains blocked. A provider visit alone is not completion.
-7. **Roll out by capability.** Keep the rollout gate off until the compatible extension is deployed. Enable only after recently active Chromebooks report the required Student Portal capability (restrictionPortalFirstV1). The Chromebook evidence count shows current reported and accepted support, not a guarantee for every device.
+1. **Read the preflight first.** Open Settings → Student portal. Policy, Server rollout, and Chromebook evidence are separate checks. Saved settings do not activate portal behavior while the school rollout is off.
+2. **Choose the first portal and providers.** Use the built-in Google or Clever profile, the district Clever launch address when required, or a bounded custom provider. Clever-first opens the portal after ClassPilot sign-in; students still choose a teacher-approved learning destination.
+3. **Bound authentication access.** Prefer exact hostnames. Include subdomains only when required. Unsafe hosts, wildcards, lookalikes, and local addresses are rejected. School or teacher blocks and Attention remain higher priority.
+4. **Save and test the complete flow.** Use the policy’s Save, then test ClassPilot sign-in, the identity-provider handoff, return to the portal, and a permitted learning site under Focus or a Flight Path. Confirm an unapproved destination stays restricted.
+5. **Check actual rollout support.** The server enables this behavior only for admitted schools and compatible clients. The evidence panel reports recent accepted support; it does not guarantee every Chromebook. Late-sign-in recovery during an existing restriction has a separate rollout and must not be assumed available.
 
-> **Check before continuing:** Approved provider hosts remain available for authentication and portal launch while the restriction is active. Learning sites remain teacher-restricted, and a school or teacher block still wins.
+> **Check before continuing:** Approved authentication hosts remain accessible while restrictions are active. Keep these rules narrow; they do not approve unrelated learning sites.
 
 [Open Student Portal configuration](/classpilot/admin?tab=student-portal)
 
@@ -237,18 +230,14 @@ Choose the portal students open after ClassPilot sign-in while Focus or a Flight
 
 **Who can use this:** Administrator or school administrator
 
-Decide whether teachers may theme their dashboards, which holidays the school calendar shows and when, what the kiosk and the student sign-in gate may show, and whether the whole school shares one look.
+Choose school themes, teacher customization, and shared-screen appearance.
 
-1. **Allow or pause teacher themes.** Teachers may use the preloaded themes is on by default. Turning it off returns every dashboard to the school default or the plain look; nothing else about ClassPilot changes.
-2. **Decide about uploads.** Teachers may upload a background image is off by default. Uploaded pictures are private to the teacher who uploaded them, are re-encoded with metadata removed, and are never shown to students on their own devices.
-3. **Decide what the kiosk may show.** The PassPilot kiosk follows the theme of the teacher it is bound to. Preloaded themes are always allowed there; Custom backgrounds may appear on kiosks is off by default because the kiosk is a shared screen students look at.
-4. **Choose the automatic calendar.** Automatic calendar themes is on by default: teachers who follow the school, kiosks bound to no teacher and the student sign-in gate show today’s holiday or season. Holidays shown automatically lists what may appear; Christmas, Easter and Advent are off until you turn them on, so a public school sees Winter in December and Spring at Easter. Days before a holiday sets how early a holiday appears; it ends by itself the day after.
-5. **Start a holiday early.** Press Start now beside a holiday, or type a date, to open it ahead of the usual lead time this year. The end stays automatic, so there is nothing to turn off afterwards.
-6. **Set a school default or lock.** A fixed school theme replaces the calendar for teachers who have not chosen one and for kiosks bound to no teacher, and stays until you clear it. Lock everyone to the school theme overrides every personal choice until it is turned off.
-7. **Decide about the student sign-in gate.** Show the school theme on the student sign-in gate puts the school theme behind the shared-Chromebook sign-in panel. Students see the same picture teachers see; the form itself does not change. This needs ClassPilot extension 3.0.1 or later.
-8. **Save deliberately.** Save dashboard themes writes only the Appearance section with a version check. Themes are presentation only: student status colors, alerts, commands and monitoring never read them.
+1. **Set teacher customization.** Review Allow teacher dashboard themes and Allow custom background uploads. Uploads customize that teacher’s dashboard, are re-encoded, and have metadata removed. Ask staff to use images they have the right to display.
+2. **Choose the school look.** Use an automatic calendar or fixed school theme. Holiday selections and lead days control automatic display; Christmas, Easter, and Advent require opt-in. Start now or an early-start date changes this year’s opening while the holiday still ends automatically.
+3. **Review shared screens.** A teacher-bound PassPilot kiosk follows that teacher’s permitted theme; custom kiosk backgrounds have a separate switch. The student sign-in gate uses its own school-theme switch and needs a compatible extension. A saved setting does not establish deployed-client support.
+4. **Apply a default or lock.** A fixed school theme supplies the default. Lock to the school theme overrides personal choices until released. Save dashboard themes writes the Appearance section only; status colors, alerts, commands, and monitoring keep their normal behavior.
 
-> **Flight note:** Launch themes with the default switches, then enable uploads once staff know the rule: upload only images you have the right to use.
+> **Flight note:** Check the result as a teacher and on any shared kiosk or sign-in gate where the school enables it.
 
 [Open Appearance settings](/classpilot/settings?section=appearance)
 ## Operations
@@ -259,29 +248,17 @@ Decide whether teachers may theme their dashboards, which holidays the school ca
 
 **Who can use this:** Administrator or school administrator
 
-Define who can temporarily supervise students and preserve clear ownership through claim and release.
+Manage supervision permissions, temporary rooms, testing, and explicit handoffs.
 
-1. **Separate saved setup from current supervision.** Supervision has Live now, Scheduled, Saved groups and administrator-only Staff access. A Saved roster records reusable student membership. Authorized staff records permission to supervise that group. Live now records actual current supervision with a staff member, participants and an end time. Saving a group or granting permission does not start a session or attach online students to testing.
-2. **Prepare Saved groups.** Create or edit a reusable supervision group and select its Saved roster and Authorized staff. Selecting staff automatically grants Claim + Manage for that group; no separate Give Staff Access step is needed. Enabled and Disabled describe whether the saved group is available for use. Regular class rosters remain intact.
-3. **Find and organize groups.** The directory shows 25 groups per page, starting with enabled groups. Combine Category, Grade, Authorized staff, Status, and search; mixed-grade groups match each applicable grade. Administrators use Manage categories to create school-specific names such as NWEA MAP. Each group has one optional category. Removing a category moves its groups to Uncategorized and preserves the groups and permissions. Setup managers can assign existing categories within their authorized group scope.
-4. **Start or schedule a group deliberately.** Start session opens a review of exact participants, supervising staff, purpose and end time. It defaults to Supervision; a testing-named saved group is not automatically a test. Schedule testing opens School scheduling with a group shortcut. Open testing draft reloads the current group and staff choices, then asks you to set times. An existing profile or calendar draft is preserved. Saving this draft still does not apply dates: preview and apply the chosen dates separately.
-5. **Read Scheduled.** Scheduled starts on today in the school’s timezone. Choose another date to see applied testing blocks and existing scheduled-class coverage records. Reusable profiles that have never been applied do not appear as occurrences. Status distinguishes upcoming, active, ended, cancelled and unavailable starts. Teachers see their own or assigned records; administrators see the school. Ordinary supervision continues to use a manually started session.
-6. **Review monitoring interruptions.** The compact summary shows open interruptions and events detected in the last 24 hours. Review open interruptions or View recent history opens paginated details. Counts describe events, not unique students; older open events remain in Open. An ended interruption does not necessarily mean monitoring recovered. Uncertain or unavailable status is not a confirmed healthy zero. Staff see only their authorized classes and supervision contexts.
-7. **Review Staff access.** Use the administrator-only Staff access tab to review each staff member's permissions. Give Staff Access and Edit can grant Claim + Manage across selected groups, classes, grades, students or the whole school, or delegate Setup access to manage groups within the chosen scopes. Removing staff from one group changes only that group's access; broader grants can still allow access to those students.
-8. **Assign exact students.** Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback.
-9. **Filter students before selecting.** In Claimed and Available, combine Class, Grade, and search to find students. Class uses official roster membership, including students who belong to more than one class; it does not mean a class is currently meeting. Clear filters restores the visible list. Filters change only the display. Select all matching students selects the students shown by those filters; review the selected count before releasing or sending an action.
-10. **Watch ownership transitions.** Claim, Send and release update who supervises the student. Starting a session for yourself opens those students on the Dashboard; starting one for another staff member keeps you in Supervision. Owners use Open from Live now. Administrators and IT staff with a school administrator role can Observe current classes and active supervision with updating screenshots and no owner controls. A scheduled class remains observable when its teacher is signed out or has not opened ClassPilot. On extensions 2.9.2 and 2.9.3, previews for a class awaiting teacher supervision update approximately every 30 seconds. Observe does not start live teaching or transfer ownership. Wait for the current context to load before acting.
-11. **Review controls and history.** Classroom commands stay above the Dashboard’s student tiles. The Supervision hub organizes sessions and setup without duplicating those controls. Use a live session’s History to confirm who claimed, acted and released an assignment.
-12. **Follow your supervision on the dashboard.** When scheduled Class mode is enabled, regular classes, scheduled testing and scheduled-class coverage automatically populate Class. Each scheduled handoff returns the teacher to Class even after browsing another view; ordinary refreshes preserve browsing within the same assignment. Open from Live now selects the exact started Supervision, Testing or Coverage session in the Class pane. Ordinary Claim opens neutral Claimed students and leaves the current Class assignment intact. Other unscheduled supervision can also appear in Claimed. Offline students remain visible. A scheduled occurrence awaiting a connected teacher is not live supervision, but authorized administrators can still Observe its current roster. Observe respects school monitoring hours, student sign-in and privacy restrictions; future and ended classes are unavailable.
-13. **Read the dashboard counts.** With scheduled Class mode enabled, Claimed counts your ad hoc students, including offline students, while scheduled testing appears in Class. Supervision counts active supervision sessions across the school for administrators. One ad hoc session with 20 students can show Claimed 20 and Supervision 1. Counts refresh while you view Class, and ended assignments stop contributing. An em dash (—) means the count is unavailable; use Retry supervision refresh if an error appears.
-14. **Keep ordinary claims temporary.** Available → Claim uses the staff member’s direct or group-based permission and opens neutral Claimed students. Check the displayed supervisor and server-provided end time. New claims use the school’s tracking-end default with its four-hour fallback; adding students to an existing claim never extends that deadline. Inactive saved testing membership does not turn the claim into Testing or enroll unselected students.
-15. **Review each Send.** Select exact students on the Dashboard and choose Send to. Choose a saved group and one of its authorized supervisors, then a particular active session or Create a new session. Direct sessions and personal claims are not Send destinations. Review purpose, supervisor, deadline, current ownership and each student’s eligibility. Existing destinations keep their purpose and deadline. Unavailable students stay visible with reasons; explicitly select eligible students before continuing. Check the individual results, including students already assigned or unavailable. Receiving staff do not need to accept the transfer.
-16. **Release online or offline students.** On the Claimed dashboard, Release student acts on that student; Release all immediately releases the entire loaded Claimed roster, including students hidden by search or filters. In Supervision → Live now, Release all, End supervision, End testing or End coverage opens a review of that session’s exact roster and release reason. Changed ownership or membership requires refreshing that review. Release does not require the student to be online. It ends their supervised interval, restores an eligible current class or returns them to Available, and preserves saved membership and history. Their Chromebook receives the resulting state when it reconnects. Releasing the last student ends the session.
-17. **Review end-time changes separately.** Owners use Change end time in Live now for an unscheduled session, reviewing everyone affected before saving. Scheduled deadlines remain controlled by scheduling. Adding claims or sending students to an existing destination does not change its deadline.
-18. **Verify the automatic handoff.** Keep the assigned teacher’s Dashboard open across the testing start and end. Confirm the assignment name and rendered student tiles, then the actual next class. A server activation record alone does not prove that the browser displayed tiles. Connected, awake clients target transitions within five seconds under healthy conditions; sleeping or disconnected devices catch up on reconnect. Full testing tools require the compatible extension. Owners can use End testing to finish early; scheduled deadlines remain controlled by scheduling.
-19. **Receive completed activity summaries.** After testing or Coverage ends, the staff member who actually supervised receives an activity summary for that assignment. A staff handoff closes the outgoing supervisor's period; the replacement receives a separate summary for their own period. Late arrivals, early releases and returning students contribute only their supervised intervals. Extending the same assignment delays its summary, and releasing only some students does not send an extra email.
-20. **Read unavailable data honestly.** Summaries allow at least 30 seconds for final observations to settle. They distinguish recorded activity from missing or unavailable observations; no data is not proof that a student stayed on task. A testing block that never started produces no activity summary. Saving or applying a profile does not itself send an activity summary or a new scheduling announcement.
-21. **Remove unused setup.** In Saved groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff access, Disable retains permission entries for later use; Remove permissions removes the displayed permissions for that staff member, including disabled entries, without deleting supervision groups. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting.
+1. **Separate saved setup from live supervision.** Saved groups holds reusable students and authorized staff; saving or enabling a group does not start monitoring. Categories organize groups without changing permissions. Regular class rosters remain intact.
+2. **Review staff access.** Administrators use Staff access to grant Claim + Manage or delegate Setup for explicit groups, classes, grades, students, or the school. Removing one group grant may leave broader access. Resolve listed dependencies before deleting a group or its permissions.
+3. **Start a reviewed session.** Start session reviews exact students, supervisor, purpose, and end time. It defaults to Supervision, even for a testing-named group. Choose Testing deliberately. Schedule testing creates a draft; save, preview, and apply actual dates separately.
+4. **Use My room for temporary claims.** Claim selected available students into one room across grades, with an explicit end time. Combine my supervision can review your own assignments together. Another supervisor’s students require that supervisor’s handoff, including when an administrator wants them. Adding students keeps the existing room deadline.
+5. **Review every Send.** Choose exact students and either an authorized staff room or a saved group and supervisor. Choose an existing eligible unscheduled session or create one, then review purpose, deadline, ownership, and each result. A receiving room does not require a saved group. Receiving staff do not accept a second transfer prompt.
+6. **Keep room ownership through bells.** My room students remain with its supervisor until the room’s deadline, release, or explicit handoff. A bell or a change in the underlying class does not silently return them. Dashboard Class, My room, and Observe are separate contexts; changing a view does not transfer students.
+7. **Observe without taking control.** Authorized administrators can Observe current classes and supervision without owner commands or a transfer of ownership. A current scheduled class can be observable before its teacher connects. Screenshot availability and freshness still depend on monitoring policy, sign-in, client support, and the relevant rollout; Observe is not a promise of fresh screenshots.
+8. **Release and change deadlines deliberately.** Review the exact roster for Release all or End room/session. Offline students can be released. Students return to an eligible current class or Available, and saved membership and history remain. Owners review unscheduled end-time changes separately; scheduled deadlines stay under scheduling.
+9. **Check scheduled work and outcomes.** Scheduled lists applied testing and scheduled-class coverage for the chosen school-local date, including failed or missed starts. Verify the supervisor’s actual Dashboard assignment and tiles at handoffs. Summary emails cover actual supervised intervals when reporting is enabled; missing observations and delivery failures remain distinct from successful supervision.
 
 [Open Supervision](/classpilot/coverage?entry=admin)
 
@@ -289,15 +266,13 @@ Define who can temporarily supervise students and preserve clear ownership throu
 
 **Who can use this:** Administrator or school administrator
 
-Keep operational health, instructional trends, and evidence workflows in their proper contexts.
+Distinguish completed-session adoption, setup health, and student safety reports.
 
-1. **Review completed-session adoption.** Open Reports → Adoption & health. The shared school-time filter defaults to Last 7 days. Current lessons appear after they end and their summaries are prepared. Adoption covers active official classes and saved observations; teacher counts exclude automatic scheduled reporting. Classes without activity remain listed, and unavailable observations show a dash. Sessions and recorded days use the school-local session end date, including the full retained summary for a session crossing midnight.
-2. **Review confirmed failures.** Needs attention lists retained session summaries whose generation has reached a terminal failure, including summaries for archived classes. Attempts show the actual recorded count. Retrying reports, failed email delivery, and missing browser updates do not create a failure here. View status opens that session’s authorized summary.
-3. **Inspect availability when needed.** Reporting availability starts collapsed. Coverage is total observed time divided by eligible time from ready summaries, not an average of percentages. Missing observations have an unknown cause; normal sleep or connectivity changes may explain them. Preparing, unavailable, and tracking-not-expected records stay distinct. View latest summary opens one completed session, while the class row describes the selected period.
-4. **Interpret optional details carefully.** Classroom tools count each recorded action once regardless of student targets; monitoring without actions is not counted. Chromebook reporting details show the latest versions observed in retained check-ins during completed class windows. Client counts do not establish Chromebook inventory, extension publication, or managed deployment adoption.
-5. **Resolve readiness findings.** Use IT Readiness for Google domain mismatches, reconnect requirements, staff identity findings, and extension deployment gaps.
-6. **Work safety cases.** Use Safety Center to review alerts in context, document a decision, and create evidence only when school procedure requires it.
-7. **Keep evidence scoped.** Evidence workflows preserve the authorized school, student, class, and time context. Export and share only through approved school processes. Request failures and data beyond retention are unavailable, never healthy zeros.
+1. **Read completed-session adoption.** Reports → Adoption & health defaults to Last 7 days. It uses retained completed official-class sessions and prepared summaries. Automatic scheduled reporting contributes to class observations but not Teachers with live sessions. Current lessons appear after completion and summary preparation.
+2. **Check failures and availability.** Needs attention shows terminal summary-generation failures, including retained archived-class sessions. Preparing reports, failed email delivery, and unavailable observations are separate. Coverage is observed time divided by eligible time from ready summaries, not an average of class percentages.
+3. **Interpret optional details.** Classroom tools count recorded actions, not every student target or passive monitoring. Client details show versions seen in retained class windows; these are not a Chromebook inventory or proof of Store publication or adoption. Retention can make a selected range incomplete.
+4. **Use IT Readiness for setup.** Review Google connector status, domain and staff-identity findings, check-ins, and Class Ownership Integrity. Follow the named repair destination and refresh. A clean readiness page cannot certify external Google policies or every classroom action.
+5. **Use Safety Center for cases.** Review safety concerns in their student and school context. Export evidence only through authorized school procedures. Missing or expired data stays unavailable rather than becoming a healthy zero.
 
 [Open Adoption & health](/classpilot/admin/analytics)
 
@@ -305,13 +280,13 @@ Keep operational health, instructional trends, and evidence workflows in their p
 
 **Who can use this:** Administrator or school administrator
 
-When turned on, this report shows observed browser time within the school's tracking policy and retained, computed dates.
+Read observed browser time within tracking policy and retained, computed dates.
 
-1. **Choose a scope and dates.** Open Reports → Monitored Browser Time. Entire school adds observed time across students. Grade uses current student grades; Official class uses recorded teaching-session attribution. Choose a grade, class or student before viewing that scope.
-2. **Read coverage before totals.** Today is Live and normally updates hourly. Final means the school day was successfully computed. Partial means some requested dates are missing, expired or in the future. Unavailable is not zero; successful empty days may show zero. The first available day depends on activation, successful computation and retention.
-3. **Interpret observed time.** This measures browser observations, not total device screen time, engagement or learning. Students observed is not enrollment. An idle browser may still check in. Instructional, Off-task and Unknown add to the observed total. Adoption & health uses completed class-session observations rather than this school-day measure.
-4. **Export with school authorization.** Export CSV downloads the selected report and records classpilot.usage.export in Audit logs. Teacher exports do not include this school reporting measure. Store exports according to your school's records policy.
-5. **Protect retained history.** Earlier uncomputed days cannot be assumed available. Changing tracking hours affects recomputation of today and yesterday. Cleanup students permanently deletes Monitored Browser Time history. If the report is not turned on yet, no action is needed.
+1. **Choose scope and dates.** Open Reports → Monitored Browser Time. Entire school adds observed time across students. Grade uses current grades; Official class uses recorded teaching-session attribution. Choose the requested grade, class, or student.
+2. **Read coverage first.** Today is Live and normally refreshes hourly. Final means that school day was computed successfully. Partial can include missing, expired, or future dates. Unavailable is not zero; a successfully computed empty day can be zero.
+3. **Interpret the measure.** This is observed browser activity, not total device screen time, engagement, or learning. Students observed is not enrollment. Instructional, Off-task, and Unknown sum to observed time. Temporary supervision can count for a student without an official-class attribution.
+4. **Export the current report.** Export CSV downloads the selected report and records the export in Audit logs. Keep the file under school records procedures. Teacher class exports do not include this school-day reporting measure.
+5. **Respect retained history.** The first available date depends on activation, successful computation, and retention; earlier days are not guaranteed. Tracking-hour changes affect recomputation of today and yesterday. Device and monitoring cleanup also permanently removes this report’s history.
 
 [Open Monitored Browser Time](/classpilot/admin/usage)
 
@@ -319,12 +294,13 @@ When turned on, this report shows observed browser time within the school's trac
 
 **Who can use this:** Administrator or school administrator
 
-Use Admin Panel → School operations → Safety Center. Destructive cleanup tools are separate under Settings → Data & maintenance.
+Review concerns, acknowledge notifications, and distinguish exact-tab safety actions from website policy.
 
-1. **Open the student report.** Review individual alerts, evidence, explanations, observations and delivery status. Severity provides context; every new distinct concern follows the same administrator email workflow. Repeated observations do not generate repeated initial emails.
-2. **Acknowledge or assess.** Acknowledge receipt to stop the single fifteen-minute follow-up. Mark an alert reviewed when you have assessed it. Assignment and review notes preserve who acted; closing a case requires a resolution note.
-3. **Approve an exact URL.** Stop alerts for this URL approves that precise page across the school. Other queries and fragments remain eligible. Revoke an approval under Approved URLs; this does not replay old emails or override a website block.
-4. **Block a website.** Review the displayed domain before saving a school-wide block. Saved and applied are separate states: disconnected or unsupported Chromebooks remain pending. AI detection itself never closes tabs.
+1. **Open the student report.** Review alerts, explanations, evidence, observations, notes, and delivery status. Each distinct concern follows administrator notification rules; repeated observations do not repeatedly send the same initial email.
+2. **Acknowledge, assess, and resolve.** Acknowledge current alerts records receipt and stops pending fifteen-minute follow-ups. Mark reviewed records assessment. Assignment is limited to active school administrators, and closing a case requires a resolution note.
+3. **Understand automatic safety action.** During normal monitored browsing, qualifying harmful-search or unsafe-page detection requests closure of the exact offending tab. A request is not confirmed closure; missing or stale targets never justify closing other tabs. This does not add a school-wide website block.
+4. **Approve only the reviewed URL.** Stop alerts for this URL approves that precise retained page school-wide and suppresses subsequent detection and automatic safety closure for it. Different paths, queries, or fragments can remain eligible. Revoke under Approved URLs; revocation does not replay old emails or override a website block.
+5. **Review a website block separately.** Block website shows the domain before saving a school policy. Saved and enforced are different states; school-wide enforcement needs the relevant rollout and compatible connected clients. A saved label is not proof that an individual tab closed. Email alerts without a trustworthy browser URL have no URL-approval or block action.
 
 [Open Safety Center](/classpilot/admin/safety)
 
@@ -332,12 +308,12 @@ Use Admin Panel → School operations → Safety Center. Destructive cleanup too
 
 **Who can use this:** Administrator; entitlement is granted by a super administrator
 
-Set up and review the ClassPilot email-safety add-on when the school is entitled.
+Configure the entitled Gmail safety add-on separately from roster imports.
 
-1. **Confirm entitlement.** A super administrator must grant the add-on to an active ClassPilot school before setup is available.
-2. **Authorize Workspace access.** Follow the setup wizard to add the displayed client ID and read-only Gmail scope in Google Admin domain-wide delegation.
-3. **Verify and enable.** Test with one school mailbox, then enable watches for eligible student addresses.
-4. **Review alerts.** Enabled email detections also appear in Safety Center and use its administrator notification workflow. Review the student report and preserve the audit trail; an email alert does not provide a browser URL to approve or block.
+1. **Confirm entitlement and server setup.** An active ClassPilot school needs the Email Monitoring add-on. If service-account configuration is missing, contact SchoolPilot support before setup.
+2. **Authorize the displayed Gmail access.** Use the Email Monitoring setup wizard’s client ID and read-only Gmail scope in Google Admin domain-wide delegation. This is separate from the read-only Directory/Classroom Workspace Roster Connector.
+3. **Verify, then enable.** Verify access to an authorized school mailbox before enabling. Review the watches-started and failed counts, monitored-mailbox errors, and roster resync results; enabled does not prove every mailbox is watched.
+4. **Review concerns and disable deliberately.** Email detections appear in Safety Center and retain the administrator notification and review trail. They do not supply a browser URL to approve or block. Disabling monitoring locally and revoking Google delegation are separate actions.
 
 [Open Email Monitoring](/classpilot/admin/email-monitoring)
 ## Support
@@ -348,14 +324,15 @@ Set up and review the ClassPilot email-safety add-on when the school is entitled
 
 **Who can use this:** Administrator or school administrator
 
-Troubleshoot from the least destructive check to the most consequential action.
+Use the displayed failure and the correct ownership boundary to recover service.
 
-1. **Identify the boundary.** Determine whether the problem is identity, Google connectivity, import validation, class authority, calendar policy, managed Chrome, or current student connection.
-2. **Refresh safe state.** Reconnect Google when required, correct source data, resync the affected class, or allow the managed Chromebook to check in again.
-3. **Repair configuration.** Verify the extension ID, managed policy, setup key, organizational-unit assignment, permissions, and school-local calendar windows.
-4. **Use lifecycle actions last.** Archive before delete when history must remain. Reset credentials or PINs only for the exact account. Record the reason for irreversible actions.
-5. **Escalate with safe evidence.** Provide timestamps, displayed status, extension version, accepted-capability state, and non-sensitive error text. Never include passwords, tokens, cookies, or redirect query strings.
+1. **Identify what failed.** Separate sign-in, Workspace connector, personal Classroom OAuth, roster validation, class authority, scheduling, Google managed policy, and the current Chromebook connection. IT Readiness combines useful findings but does not certify all of them.
+2. **Refresh the right source.** Re-verify the Workspace connector for Directory access; reconnect personal Google OAuth when its Classroom flow requests it. Correct the source record or mapping, then review the affected import again. Keep staff email corrections on the existing identity.
+3. **Check a missing student or stale screen.** Verify the student’s active school record, official class or current supervisor, sign-in, monitoring window, check-in, and extension version. Check Google policy on the device. A last screenshot is not evidence that the student is still connected.
+4. **Repair scheduling or ownership.** Review school-local dates, calendar closures, bells, applied profiles, and approved changes. Distinguish a profile deletion from application cancellation. Resolve Staff access transition and Class Ownership Integrity findings through their guided editors.
+5. **Reserve destructive cleanup for its stated purpose.** Device and monitoring cleanup permanently deletes the listed history and requires devices to register again. It is separate from removing a student from active rosters or removing staff school access, which retain historical records. Read the exact confirmation first.
+6. **Escalate with limited evidence.** Provide the school-local time, page and action, displayed error, relevant extension version and last check-in, and expected versus actual behavior. Include feature readiness only where displayed. Exclude passwords, PINs, keys, tokens, cookies, and sensitive redirect query strings.
 
-> **Check before continuing:** Delete, key rotation, account disablement, and bulk roster changes can interrupt active classes. Confirm the exact school and affected records before continuing.
+> **Check before continuing:** Key rotation, access removal, bulk changes, and monitoring-data cleanup can affect active work. Review their exact scope and outcome before retrying.
 
 [Open IT Readiness](/classpilot/admin/it-readiness)

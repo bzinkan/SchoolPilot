@@ -1,0 +1,302 @@
+{
+  "school-app-buttons": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/components/AppLibraryManager.jsx",
+      "schoolpilot-app/src/products/classpilot/components/AppButtonShared.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-apps.test.mjs",
+      "schoolpilot-app/scripts/classpilot-apps-browser.test.mjs"
+    ],
+    "notes": "Checked school-only editing, personal saved/favorite choices, website-rule scope, and preservation of existing Flight Path websites. Buttons do not establish account or client capability authority."
+  },
+  "admin-workspace": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/lib/adminNavigation.js",
+      "schoolpilot-app/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx",
+      "schoolpilot-app/src/products/classpilot/components/admin/AdminOverview.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-shell-browser.test.mjs",
+      "schoolpilot-app/scripts/admin-school-year.test.mjs"
+    ],
+    "notes": "Checked current destinations and navigation/draft guards. My Desk and discipline entry points remain shelved; Email monitoring is entitlement-dependent. Source review does not establish the exact frontend build serving production."
+  },
+  "school-year-and-calendar": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "docs/CLASSPILOT_SCHEDULING.md",
+      "schoolpilot-app/src/products/classpilot/components/ScheduleProfiles.jsx",
+      "schoolpilot-app/src/products/classpilot/components/admin/AdminOverview.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-school-year.test.mjs",
+      "schoolpilot-app/scripts/schedule-profiles-browser.test.mjs"
+    ],
+    "notes": "Checked distinct school-year, bell/rotation and calendar saves, school-local dates, full reviewed configuration, fixed-time versus period-based classes, and frozen recorded occurrences."
+  },
+  "launch-checklist": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Settings.jsx",
+      "schoolpilot-app/src/shared/components/GoogleRosterConnectorPanel.jsx",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-settings-browser.test.mjs",
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Checked school identity, enrollment-key/managed-policy setup and connector readiness. Publication, a successful save, source compatibility, and actual managed-Chromebook adoption are distinct. Verify the real student pilot and supported features."
+  },
+  "workspace-roster-connector": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/shared/components/GoogleRosterConnectorPanel.jsx",
+      "src/routes/google/rosterConnector.ts",
+      "https://developers.google.com/workspace/classroom/guides/key-concepts/domain-wide-delegation"
+    ],
+    "checks": [
+      "tests/google-roster-connector-transient.test.ts",
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Checked server setup/client/scopes, exact-domain delegated administrator, Directory and Classroom verification, displayed timestamps, and local disable versus Google revocation. Personal Classroom OAuth, OneRoster/Clever, and MailPilot use separate authorization paths. Root independently verified the current official delegation instructions."
+  },
+  "staff-and-access": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Admin.jsx",
+      "schoolpilot-app/src/shared/components/StaffAccessTransitionDialog.jsx",
+      "docs/STAFF_IDENTITY_LIFECYCLE_RUNBOOK.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs",
+      "tests/staff-identity-lifecycle.test.ts"
+    ],
+    "notes": "Checked immutable existing identity, same-name confirmation, former-staff reactivation, separate email/profile saves, renewed sign-in, multi-school central review, active-workflow blockers and explicit assignment replacements/removals. Historical records remain."
+  },
+  "students-and-pins": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Students.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Roster.jsx",
+      "src/routes/google/rosterConnector.ts"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/roster-review-browser.test.mjs",
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Checked manual/CSV/Classroom/Directory entry, connector requirement, PIN generation/reset and print/CSV/Excel exposure. School student records are separate from official Classes membership and Chromebook records; no student-device assignment workflow."
+  },
+  "chromebooks": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Roster.jsx",
+      "schoolpilot-app/src/products/classpilot/components/StudentSsoPolicyCard.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-sso-policy.test.mjs",
+      "schoolpilot-app/scripts/roster-review-browser.test.mjs"
+    ],
+    "notes": "Checked exact Chromebook Status columns and check-in labels: accepted capabilities are not displayed there. The preserved /classpilot/roster URL starts on Student Roster; choose Chromebook Status explicitly. Feature-specific preflight and effective Google policies are separate."
+  },
+  "classes-and-schedules": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "docs/CLASSPILOT_SCHEDULING.md",
+      "schoolpilot-app/src/products/classpilot/components/ScheduleProfiles.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Roster.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/schedule-profiles-browser.test.mjs",
+      "tests/classpilot-schedule-profiles.integration.test.ts"
+    ],
+    "notes": "Checked official teachers/rosters, recurring eligibility, planner inclusion/placement/testing, advisory versus application review, saved preview date versus applied dates, whole-application cancellation boundary, profile deletion preserving applied schedules, and separate eligible history removal."
+  },
+  "roster-integrations": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "docs/ROSTER_INTEGRATIONS.md",
+      "schoolpilot-app/src/products/classpilot/components/RosterIntegrations.jsx",
+      "schoolpilot-app/src/products/classpilot/components/RosterChangeReview.jsx"
+    ],
+    "checks": [
+      "tests/roster-integrations.test.ts",
+      "schoolpilot-app/scripts/roster-review-browser.test.mjs"
+    ],
+    "notes": "Checked full OneRoster versions, Clever district connection and reviewed first import, stable school identity, named reviewed changes, manual/source ownership, stale plans, partial progress, no omitted-student deactivation and held nightly snapshots. Vendor/provider pilot readiness is not inferred from source."
+  },
+  "schedule-change-operations": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/AdminScheduleChanges.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Settings.jsx",
+      "docs/CLASSPILOT_TODAY_SCHEDULE.md",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-schedule-changes.test.mjs",
+      "schoolpilot-app/scripts/admin-settings-browser.test.mjs"
+    ],
+    "notes": "Checked eligible pairs, dated approvals and cancellation before either effective start. Older one-day pair requests remain distinct from current teacher Today schedule period swaps and administrator all-day recovery. Today schedule is enabled per root live configuration verification."
+  },
+  "school-settings": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Settings.jsx",
+      "schoolpilot-app/src/products/classpilot/components/MonitoringHoursSettings.jsx",
+      "schoolpilot-app/src/products/classpilot/components/admin/SchoolDataMaintenance.jsx",
+      "docs/CLASSPILOT_SETTINGS_ORGANIZATION.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-settings-browser.test.mjs",
+      "tests/classpilot-monitoring-settings.test.ts"
+    ],
+    "notes": "Checked narrow explicit saves, canonical school identity, central copy including browser safety, key rotation, personal tools and destructive cleanup. Root verified afterHoursSafetyOnlyV1 and schoolWebsiteBlockEnforcementV1 off; shared teaching resources admitted for only one school. Selectable/stored policy is not rollout activation or client enforcement."
+  },
+  "google-workspace-policies": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx",
+      "src/routes/google/rosterConnector.ts",
+      "https://support.google.com/chrome/a/answer/1375678?hl=en",
+      "https://support.google.com/chrome/a/answer/2657289?hl=en",
+      "https://support.google.com/chrome/a/answer/6306504?hl=en"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Root checked current Google device, user/browser, and force-install documentation. Copy distinguishes ChromeOS device scope from user/enrolled-browser applicability, avoids compulsory universal Trusted status or unsupported Add new users absolutes, and allows up to 24 hours propagation. Readiness cannot certify external policies."
+  },
+  "student-sign-in-policy": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/components/StudentSsoPolicyCard.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Settings.jsx",
+      "docs/CLASSPILOT_SCHEDULED_CLASSROOM_ACTIVATION.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/classpilot-sso-policy.test.mjs"
+    ],
+    "notes": "Checked separate policy/server/Chromebook evidence, bounded providers and Clever-first destination choice. Root verified restrictionAuthPassThroughV1 limited to one school and lateSignInRestrictionSsoV1 off. Saved policy and a provider visit alone do not establish activation or successful late-sign-in recovery."
+  },
+  "dashboard-appearance": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Settings.jsx"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-settings-browser.test.mjs",
+      "schoolpilot-app/scripts/dashboard-theme-calendar.test.mjs"
+    ],
+    "notes": "Checked school-only Appearance save, teacher custom images, calendar/faith-holiday opt-in, automatic holiday end, kiosk background controls, fixed default/lock and separate compatible-extension sign-in gate behavior. No extension-adoption inference from a version or setting."
+  },
+  "coverage-administration": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/Coverage.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+      "schoolpilot-app/src/products/classpilot/components/SupervisionSessionDialog.jsx",
+      "src/services/classpilotSupervisionReview.ts",
+      "src/services/classpilotObservationAuthority.ts",
+      "docs/CLASSPILOT_SUPERVISION_ACTIVITY_SUMMARIES.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/supervision-session-review-browser.test.mjs",
+      "schoolpilot-app/scripts/coverage-supervision-workflow-browser.test.mjs",
+      "tests/classpilot-supervision-review.integration.test.ts"
+    ],
+    "notes": "Checked saved versus live setup, scoped permissions, temporary-room claims and room Send destinations, owner-only handoffs, preserved destination deadlines, room ownership across bells, exact release reviews, offline releases and read-only Observe authority. Root verified scheduledClassroomV1 on and screenshotReadOnlyObservationV1 off; no unconditional fresh Observe screenshot or five-second handoff promise. Summary capture/delivery remains separately enabled."
+  },
+  "analytics-readiness-safety": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/AdminAnalytics.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx",
+      "docs/CLASSPILOT_SAFETY_CENTER.md",
+      "CLAUDE.md"
+    ],
+    "checks": [
+      "tests/classpilot-adoption-health.integration.test.ts",
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Checked completed official-session adoption, actual live-starter counts, terminal failures versus delivery retries, observed/eligible coverage, action/client semantics, retained history, connector/ownership findings and separate safety-case evidence. No zero for unavailable data or fleet-adoption claim."
+  },
+  "monitored-browser-time": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "docs/CLASSPILOT_DIGITAL_USAGE.md",
+      "docs/CLASSPILOT_USAGE_ADMIN_PAGE.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/digital-usage.test.mjs",
+      "schoolpilot-app/scripts/digital-usage-browser.test.mjs"
+    ],
+    "notes": "Root verified Digital Usage and usage rollup on. Checked current-grade versus recorded-class attribution, unclassified temporary supervision, hourly Live versus Final/Partial/unavailable dates, retention, exports and cleanup. Observed browser time does not establish engagement or total device use."
+  },
+  "safety-center-review": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "docs/CLASSPILOT_SAFETY_CENTER.md",
+      "src/services/classpilotSafetyClose.ts",
+      "src/services/classpilotSafetyAction.ts"
+    ],
+    "checks": [
+      "tests/classpilot-safety-close.test.ts",
+      "schoolpilot-app/scripts/safety-center-browser.mjs"
+    ],
+    "notes": "Checked acknowledgements versus assessment, exact URL approval/revocation, automatic narrow offending-tab close requests during normal monitoring, lack of client-confirmed closure, and saved website policy versus enforcement. Root verified schoolWebsiteBlockEnforcementV1 off; no enforcement activation claim. MailPilot has no trustworthy browser URL action."
+  },
+  "email-monitoring": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/EmailMonitoring.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/EmailMonitoringSetup.jsx",
+      "docs/CLASSPILOT_SAFETY_CENTER.md",
+      "src/routes/google/rosterConnector.ts"
+    ],
+    "checks": [
+      "tests/mailpilot-safety-durability.integration.test.ts",
+      "schoolpilot-app/scripts/safety-center-browser.mjs"
+    ],
+    "notes": "Checked add-on entitlement, server credential warning, distinct read-only Gmail delegation, mailbox verification, watches/errors/resync, Safety Center review and local disable versus Google access revocation. Roster connector delegation grants no Gmail access."
+  },
+  "cleanup-and-recovery": {
+    "reviewedOn": "2026-11-18",
+    "basis": "released-source-verified",
+    "sources": [
+      "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx",
+      "schoolpilot-app/src/products/classpilot/pages/Roster.jsx",
+      "schoolpilot-app/src/products/classpilot/components/admin/SchoolDataMaintenance.jsx",
+      "docs/STAFF_IDENTITY_LIFECYCLE_RUNBOOK.md"
+    ],
+    "checks": [
+      "schoolpilot-app/scripts/admin-settings-browser.test.mjs",
+      "schoolpilot-app/scripts/staff-identity-contracts.test.mjs"
+    ],
+    "notes": "Checked distinct connector/OAuth/import/scheduling/device boundaries, safe current-state refresh, guided identity/ownership repair, current-screen versus check-in evidence and irreversible monitoring cleanup versus retained inactive account history. Do not solicit credentials or imply capabilities displayed on Chromebook Status."
+  }
+}

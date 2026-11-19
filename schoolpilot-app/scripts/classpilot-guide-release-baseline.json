@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-11-18",
+  "sourceSha": "f9d363c3eeeedc38bdeb0417b468841dc4977444",
+  "api": {
+    "basis": "released-source-verified",
+    "taskDefinition": "schoolpilot-production-api-emergency:234",
+    "imageDigest": "sha256:4a355a3dca82572bee065e85f87fdd540cec6aef9ddc1ec2f8533bce4a12b5a9",
+    "verification": "Read-only ECS describe-services and describe-task-definition; GIT_SHA and digest agree with the worker."
+  },
+  "worker": {
+    "taskDefinition": "schoolpilot-production-scheduler-worker:251",
+    "sourceSha": "f9d363c3eeeedc38bdeb0417b468841dc4977444",
+    "imageDigest": "sha256:4a355a3dca82572bee065e85f87fdd540cec6aef9ddc1ec2f8533bce4a12b5a9"
+  },
+  "frontend": {
+    "sourceSha": null,
+    "basis": "served-guide-content-compared",
+    "indexAsset": "https://school-pilot.net/assets/index-Lve3y50j.js",
+    "indexLastModified": "2026-11-18T22:26:42Z",
+    "teacherGuideAsset": "https://school-pilot.net/assets/TeacherGuide-B8l4jcn5.js",
+    "teacherGuideSha256": "1850abc47744a9a29df9b72e89aae4af9499a834b674d19fd167c8d494f2865f",
+    "adminGuideAsset": "https://school-pilot.net/assets/AdminGuide-DTce_Wtt.js",
+    "adminGuideSha256": "4798edaf6f5ca588814dc5d8ac4a2701243b425ccb6291ba841ac84e09c18bc4",
+    "comparison": "All titles, summaries and step bodies from the 14 teacher and 20 admin topics at sourceSha occur in the served guide assets. This checks the pre-edit guide content only.",
+    "limitations": "No source metadata on the served index. The local clean build has different entry/CSS hashes, so the complete frontend source identity and authenticated UI flows are not asserted."
+  },
+  "featureAvailability": {
+    "classToolsPhase": 0,
+    "classToolsPhaseEvidence": "CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON absent; released src/config/classpilotClassTools.ts defaults to phase 0.",
+    "schoolScoped": ["focusTabV1", "preciseRestrictionResourcesV1", "privateChatLifecycleV1", "restrictionAuthPassThroughV1", "sharedTeachingResources"],
+    "enabled": ["scheduledClassroomV1", "digitalUsage", "usageRollup", "todaySchedule"],
+    "disabled": ["lateSignInRestrictionSsoV1", "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "pollReplaySafeV1"],
+    "limitations": "These are deployment settings, not proof of per-device negotiated capability or successful enforcement. My Desk remains shelved even though retained backend base modes are on."
+  },
+  "extension": {
+    "basis": "unverified",
+    "limitations": "No fresh Store listing, uploaded ZIP identity, or managed-device adoption observation was taken. Feature instructions require current readiness in the app."
+  },
+  "productionActions": "Metadata and public asset reads only; no account, class, policy, roster or runtime mutations."
+}
