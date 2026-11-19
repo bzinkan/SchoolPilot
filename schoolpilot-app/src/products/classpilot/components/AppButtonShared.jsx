@@ -1,5 +1,4 @@
 import { useId, useState } from 'react';
-import { BookOpen, FileText, FolderOpen, GraduationCap, Layers, ListChecks, Presentation, Sheet } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -9,21 +8,22 @@ import { teachingToolsShouldBlock } from '../lib/teachingTools';
 import { appErrorMessage, appInitials } from '../lib/appLibrary';
 
 const ICONS = {
-  classroom: [GraduationCap, 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'],
-  docs: [FileText, 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200'],
-  slides: [Presentation, 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'],
-  sheets: [Sheet, 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200'],
-  forms: [ListChecks, 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-200'],
-  drive: [FolderOpen, 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200'],
-  ixl: [GraduationCap, 'bg-lime-100 text-lime-800 dark:bg-lime-950 dark:text-lime-200'],
-  quill: [BookOpen, 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200'],
+  classroom: '/app-icons/classroom.png',
+  docs: '/app-icons/docs.png',
+  slides: '/app-icons/slides.png',
+  sheets: '/app-icons/sheets.png',
+  forms: '/app-icons/forms.png',
+  drive: '/app-icons/drive.png',
+  ixl: '/app-icons/ixl.png',
+  quill: '/app-icons/quill.png',
 };
 
 export function AppIcon({ app }) {
+  const [failedIcon, setFailedIcon] = useState(null);
   const icon = ICONS[app.iconKey?.replace(/^google[-_]/, '')];
-  const Icon = app.kind === 'bundle' ? Layers : icon?.[0];
-  return <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${icon?.[1] || 'bg-muted text-muted-foreground'}`}>
-    {Icon ? <Icon className="h-5 w-5" /> : appInitials(app.name)}
+  const showIcon = icon && failedIcon !== icon;
+  return <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${showIcon ? 'bg-white' : 'bg-muted text-muted-foreground'}`}>
+    {showIcon ? <img src={icon} alt="" width={24} height={24} className="h-6 w-6 object-contain" decoding="async" onError={() => setFailedIcon(icon)} /> : appInitials(app.name)}
   </span>;
 }
 
