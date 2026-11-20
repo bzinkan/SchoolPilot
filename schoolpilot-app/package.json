@@ -55,6 +55,7 @@
     "test:passpilot-pass-data": "node --test scripts/passpilot-pass-data.test.mjs",
     "test:passpilot-times": "node --test scripts/passpilot-times-browser.test.mjs",
     "test:passpilot-returns": "node --test scripts/passpilot-return-browser.test.mjs",
+    "test:passpilot-indicators": "node --test scripts/passpilot-indicators-browser.test.mjs",
     "test:passpilot-reports-v2": "node --test scripts/passpilot-reports-v2-model.test.mjs scripts/passpilot-reports-v2-browser.test.mjs",
     "test:passpilot-kiosk-controller": "node --test scripts/passpilot-kiosk-controller.test.mjs",
     "test:passpilot-kiosk-controller-browser": "node scripts/passpilot-kiosk-controller-browser.mjs",

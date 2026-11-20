@@ -1,0 +1,6 @@
+{
+  "wifiSsid": "REPLACE_WITH_IT_APPROVED_2_4_GHZ_NETWORK",
+  "wifiPassword": "REPLACE_WITH_NETWORK_PASSWORD",
+  "apiUrl": "https://school-pilot.net/api/passpilot/indicators/state",
+  "categoryBit": 1
+}

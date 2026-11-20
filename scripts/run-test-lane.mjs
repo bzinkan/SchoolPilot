@@ -78,6 +78,7 @@ const DB_SERIAL = new Set([
   "classpilot-today-schedule.integration.test.ts",
   "classpilot-manual-start-switch.integration.test.ts",
   "classpilot-adoption-health.integration.test.ts",
+  "passpilot-indicators.integration.test.ts",
   "classpilot-delivery-batch.integration.test.ts",
   "classpilot-client-health.integration.test.ts",
   "tenant-context-reuse.integration.test.ts",

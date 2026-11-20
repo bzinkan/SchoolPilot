@@ -11,6 +11,7 @@ import staffAssignmentLifecycleRoutes from "./staffAssignmentLifecycle.js";
 import passRoutes from "./passpilot/passes.js";
 import kioskRoutes from "./passpilot/kiosk.js";
 import passpilotClassRoutes from "./passpilot/classes.js";
+import passpilotIndicatorRoutes from "./passpilot/indicators.js";
 import passpilotClassMigrationRoutes from "./passpilot/classMigration.js";
 import passpilotSettingsRoutes, {
   passpilotActiveGradeLevelsCompatibilityRouter,
@@ -390,6 +391,7 @@ router.use("/users", staffAssignmentLifecycleRoutes);
 router.use("/passpilot/passes", passRoutes);
 router.use("/passpilot/kiosk", kioskRoutes);
 router.use("/passpilot/classes", passpilotClassRoutes);
+router.use("/passpilot/indicators", passpilotIndicatorRoutes);
 router.use("/passpilot/admin/class-migration", passpilotClassMigrationRoutes);
 router.use("/passpilot/admin/settings", passpilotSettingsRoutes);
 // Steps aside (unknown-route 404) unless PASSPILOT_RULES_MODE is on and admitted.
