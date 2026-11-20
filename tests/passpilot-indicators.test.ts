@@ -13,12 +13,14 @@ function fixture() {
   const audits: AuditEntry[] = [];
   const service = createPasspilotIndicatorService({
     store,
+    listKiosks: async () => [],
+    resolveKioskTarget: async () => null,
     loadAuthority: async (scope) => {
       assert.deepEqual(scope, { schoolId: "school-1", userId: "teacher-1", classId: "class-1" });
       return authority;
     },
     withSchoolContext: async (schoolId, fn) => { assert.equal(schoolId, "school-1"); scopes++; return fn(); },
-    loadMask: async (pairing) => { reads++; assert.equal(pairing.userId, "teacher-1"); assert.equal(pairing.classId, "class-1"); return 5; },
+    loadMask: async (pairing) => { reads++; assert.ok("classId" in pairing); assert.equal(pairing.userId, "teacher-1"); assert.equal(pairing.classId, "class-1"); return 5; },
     audit: async (entry) => { audits.push(entry); if (failAudit) throw new Error("audit offline"); },
   });
   return { service, store, audits, authority: () => authority, setAuthority: (next: IndicatorAuthority) => { authority = next; }, setFailAudit: () => { failAudit = true; }, reads: () => reads, scopes: () => scopes };
@@ -54,4 +56,42 @@ it("does not expose an unaudited credential and rolls back its authority", async
   await assert.rejects(f.service.pair(owner, { classId: "class-1" }), /audit offline/);
   assert.ok(f.audits[0]?.entityId);
   assert.equal(await f.store.revoke(f.audits[0].entityId, owner.schoolId, owner.userId), false);
+});
+
+it("pairs an owned kiosk without a class and never returns its durable identity", async () => {
+  const kiosks = [{ kioskSessionId: "kiosk-session-1", className: null, lastSeenAt: "2026-11-20T12:00:00.000Z" }];
+  const target = { kioskDeviceId: "internal-device", kioskBindingGeneration: "1763640000.123456" };
+  const store = new PasspilotIndicatorStore({ redisConfigured: () => false, production: () => false });
+  const audits: AuditEntry[] = [];
+  let kioskMask: number | null = 1;
+  const service = createPasspilotIndicatorService({
+    store,
+    loadAuthority: async (scope) => {
+      assert.deepEqual(scope, owner);
+      return { schoolActive: true, licensed: true, staffActive: true, classActive: false, classAuthorized: false, classSource: "legacy_grades" };
+    },
+    listKiosks: async () => kiosks,
+    resolveKioskTarget: async (scope, id) => {
+      assert.deepEqual(scope, owner);
+      return id === kiosks[0]!.kioskSessionId ? target : null;
+    },
+    withSchoolContext: async (_schoolId, fn) => fn(),
+    loadMask: async (pairing) => {
+      assert.ok("kioskDeviceId" in pairing);
+      assert.equal(pairing.kioskDeviceId, target.kioskDeviceId);
+      assert.equal(pairing.kioskBindingGeneration, target.kioskBindingGeneration);
+      return kioskMask;
+    },
+    audit: async (entry) => { audits.push(entry); },
+  });
+
+  await assert.rejects(service.pair(owner, { kioskSessionId: "another-kiosk" }), { status: 403 });
+  const result = await service.pair(owner, { kioskSessionId: kiosks[0]!.kioskSessionId });
+  assert.deepEqual(Object.keys(result).sort(), ["expiresAt", "pairingId", "token"]);
+  assert.deepEqual(await service.listKiosks(owner), kiosks);
+  assert.deepEqual(await service.state(result.token), { version: 1, mask: 1, maxAgeSeconds: 30 });
+  assert.equal(JSON.stringify(audits).includes(target.kioskDeviceId), false);
+  assert.equal(JSON.stringify(audits).includes(target.kioskBindingGeneration), false);
+  kioskMask = null;
+  await assert.rejects(service.state(result.token), { status: 403 });
 });

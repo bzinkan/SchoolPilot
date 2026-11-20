@@ -104,7 +104,7 @@
     "test:classpilot-dashboard-load-state:part-2": "cross-env CLASSPILOT_DASHBOARD_TEST_PARTITION=2 node --test scripts/classpilot-dashboard-load-state.test.mjs",
     "test:dashboard-partition-inventory": "node --test scripts/dashboard-partition-inventory.test.mjs",
     "test:release-focused:shard-4": "npm run test:classpilot-apps && npm run test:classpilot-dashboard-load-state:part-2 && npm run test:classroom-actions-browser && npm run test:passpilot-reports-v2 && npm run test:passpilot-kiosk-theme && npm run test:classpilot-native-desktop && npm run test:classpilot-windows-browsers",
-    "test:release-focused:shard-5": "npm run test:classpilot-guides:browser",
+    "test:release-focused:shard-5": "npm run test:classpilot-guides:browser && npm run test:passpilot-indicators",
     "test:school-day-closure": "node --test scripts/school-day-closure-browser.test.mjs",
     "test:classpilot-apps": "node --test --test-concurrency=1 scripts/classpilot-apps.test.mjs scripts/classpilot-apps-browser.test.mjs"
   },

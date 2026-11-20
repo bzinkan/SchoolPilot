@@ -48,24 +48,29 @@ After this branch's API **and** web changes are deployed:
 
 1. Sign in as the teacher who owns the classroom kiosk.
 2. Open **`/passpilot/indicators`** on the same PassPilot website.
-3. Select the live class that the prototype will represent.
-4. If water is a custom destination, enter its **exact name**, including case.
-   Otherwise leave this field blank; the blue light then represents restroom.
+3. Choose **Follow a kiosk** and match the light pairing code shown on the
+   classroom kiosk. Open PassPilot on the kiosk if it does not appear, then
+   refresh the list. A kiosk can be paired between classes. **Follow one class**
+   is available for a fixed class.
+4. Leave water blank when the kiosk shares the built-in restroom option with water.
+   For a separate custom water destination, enter its exact name and case.
 5. Create the pairing and download its private JSON file on your setup computer.
    Save the pairing ID so you can revoke it later. It expires after 30 days.
 
-This prototype counts **your active passes issued for that exact class**,
-including your class-bound kiosk. It does not combine other teachers' passes,
-infer the class from student rosters, or follow a kiosk's automatic class changes.
-Pair it with the intended class before testing. An overdue pass remains active
-until returned; a timer expiring never makes an occupied destination clear.
+**Follow a kiosk** counts active passes issued by that kiosk under your account
+across scheduled class changes and routine kiosk restarts. An outstanding pass
+still counts if the kiosk moves to its next class. If the previous student
+cannot check in during the new class, mark the pass returned in PassPilot.
+The gateway displays unavailable when the kiosk has no active session under
+your account. If you have multiple tabs open on the same kiosk, releasing the
+last session stops updates until you resume. A transfer to another owner
+requires a new pairing. The light uses passes with recorded issuing-kiosk
+information.
 
-The pairing uses the school's current PassPilot class source. A legacy-class
-school can separately opt a kiosk into a ClassPilot class schedule; that kiosk
-then issues passes for ClassPilot groups, which a legacy-grade pairing does
-**not** count. Do not use this prototype for that mixed-source setup. The exact
-kiosk class must be selectable in the pairing page, and the real kiosk checkout
-test below must turn the light on before classroom use.
+**Follow one class** counts your active passes for the selected class in the
+school's current PassPilot class list. If the kiosk uses a separate ClassPilot
+schedule, select **Follow a kiosk** to count passes from that schedule. In
+either mode, a pass can stay active past its timer until returned or canceled.
 
 ## 3. Generate matching private settings
 
@@ -143,8 +148,10 @@ Bluetooth disconnection can show unavailable sooner than the 30-second limit.
 
 Open `/passpilot/indicators`, enter the pairing ID and revoke it. The gateway's
 last good status is allowed to live only for its remaining 30-second lease.
-Lost staff access, an inactive class/school/license, a class-source change, an
-expired pairing or Redis failure also prevents fresh status.
+Lost staff access, an inactive school or license, an expired pairing, or a
+Redis failure prevents fresh status. A class pairing also checks the selected
+class and its source. A kiosk pairing checks that you still own the kiosk's
+active session and that its remembered ownership is the same.
 
 For renewal, create a replacement pairing and rebuild the gateway with its new
 token. Preserve the existing `PP_LIGHT_NAME` and `PP_BLE_KEY_HEX` constants when

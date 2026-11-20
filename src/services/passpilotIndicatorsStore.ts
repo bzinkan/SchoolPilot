@@ -4,21 +4,41 @@ import { z } from "zod";
 export const INDICATOR_PAIRING_TTL_SECONDS = 30 * 86_400;
 const TOKEN_PATTERN = /^ppi_[A-Za-z0-9_-]{43}$/;
 const identifier = z.string().min(1).max(128);
-const pairingSchema = z.object({
+const classScope = z.object({
+  classId: identifier,
+  classSource: z.enum(["legacy_grades", "classpilot_groups"]),
+});
+const kioskScope = z.object({
+  kioskDeviceId: identifier,
+  kioskBindingGeneration: z.string().regex(/^\d{1,16}\.\d{6}$/),
+});
+const ownerScope = z.object({
+  schoolId: identifier,
+  userId: identifier,
+  waterCustomDestination: z.string().min(1).max(200).optional(),
+});
+const pairingHeader = {
   version: z.literal(1),
   pairingId: z.string().uuid(),
   tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
-  schoolId: identifier,
-  userId: identifier,
-  classId: identifier,
-  classSource: z.enum(["legacy_grades", "classpilot_groups"]),
-  waterCustomDestination: z.string().min(1).max(200).optional(),
+  schoolId: ownerScope.shape.schoolId,
+  userId: ownerScope.shape.userId,
+};
+const pairingTail = {
+  waterCustomDestination: ownerScope.shape.waterCustomDestination,
   issuedAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().nonnegative(),
-}).strict();
+};
+// Preserve the v1 class record's field order for Redis compare-and-delete.
+const pairingSchema = z.union([
+  z.object({ ...pairingHeader, ...classScope.shape, ...pairingTail }).strict(),
+  z.object({ ...pairingHeader, ...kioskScope.shape, ...pairingTail }).strict(),
+]);
 
 export type IndicatorPairing = z.infer<typeof pairingSchema>;
-export type IndicatorPairingScope = Pick<IndicatorPairing, "schoolId" | "userId" | "classId" | "classSource" | "waterCustomDestination">;
+export type IndicatorKioskTarget = z.infer<typeof kioskScope>;
+export type IndicatorClassSource = z.infer<typeof classScope>["classSource"];
+export type IndicatorPairingScope = z.infer<typeof ownerScope> & (z.infer<typeof classScope> | IndicatorKioskTarget);
 
 export function indicatorError(status: number, code: string, message: string): Error {
   return Object.assign(new Error(message), { status, code, expose: true });

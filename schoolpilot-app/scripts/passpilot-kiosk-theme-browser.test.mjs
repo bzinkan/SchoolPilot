@@ -13,6 +13,8 @@ import { createServer } from 'vite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const KIOSK_SESSION_ID = '5f0a1994-c142-40f8-9332-58af90d578a1';
+const LIGHT_PAIRING_LABEL = 'Light pairing code: D578A1';
 
 async function fixture(t) {
   const vite = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
@@ -32,11 +34,11 @@ function kioskServer(layout) {
     { id: 'ada', firstName: 'Ada', lastName: 'Student', studentIdNumber: '1234', canReturn: true },
     { id: 'max', firstName: 'Maximiliana-Jo', lastName: 'Long', studentIdNumber: '5678', canReturn: true },
   ];
-  const state = { theme: { kind: 'preset', preset: 'halloween' }, revision: 1, passes: [], assetStatus: 200, assetHeaders: [], requests: [] };
+  const state = { theme: { kind: 'preset', preset: 'halloween' }, sessionStatus: 'active', revision: 1, passes: [], assetStatus: 200, assetHeaders: [], requests: [] };
   const activePass = id => state.passes.find(pass => pass.studentId === id) ?? null;
   const snapshot = () => ({
     kioskStyle: layout, theme: state.theme, source: 'classpilot_groups', classId: 'class-a', className: 'Biology', kioskName: 'Hall Kiosk',
-    session: { id: 'session', status: 'active' }, revision: state.revision, assignmentRevision: 'assignment-1',
+    session: { id: KIOSK_SESSION_ID, status: state.sessionStatus }, revision: state.revision, assignmentRevision: 'assignment-1',
     students: students.map(student => ({ ...student, ...(activePass(student.id) ? { activePass: activePass(student.id) } : {}) })),
   });
   const handler = async route => {
@@ -46,7 +48,9 @@ function kioskServer(layout) {
     if (pathname.endsWith('/kiosk/auth')) return route.fulfill({ json: { token: 'fixture-token', expiresInSeconds: 900 } });
     if (pathname.endsWith('/kiosk/session')) {
       return route.fulfill({ json: { kioskStyle: layout, theme: state.theme,
-        session: { id: 'session', status: 'active', source: 'classpilot_groups', classId: 'class-a', className: 'Biology', kioskName: 'Hall Kiosk' } } });
+        session: state.sessionStatus === 'active'
+          ? { id: KIOSK_SESSION_ID, status: 'active', source: 'classpilot_groups', classId: 'class-a', className: 'Biology', kioskName: 'Hall Kiosk' }
+          : { id: KIOSK_SESSION_ID, status: 'unclaimed', claimCode: '678901' } } });
     }
     if (pathname.endsWith('/kiosk/snapshot')) return route.fulfill({ headers: { ETag: `"snapshot-${state.revision}"` }, json: snapshot() });
     if (pathname.includes('/kiosk/theme-asset/')) {
@@ -87,6 +91,8 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
   await page.getByRole('button', { name: /Student, Ada/ }).waitFor();
   assert.equal(await page.getByTestId('kiosk-theme-tag').count(), 2, 'one tag per roster row');
   assert.ok(await page.locator('header.kiosk-glass').isVisible());
+  await page.locator('header').getByText(LIGHT_PAIRING_LABEL, { exact: true }).waitFor({ timeout: 4000 });
+  assert.ok(!(await page.locator('body').innerHTML()).includes(KIOSK_SESSION_ID));
 
   // Sign out: the plate carries the first name, the copy is unchanged.
   await page.getByRole('button', { name: /Student, Ada/ }).click();
@@ -126,7 +132,7 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
   await page.waitForFunction(() => document.querySelector('[data-kiosk-theme]')?.style.getPropertyValue('--kiosk-image').startsWith('url("blob:'));
   assert.equal(state.assetHeaders.length, 1);
   assert.equal(state.assetHeaders[0]['x-kiosk-token'], 'fixture-token');
-  assert.equal(state.assetHeaders[0]['x-kiosk-session'], 'session');
+  assert.equal(state.assetHeaders[0]['x-kiosk-session'], KIOSK_SESSION_ID);
   assert.equal(state.assetHeaders[0]['x-kiosk-pin'], undefined);
 
   // A blocked image leaves the flat theme color; nothing breaks. The refusal
@@ -150,13 +156,15 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
 
 test('the badge kiosk puts its cards on glass and shows the plate on the confirmation', async t => {
   const { page, url, errors } = await fixture(t);
-  const { handler } = kioskServer('badge');
+  const { state, handler } = kioskServer('badge');
   await page.route('**/api/**', handler);
   await page.goto(`${url}/passpilot/kiosk?school=school-a`);
 
   await page.locator('[data-kiosk-theme="halloween"]').waitFor();
   await page.getByPlaceholder('Student ID').waitFor();
   assert.ok((await page.locator('.kiosk-glass').count()) >= 1, 'the scan card sits on glass');
+  await page.getByText(LIGHT_PAIRING_LABEL, { exact: true }).waitFor({ timeout: 4000 });
+  assert.ok(!(await page.locator('body').innerHTML()).includes(KIOSK_SESSION_ID));
 
   await page.getByPlaceholder('Student ID').fill('1234');
   await page.getByPlaceholder('Student ID').press('Enter');
@@ -173,5 +181,11 @@ test('the badge kiosk puts its cards on glass and shows the plate on the confirm
   await page.getByRole('button', { name: 'Check In (Return Pass)' }).click();
   await page.getByText('Happy Halloween, Ada! Pass returned.', { exact: true }).waitFor();
   assert.equal(await page.getByTestId('kiosk-name-plate').getAttribute('aria-label'), 'Ada, carved on a jack-o-lantern');
+
+  // An unclaimed kiosk has a different code for staff to claim it.
+  state.sessionStatus = 'unclaimed';
+  await page.reload();
+  await page.getByTestId('kiosk-claim-code').filter({ hasText: '678 901' }).waitFor();
+  assert.equal(await page.getByText('Light pairing code', { exact: false }).count(), 0);
   assert.deepEqual(errors, []);
 });

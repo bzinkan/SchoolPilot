@@ -37,6 +37,14 @@ export function createPasspilotIndicatorRouter(service: PasspilotIndicatorServic
 
   // Normal application CSRF applies to both staff mutations; no exemption.
   router.use("/pairings", ...staff);
+  router.get("/pairings/kiosks", async (req, res, next) => {
+    const schoolId = res.locals.schoolId;
+    if (!schoolId) return res.status(400).json({ error: "School context required" });
+    try {
+      const kiosks = await service.listKiosks({ schoolId, userId: req.authUser!.id });
+      return res.json({ kiosks });
+    } catch (error) { return next(error); }
+  });
   const pairingLimiter = rateLimit({
     windowMs: 60_000, limit: 10,
     keyGenerator: (req, res) => crypto.createHash("sha256").update(JSON.stringify([res.locals.schoolId, req.authUser!.id])).digest("hex"),
@@ -46,7 +54,7 @@ export function createPasspilotIndicatorRouter(service: PasspilotIndicatorServic
   });
   router.post("/pairings", pairingLimiter, async (req, res, next) => {
     const parsed = indicatorPairingRequestSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "A class and optional exact water destination are required" });
+    if (!parsed.success) return res.status(400).json({ error: "Choose one kiosk or class. The exact water destination is optional." });
     const schoolId = res.locals.schoolId;
     if (!schoolId) return res.status(400).json({ error: "School context required" });
     try {

@@ -6,14 +6,19 @@ The Chromebook supplies power only. The gateway independently uses Wi-Fi/HTTPS.
 
 ## HTTP
 
-Staff setup creates a revocable, 30-day opaque credential for exactly one school,
-author and authorized class. No staff session, kiosk PIN or student data is stored
-on the gateway. Every state read rechecks school lifecycle, PassPilot entitlement,
-active staff membership and class authority. Redis stores only the token hash and
-bounded pairing configuration; a Redis outage is unavailable, never clear.
+Staff setup creates a revocable, 30-day opaque credential for one school, one
+author, and either one owned kiosk or one authorized class. The gateway stores
+the pairing credential. Every state read rechecks school lifecycle, PassPilot
+entitlement, active staff membership and authority for the target. Redis stores
+the token hash and bounded pairing configuration. A Redis outage yields an
+unavailable state.
 
+`GET /api/passpilot/indicators/pairings/kiosks` (staff authentication) lists the
+caller's eligible kiosks as `{kiosks: [{kioskSessionId, className, lastSeenAt}]}`.
+The server resolves a session to the owned device and its binding generation.
 `POST /api/passpilot/indicators/pairings` (normal staff auth/CSRF) accepts
-`{classId, waterCustomDestination?}`. `waterCustomDestination` is an exact configured
+`{kioskSessionId, waterCustomDestination?}` or `{classId, waterCustomDestination?}`.
+`waterCustomDestination` is an exact configured
 custom-destination string, not an ID or substring match. Returns
 `{pairingId, token, expiresAt}` once. `DELETE /api/passpilot/indicators/pairings/:id`
 revokes only the caller's same-school pairing. The token is `ppi_` followed by
@@ -22,11 +27,12 @@ pairing UUID so deletion never places the bearer token in a URL.
 
 `GET /api/passpilot/indicators/state` uses `Authorization: Bearer <token>` and
 returns exactly `{version:1, mask:0..7, maxAgeSeconds:30}` with no-store.
-Blue is bit 1, office/yellow bit 2, nurse/red bit 4. Only active passes issued from
-the pairing's exact author/class/source count; overdue remains active. Unknown
-or changed authority/source is unavailable. The prototype is one selected class,
-not an automatic whole-school or current-roster aggregate. Active passes from
-other classrooms must never light this room. No student fields leave the API.
+Blue is bit 1, office/yellow bit 2, nurse/red bit 4. Only active passes issued by
+the pairing's exact author for its configured target count. A kiosk pairing
+uses the originating kiosk session across class changes and resumes. A class
+pairing checks the exact class and its source. Overdue passes count until they
+are returned or canceled. Loss of authority yields an unavailable state. The
+response contains only the aggregate mask, protocol version and freshness limit.
 
 Gateway polls every 5 seconds. An invalid response, non-200 status, TLS failure,
 timeout or auth failure cannot extend a last-known clear/occupied state. It may
