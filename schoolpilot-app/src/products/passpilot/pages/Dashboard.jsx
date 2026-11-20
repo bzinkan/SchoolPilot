@@ -11,6 +11,7 @@ import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
 import KioskScheduleSettings from '../components/KioskScheduleSettings';
 const Appointments = lazy(() => import('./Appointments'));
+const IndicatorSetup = lazy(() => import('./IndicatorSetup'));
 
 export default function Dashboard() {
   const { isLoading, user, isAdmin, isSchoolwideManager, isTeacher } = usePassPilotAuth();
@@ -43,6 +44,7 @@ export default function Dashboard() {
     billing: 'billing',
     settings: 'settings',
     appointments: 'appointments',
+    indicators: 'indicators',
   };
   const currentTab = tabBySegment[routeSegment];
   if (!currentTab) return <Navigate to="/passpilot/my-class" replace />;
@@ -63,6 +65,7 @@ export default function Dashboard() {
       case 'billing': return <BillingView />;
       case 'settings': return isTeacher || isAdmin ? <KioskScheduleSettings /> : <Navigate to="/passpilot/my-class" replace />;
       case 'appointments': return <Suspense fallback={<p role="status" className="p-4">Loading appointments…</p>}><Appointments /></Suspense>;
+      case 'indicators': return <Suspense fallback={<p role="status" className="p-4">Loading light setup…</p>}><IndicatorSetup key={`${user?.schoolId}:${user?.id}`} user={user} /></Suspense>;
       default: return <PassesTab user={user} />;
     }
   };

@@ -40,6 +40,7 @@ export function skipsWebSession(
   // the device/student boundary is expressed once.
   let path = req.path.startsWith("/api") ? req.path.slice(4) || "/" : req.path;
   const method = req.method.toUpperCase();
+  const indicatorStateRead = method === "GET" && path === "/passpilot/indicators/state";
   const classpilotKioskLaunchTicketRequest =
     method === "POST" && /^\/classpilot\/kiosk\/launch-ticket(?:\/preflight)?\/?$/.test(path);
   if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
@@ -92,6 +93,7 @@ export function skipsWebSession(
     classpilotKioskLaunchTicketRequest ||
     studentPollResponse ||
     publicKioskRequest ||
+    indicatorStateRead ||
     (method === "POST" && path === "/checkin/respond") ||
     path === "/school/status" ||
     (method === "POST" && path === "/register") ||
