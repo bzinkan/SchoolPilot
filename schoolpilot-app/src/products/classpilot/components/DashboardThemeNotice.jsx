@@ -23,8 +23,10 @@ export default function DashboardThemeNotice({ theme, schoolId, viewerId }) {
   const dismissed = dismissedKey === key || readDismissed(key);
   const setDismissed = () => setDismissedKey(key);
   const preferences = theme?.preferences;
-  const automatic = Boolean(theme?.themesEnabled && theme?.active && preferences && preferences.dashboardTheme == null
-    && preferences.effectiveDashboardTheme?.source === 'school' && !preferences.dashboardThemeLocked);
+  const defaultCalendar = preferences?.dashboardThemeDefaulted === true;
+  const inheritedCalendar = preferences?.dashboardTheme == null && preferences?.effectiveDashboardTheme?.source === 'school';
+  const automatic = Boolean(theme?.themesEnabled && theme?.active && preferences && (defaultCalendar || inheritedCalendar)
+    && !preferences.dashboardThemeLocked);
   const plain = useMutation({
     mutationFn: () => apiRequest('PATCH', '/classpilot/teacher/preferences',
       { expectedRevision: preferences.revision, dashboardTheme: { kind: 'none' } }, { headers: { 'X-School-Id': schoolId } }),
@@ -36,7 +38,7 @@ export default function DashboardThemeNotice({ theme, schoolId, viewerId }) {
   return (
     <div role="status" data-testid="dashboard-theme-notice"
       className="fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground shadow-lg">
-      <span>Your dashboard follows the school calendar. Change it any time in Appearance.</span>
+      <span>{defaultCalendar ? 'Your dashboard changes with the calendar, including Advent.' : 'Your dashboard follows the school calendar.'} Change it any time in Appearance.</span>
       <Button size="sm" variant="outline" onClick={() => { keep(); navigate('/classpilot/my-settings?section=appearance'); }}>Appearance</Button>
       <Button size="sm" variant="outline" disabled={plain.isPending} onClick={() => plain.mutate()} data-testid="dashboard-theme-notice-plain">Plain dashboard</Button>
       <Button size="sm" onClick={keep} data-testid="dashboard-theme-notice-keep">Keep it</Button>

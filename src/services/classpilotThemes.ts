@@ -24,7 +24,11 @@ export function imageThemeFit(theme: ImageDashboardTheme | { fit?: DashboardThem
 }
 /** The teacher's deliberate "plain dashboard": no theme anywhere, overridden only by the school lock. */
 export type NoneDashboardTheme = { kind: "none" };
-export type DashboardTheme = PresetDashboardTheme | ImageDashboardTheme | NoneDashboardTheme;
+/** The teacher deliberately follows the school's configured theme. */
+export type FollowSchoolDashboardTheme = { kind: "school" };
+export type DashboardTheme = PresetDashboardTheme | ImageDashboardTheme | NoneDashboardTheme | FollowSchoolDashboardTheme;
+/** A missing preference starts with the calendar, including Advent. */
+export const DEFAULT_TEACHER_DASHBOARD_THEME: Readonly<PresetDashboardTheme> = Object.freeze({ kind: "preset", preset: "advent", calendar: true });
 
 // Optional teacher label ("Who Dey"). Reserved later fields (palette, pattern,
 // accent) stay rejected by strict parsing until they are built, and so does the
@@ -39,6 +43,7 @@ export const dashboardThemeSchema: z.ZodType<DashboardTheme> = z.discriminatedUn
   presetTheme.extend({ kiosk }).strict(),
   z.object({ kind: z.literal("image"), imageAssetId: z.string().uuid(), fit: z.enum(DASHBOARD_THEME_IMAGE_FITS).optional(), name: themeName, kiosk }).strict(),
   z.object({ kind: z.literal("none") }).strict(),
+  z.object({ kind: z.literal("school") }).strict(),
 ]);
 
 /** Launch gate. Off: reads report it and theme writes are refused. */
