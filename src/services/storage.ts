@@ -25,7 +25,7 @@ import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { isLegacyTabFocusStart, focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
   readFocusRestriction, withoutClasspilotFocus } from "./classpilotFocus.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
-import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, notExists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import { classpilotNativeEnrollmentTokens, classpilotNativeInstallations, classpilotNativeSessions, type ClasspilotNativeSession } from "../schema/classpilotNative.js";
 import { classpilotWindowsGuards, classpilotWindowsBrowsers, classpilotWindowsPairingProofs, classpilotWindowsCommands, classpilotWindowsCommandTargets, type WindowsGuard, type WindowsBrowser } from "../schema/classpilotWindows.js";
@@ -4800,6 +4800,7 @@ export async function createLegacyPass(
         gradeId: resolvedGradeId,
         classpilotGroupId: null,
         classNameSnapshot: selectedGrade?.name ?? data.classNameSnapshot ?? null,
+        issuingKioskSessionId: authorization?.kiosk ? authorization.kioskSessionId ?? null : null,
         ruleOverrideCode: overriddenCode,
       })
       .returning();
@@ -5056,11 +5057,11 @@ const KIOSK_SESSION_RELEASED_RETENTION = sql`interval '24 hours'`;
 // days from last use, refreshed on every claim/retarget/resume.
 const KIOSK_DEVICE_BINDING_TTL = sql`interval '60 days'`;
 
-function kioskSessionLiveCondition(): SQL {
+export function kioskSessionLiveCondition(): SQL {
   return sql`((${passpilotKioskSessions.status} = 'unclaimed' AND ${passpilotKioskSessions.createdAt} > now() - ${KIOSK_SESSION_UNCLAIMED_TTL}) OR (${passpilotKioskSessions.status} = 'active' AND ${passpilotKioskSessions.lastSeenAt} > now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}))`;
 }
 
-function kioskDeviceBindingLiveCondition(): SQL {
+export function kioskDeviceBindingLiveCondition(): SQL {
   return sql`${passpilotKioskDevices.lastUsedAt} > now() - ${KIOSK_DEVICE_BINDING_TTL}`;
 }
 
@@ -5201,20 +5202,49 @@ async function assertKioskSessionCheckoutTarget(
 }
 
 async function sweepExpiredKioskSessions(schoolId: string): Promise<void> {
+  const expiredActive = and(
+    eq(passpilotKioskSessions.status, "active"),
+    sql`${passpilotKioskSessions.lastSeenAt} < now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}`
+  );
+  const outstandingPass = db.select({ id: passes.id }).from(passes).where(and(
+    eq(passes.schoolId, passpilotKioskSessions.schoolId),
+    eq(passes.teacherId, passpilotKioskSessions.teacherId),
+    eq(passes.issuingKioskSessionId, passpilotKioskSessions.id),
+    eq(passes.status, "active"),
+    eq(passes.issuedVia, "kiosk"),
+  ));
+
+  const expiredIssuer = and(eq(passpilotKioskSessions.schoolId, schoolId), expiredActive, exists(outstandingPass));
+  const [candidate] = await db.select({ id: passpilotKioskSessions.id })
+    .from(passpilotKioskSessions).where(expiredIssuer).limit(1);
+  if (candidate) {
+    await db.transaction(async (tx) => {
+      // The staff integrity trigger also takes this lock. Match checkout and
+      // resume, which acquire it before locking a kiosk session row.
+      if (!await lockStaffAssignmentLifecycleSchool(tx, schoolId)) return;
+      await takePasspilotClassLock(tx, schoolId);
+      // Keep the issuing kiosk for outstanding passes without keeping the
+      // expired session active for staff assignment or checkout authorization.
+      await tx.update(passpilotKioskSessions).set({
+        status: "released",
+        releasedAt: sql`now()`,
+        revision: sql`${passpilotKioskSessions.revision} + 1`,
+      }).where(expiredIssuer);
+    });
+  }
+
   await db
     .delete(passpilotKioskSessions)
     .where(
       and(
         eq(passpilotKioskSessions.schoolId, schoolId),
+        notExists(outstandingPass),
         or(
           and(
             eq(passpilotKioskSessions.status, "unclaimed"),
             sql`${passpilotKioskSessions.createdAt} < now() - ${KIOSK_SESSION_UNCLAIMED_TTL}`
           ),
-          and(
-            eq(passpilotKioskSessions.status, "active"),
-            sql`${passpilotKioskSessions.lastSeenAt} < now() - ${KIOSK_SESSION_ACTIVE_IDLE_TTL}`
-          ),
+          expiredActive,
           and(
             eq(passpilotKioskSessions.status, "released"),
             sql`${passpilotKioskSessions.releasedAt} < now() - ${KIOSK_SESSION_RELEASED_RETENTION}`
@@ -5263,6 +5293,11 @@ async function upsertKioskDeviceBinding(
         gradeId: target?.source === "legacy_grades" ? target.classId : null,
         classpilotGroupId:
           target?.source === "classpilot_groups" ? target.classId : null,
+        // A takeover starts a new binding, even if the kiosk later returns to
+        // the original owner. Same-owner updates keep the current generation.
+        createdAt: sql`CASE WHEN ${passpilotKioskDevices.teacherId} IS DISTINCT FROM excluded.teacher_id
+          THEN greatest(clock_timestamp(), ${passpilotKioskDevices.createdAt} + interval '1 microsecond')
+          ELSE ${passpilotKioskDevices.createdAt} END`,
         lastUsedAt: sql`now()`,
       },
     });
@@ -29295,6 +29330,7 @@ export async function createCanonicalPass(
         gradeId: null,
         classpilotGroupId: classId,
         classNameSnapshot: group.name,
+        issuingKioskSessionId: authorization.kiosk ? authorization.kioskSessionId ?? null : null,
         ruleOverrideCode: overriddenCode,
       })
       .returning();

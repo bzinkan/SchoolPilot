@@ -34,6 +34,7 @@ import { formatPassOverdueDuration, isPassOverdue } from "../passData";
 import { formatLivePassDuration } from "../passDuration";
 import { useKioskPollingController } from "../useKioskPollingController";
 import ReturnPassLookup from "../components/ReturnPassLookup";
+import { kioskLightPairingCode } from "../indicatorPairing";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -696,6 +697,10 @@ export default function KioskSimplePage() {
     setLoading(false);
   };
 
+  const lightPairingCode = sessionMode === true && session?.status === "active" ? kioskLightPairingCode(session.id) : "";
+  const lightPairingLabel = lightPairingCode ? (
+    <p className="mt-1 text-xs text-gray-400">Light pairing code: <span className="font-mono">{lightPairingCode}</span></p>
+  ) : null;
   const returnLookup = <div className="flex w-full justify-center p-4">
     <ReturnPassLookup key={JSON.stringify([schoolId, kioskPin, session?.id])} kiosk kioskClient={kioskClient}
       onReturned={refreshKiosk} onAuthorizationError={(response, body) => {
@@ -826,6 +831,7 @@ export default function KioskSimplePage() {
           <h1 className="text-3xl font-bold text-blue-400">
             {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
           </h1>
+          {lightPairingLabel}
           <p className="text-gray-300 text-lg">
             {configError?.code === "PASSPILOT_KIOSK_CLASS_INACTIVE"
               ? "The class on this kiosk is no longer active. Press Send to Kiosk in PassPilot to choose a new class."
@@ -900,9 +906,12 @@ export default function KioskSimplePage() {
             Back
           </button>
         )}
-        <h2 className="text-xl font-bold text-blue-400">
-          {displayClassName}{kioskName ? ` \u2014 ${kioskName}` : ''}
-        </h2>
+        <div className="min-w-0 text-center">
+          <h2 className="text-xl font-bold text-blue-400">
+            {displayClassName}{kioskName ? ` \u2014 ${kioskName}` : ''}
+          </h2>
+          {lightPairingLabel}
+        </div>
         <div className="w-16" />
       </header>
 

@@ -36,6 +36,7 @@ import {
 import { formatPassOverdueDuration, isPassOverdue } from "../passData";
 import { useKioskPollingController } from "../useKioskPollingController";
 import ReturnPassLookup from "../components/ReturnPassLookup";
+import { kioskLightPairingCode } from "../indicatorPairing";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -649,6 +650,10 @@ export default function KioskPage() {
       ? `Overdue by ${overdueDuration}`
       : null;
 
+  const lightPairingCode = sessionMode === true && session?.status === "active" ? kioskLightPairingCode(session.id) : "";
+  const lightPairingLabel = lightPairingCode ? (
+    <p className="mt-1 text-xs text-gray-400">Light pairing code: <span className="font-mono">{lightPairingCode}</span></p>
+  ) : null;
   const returnLookup = <div className="flex w-full justify-center p-4">
     <ReturnPassLookup key={JSON.stringify([schoolId, kioskPin, session?.id])} kiosk kioskClient={kioskClient}
       onReturned={refreshKiosk} onAuthorizationError={(response, body) => {
@@ -769,6 +774,7 @@ export default function KioskPage() {
           <h1 className="text-3xl font-bold text-blue-400">
             {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
           </h1>
+          {lightPairingLabel}
           <p className="text-gray-300 text-lg">
             Waiting for a class — press Send to Kiosk in PassPilot to choose one.
           </p>
@@ -781,14 +787,17 @@ export default function KioskPage() {
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white flex flex-col items-center justify-center p-8" {...kioskTheme.rootProps}>
       <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
       {returnLookup}
-      <h1 className="text-3xl font-bold mb-8 text-blue-400">
-        PassPilot Kiosk
-        {sessionMode === true && (session?.className || session?.kioskName) ? (
-          <span className="block mt-1 text-lg font-medium text-gray-400">
-            {[session?.className, session?.kioskName].filter(Boolean).join(" — ")}
-          </span>
-        ) : null}
-      </h1>
+      <header className="mb-8 text-center">
+        <h1 className="text-3xl font-bold text-blue-400">
+          PassPilot Kiosk
+          {sessionMode === true && (session?.className || session?.kioskName) ? (
+            <span className="block mt-1 text-lg font-medium text-gray-400">
+              {[session?.className, session?.kioskName].filter(Boolean).join(" — ")}
+            </span>
+          ) : null}
+        </h1>
+        {lightPairingLabel}
+      </header>
 
       <KioskActivityBanner activity={activity} />
       {/* Scan screen */}

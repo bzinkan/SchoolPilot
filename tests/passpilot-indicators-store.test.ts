@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { PasspilotIndicatorStore } from "../src/services/passpilotIndicatorsStore.js";
+import { INDICATOR_PAIRING_TTL_SECONDS, PasspilotIndicatorStore } from "../src/services/passpilotIndicatorsStore.js";
 
 const scope = { schoolId: "school-1", userId: "teacher-1", classId: "class-1", classSource: "legacy_grades" as const };
 
@@ -11,7 +11,9 @@ it("issues opaque, expiring, revocable credentials bound to an independent pairi
   assert.match(result.token, /^ppi_[A-Za-z0-9_-]{43}$/);
   assert.match(result.record.pairingId, /^[0-9a-f-]{36}$/);
   assert.equal(result.record.expiresAt, 1000 + 30 * 86400 * 1000);
-  assert.equal((await store.findByToken(result.token))?.classId, "class-1");
+  const stored = await store.findByToken(result.token);
+  assert.ok(stored && "classId" in stored);
+  assert.equal(stored.classId, "class-1");
   assert.equal(await store.findByToken(result.token + "x"), null);
   assert.equal(await store.revoke(result.record.pairingId, "school-2", "teacher-1"), false);
   assert.equal(await store.revoke(result.record.pairingId, "school-1", "teacher-2"), false);
@@ -49,4 +51,20 @@ it("persists only a digest, bounded configuration, and independent UUID in Redis
   assert.equal(JSON.stringify(commands).includes(issued.token), false);
   assert.match(JSON.stringify(commands), /2592000/);
   assert.equal(commands[0]?.[0], "EVAL");
+});
+
+it("revokes an existing Redis class pairing created before kiosk pairing was supported", async () => {
+  const issuedAt = 1000;
+  const pairingId = "ba775edb-8d95-48ab-9010-49c97915be8d";
+  const legacyRecord = JSON.stringify({
+    version: 1, pairingId, tokenHash: "a".repeat(64),
+    schoolId: scope.schoolId, userId: scope.userId, classId: scope.classId, classSource: scope.classSource,
+    waterCustomDestination: "Water", issuedAt, expiresAt: issuedAt + INDICATOR_PAIRING_TTL_SECONDS * 1000,
+  });
+  const store = new PasspilotIndicatorStore({
+    now: () => issuedAt + 1,
+    redisConfigured: () => true,
+    redis: async (args) => args[0] === "GET" ? legacyRecord : Number(args[5] === legacyRecord),
+  });
+  assert.equal(await store.revoke(pairingId, scope.schoolId, scope.userId), true);
 });

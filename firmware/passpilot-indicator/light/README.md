@@ -52,7 +52,8 @@ integration.
 
 - A slow white pulse means startup, disconnection, stale information, or an
   installation fault. White is **not an available restroom** signal.
-- Solid blue means at least one current restroom/water pass for the paired class.
+- Solid blue means at least one active restroom/water pass for the paired kiosk
+  or class.
 - Off means a fresh authenticated reading has no restroom/water pass. An unpowered
   board is also off; check the board's green power LED when diagnosing.
 - The light advertises `PP-Light-<suffix>`. Active BLE scanning is required because

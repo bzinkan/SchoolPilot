@@ -23,3 +23,18 @@ it("emits a mask query bound to school, issuing author, exact source class and a
     assert.doesNotMatch(query.sql, /expires_at|returned_at|issued_at/);
   }
 });
+
+it("scopes the kiosk mask to the same-school issuing session and a current owned binding in one query", () => {
+  const query = indicatorPassMaskQuery({
+    version: 1, pairingId: pairing.pairingId, tokenHash: pairing.tokenHash,
+    schoolId: "school-1", userId: "teacher-1", issuedAt: 1, expiresAt: 2592000001,
+    kioskDeviceId: "kiosk-device-1", kioskBindingGeneration: "1762450000.123456",
+  }).toSQL();
+  assert.match(query.sql, /"passpilot_kiosk_sessions"\."id" = "passes"\."issuing_kiosk_session_id"/);
+  assert.match(query.sql, /"passpilot_kiosk_sessions"\."school_id" = "passes"\."school_id"/);
+  assert.match(query.sql, /"passpilot_kiosk_sessions"\."teacher_id" = "passes"\."teacher_id"/);
+  assert.match(query.sql, /"passes"\."issued_via" = \$\d+/);
+  assert.match(query.sql, /having exists[\s\S]+"passpilot_kiosk_devices"[\s\S]+extract\(epoch from "passpilot_kiosk_devices"\."created_at"\)::text/);
+  assert.ok(query.params.includes("kiosk-device-1"));
+  assert.ok(query.params.includes("1762450000.123456"));
+});

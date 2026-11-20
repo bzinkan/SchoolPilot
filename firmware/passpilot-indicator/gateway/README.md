@@ -24,7 +24,7 @@ The selected Chromebook must continue supplying USB power in its kiosk/sleep set
    the light's local settings. The root CA must trust the API's actual certificate
    chain. The endpoint must be `https://<hostname>/api/passpilot/indicators/state`
    on default port 443; alternate paths, credentials, query strings and fragments
-   are deliberately rejected. The one-class API token expires in 30 days and must
+   are deliberately rejected. The pairing token expires in 30 days and must
    be replaced locally/reflashed when it expires or is revoked.
 3. Connect the ESP32's **Micro-B USB** port to the programming computer with a data
    cable. A power-only cable cannot flash. Install the Silicon Labs CP210x USB
@@ -102,9 +102,10 @@ These tests use an independent HMAC fixture to verify the message/tag contract;
 the actual ESP32 mbedTLS HMAC implementation additionally self-tests that fixture
 at device startup. Software compilation does not verify the self-test on hardware.
 
-With the actual boards, verify sign-out lights blue, return clears it, two active
-restroom/water passes keep blue until both return, other-class passes have no
-effect, and network/API/gateway power loss gives a white unavailable pulse within
+With the actual boards, verify sign-out lights blue, return clears it, and two
+active restroom/water passes keep blue until both return. Verify that passes
+outside the pairing target leave the light unaffected and network/API/gateway
+power loss gives a white unavailable pulse within
 30 seconds. Verify a wrong BLE key cannot turn the light off. Check the full room
 range, battery runtime, and the Chromebook's USB power while sleeping; these need
 a physical test and have no measured guarantees yet.
