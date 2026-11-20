@@ -16,7 +16,7 @@ import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
-import { DASHBOARD_THEME_LIBRARY_LIMIT, appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
+import { DASHBOARD_THEME_LIBRARY_LIMIT, DEFAULT_TEACHER_DASHBOARD_THEME, appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
   imageThemeFit, mergeSchoolAppearance, readSchoolAppearance, schoolThemeFor, type DashboardThemeAsset, type ImageDashboardTheme,
   type PresetDashboardTheme, type SchoolTheme } from "./classpilotThemes.js";
 import { themeAssetStoreConfigured } from "./classpilotThemeAssetStore.js";
@@ -105,7 +105,10 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   const appearance = readSchoolAppearance(school?.appearance);
   const themesEnabled = dashboardThemesEnabled() && appearance.teacherThemesEnabled;
   const uploadsEnabled = themesEnabled && appearance.teacherUploadsEnabled && themeAssetStoreConfigured();
-  const dashboardTheme = own?.dashboardTheme ?? null;
+  // Null legacy rows and missing rows are indistinguishable. They use the new
+  // personal default, except while the school lock is on or teacher themes are disabled.
+  const dashboardThemeDefaulted = own?.dashboardTheme == null && themesEnabled && !appearance.lockToSchoolTheme;
+  const dashboardTheme = own?.dashboardTheme ?? (dashboardThemeDefaulted ? DEFAULT_TEACHER_DASHBOARD_THEME : null);
   const library = readyLibrary(own?.dashboardThemeAssets);
   const chosen = dashboardTheme?.kind === "image" ? library.find(entry => entry.id === dashboardTheme.imageAssetId) ?? null : null;
   // The school theme today: the fixed default, else the calendar in the
@@ -117,7 +120,7 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   // applies, and nothing applies while the launch gate is off.
   const ownCounts = themesEnabled && dashboardTheme !== null && (dashboardTheme.kind !== "image" || (uploadsEnabled && chosen !== null));
   const effectiveDashboardTheme: PresetDashboardTheme | ImageDashboardTheme | SchoolTheme | null = !dashboardThemesEnabled() ? null
-    : appearance.lockToSchoolTheme || !ownCounts || dashboardTheme === null ? schoolTheme
+    : appearance.lockToSchoolTheme || !ownCounts || dashboardTheme === null || dashboardTheme.kind === "school" ? schoolTheme
       : dashboardTheme.kind === "none" ? null
         : dashboardTheme.kind === "image" ? { ...dashboardTheme, fit: imageThemeFit(dashboardTheme) } : dashboardTheme;
   // `dashboardThemeAsset` is the single-image field a client from before the
@@ -125,7 +128,7 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   const compat = chosen ?? library.at(-1) ?? null;
   return { schoolId: scope.schoolId, revision: own?.revision ?? 0, maxTabsPerStudent,
     schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent,
-    dashboardTheme, schoolDashboardTheme: appearance.schoolDefaultTheme, schoolTheme,
+    dashboardTheme, dashboardThemeDefaulted, schoolDashboardTheme: appearance.schoolDefaultTheme, schoolTheme,
     schoolCalendar: { autoCalendar: appearance.autoCalendar, holidays: appearance.calendarHolidays, leadDays: appearance.calendarLeadDays,
       starts: appearance.calendarStarts, signInGateTheme: appearance.signInGateTheme },
     dashboardThemeLocked: appearance.lockToSchoolTheme,
@@ -141,7 +144,9 @@ export function updateClasspilotTeacherPreferences(scope: SettingsActor, body: u
   const input = parse(personalSchema, body);
   // Presentation-only preference: no student command and nothing to invalidate.
   const patch = { ...(input.maxTabsPerStudent === undefined ? {} : { maxTabsPerStudent: input.maxTabsPerStudent }),
-    ...(input.dashboardTheme === undefined ? {} : { dashboardTheme: input.dashboardTheme }) };
+    // Older clients send null to select "follow the school". Preserve that
+    // contract explicitly now that an unset value receives the new default.
+    ...(input.dashboardTheme === undefined ? {} : { dashboardTheme: input.dashboardTheme === null ? { kind: "school" as const } : input.dashboardTheme }) };
   return db.transaction(async tx => {
     await authorize(tx, scope, false, true);
     const current = await preferenceDto(tx, scope);

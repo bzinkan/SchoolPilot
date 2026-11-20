@@ -1,5 +1,19 @@
 # ClassPilot Dashboard Themes — Implementation Plan
 
+> **Teacher default update (2026-11-20):** The historical default and `null`
+> semantics described below have changed. With teacher themes enabled and no
+> school lock, a missing or null personal preference now defaults to the
+> personal automatic calendar with Advent included. Existing non-null choices
+> stay in place. Because old null rows cannot distinguish an explicit school
+> choice from an unset preference, both receive the new default. Teachers can
+> explicitly follow the school by saving `{ kind: "school" }`; a legacy client
+> PATCH of `dashboardTheme: null` is converted to that explicit choice. Plain
+> remains `{ kind: "none" }`. The personal calendar's holidays and the school
+> calendar are separate: the school's existing default holiday list and the
+> student sign-in gate are unchanged. The school lock still overrides personal
+> choices; a kiosk bound to a teacher follows that teacher's effective choice,
+> while an unbound kiosk follows the school.
+
 Status: PLAN (no code yet). Owner: Brian. Drafted 2026-10-16 from the approved mock canvas
 (Design canvas "ClassPilot Dashboard Facelift", claude.ai/artifact/QyBZdcZuWWpJaTisCEZGGD).
 

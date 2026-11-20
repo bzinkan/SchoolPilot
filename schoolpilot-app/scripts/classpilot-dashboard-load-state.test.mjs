@@ -8882,6 +8882,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       headerOrnaments: document.querySelectorAll('[data-testid="header-ornament"]').length,
       headerHeight: Math.round(document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().height),
       notice: document.querySelectorAll('[data-testid="dashboard-theme-notice"]').length,
+      noticeText: document.querySelector('[data-testid="dashboard-theme-notice"]')?.innerText ?? '',
       imageFit: document.querySelector('[data-theme]')?.dataset.imageFit ?? null,
       underlay: (() => { const root = document.querySelector('[data-theme]'); return root ? getComputedStyle(root, '::before').position : null; })(),
       // Native select options must stay readable on the popup canvas under a theme.
@@ -8948,6 +8949,25 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   assert.deepEqual(automatic.headerUtilities, { palette: 0, mode: 0 });
   assert.deepEqual(automatic.tiles.map(geometry), plain.tiles.map(geometry), 'the notice is fixed to the viewport and moves nothing');
   assert.equal(automatic.document.headerHeight, plain.document.headerHeight);
+  // A new teacher's synthesized calendar announces itself and provides the same opt-out.
+  const defaultTheme = { kind: 'preset', preset: 'advent', calendar: true };
+  const defaultCalendar = await measure({ schoolId: SCHOOL_ID, revision: 0,
+    dashboardTheme: defaultTheme, dashboardThemeDefaulted: true, effectiveDashboardTheme: defaultTheme,
+    schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(defaultCalendar.document.notice, 1, 'the new automatic default announces itself');
+  assert.match(defaultCalendar.document.noticeText, /including Advent/);
+  assert.doesNotMatch(defaultCalendar.document.noticeText, /follows the school calendar/);
+  const savedCalendar = await measure({ schoolId: SCHOOL_ID, revision: 1,
+    dashboardTheme: defaultTheme, dashboardThemeDefaulted: false, effectiveDashboardTheme: defaultTheme,
+    schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(savedCalendar.document.notice, 0, 'a deliberately saved theme is not introduced as a default');
+  // A locked school with no theme must not fall back to the saved personal default.
+  const lockedPlain = await measure({ schoolId: SCHOOL_ID, revision: 0,
+    dashboardTheme: defaultTheme, dashboardThemeDefaulted: true, effectiveDashboardTheme: null,
+    dashboardThemeLocked: true, schoolTheme: null, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(lockedPlain.document.theme, null, 'the school lock suppresses a personal theme');
+  assert.equal(lockedPlain.document.dark, true);
+  assert.equal(lockedPlain.document.notice, 0);
   // Plain is the teacher's deliberate nothing: no theme, stored dark mode back, no notice.
   const none = await measure({ schoolId: SCHOOL_ID, revision: 5, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
     dashboardTheme: { kind: 'none' }, effectiveDashboardTheme: null, schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });

@@ -35,7 +35,10 @@ async function loadTeacher(schoolId: string, teacherId: string): Promise<KioskTe
 export async function kioskThemeFor(schoolId: string, teacherId: string | null, timeZone: string): Promise<KioskTheme | null> {
   if (!dashboardThemesEnabled()) return null;
   const appearance = await loadAppearance(schoolId);
-  const teacher = teacherId && !appearance.lockToSchoolTheme && appearance.teacherThemesEnabled ? await loadTeacher(schoolId, teacherId) : null;
+  // A bound teacher without a row is different from an unbound kiosk: the
+  // former receives the teacher default, the latter follows the school.
+  const teacher = teacherId && !appearance.lockToSchoolTheme && appearance.teacherThemesEnabled
+    ? (await loadTeacher(schoolId, teacherId) ?? { dashboardTheme: null, dashboardThemeAssets: [] }) : null;
   return resolveKioskTheme({ enabled: true, appearance, teacher, timeZone, storeConfigured: themeAssetStoreConfigured() });
 }
 

@@ -55,6 +55,7 @@ test('resolve returns a ready preset for a stored preset and null for everything
 
 test('describe and unavailable follow the stored value', () => {
   assert.equal(describeDashboardTheme(null), 'Follow the school');
+  assert.equal(describeDashboardTheme({ kind: 'school' }), 'Follow the school');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'christmas' }), 'Christmas');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'christmas', name: '  Ho ho ho ' }), 'Ho ho ho');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'gone' }), 'Unavailable theme');

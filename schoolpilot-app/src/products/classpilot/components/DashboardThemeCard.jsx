@@ -7,7 +7,7 @@ import { Label } from '../../../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { useAdminNavigationBlocker } from '../hooks/useAdminNavigation';
 import { teacherPreferencesKey, teachingToolsShouldBlock } from '../lib/teachingTools';
-import { DASHBOARD_THEME_IMAGE_FITS, DASHBOARD_THEME_IMAGE_FIT_LABELS, dashboardThemeAssetUrl, describeDashboardTheme, findDashboardThemePreset, isUnavailableDashboardTheme, normalizeImageFit, readyDashboardThemePresets, resolveDashboardTheme, resolveSchoolTheme } from '../../../shared/themes/presets';
+import { DASHBOARD_THEME_IMAGE_FITS, DASHBOARD_THEME_IMAGE_FIT_LABELS, dashboardThemeAssetUrl, describeDashboardTheme, isUnavailableDashboardTheme, normalizeImageFit, readyDashboardThemePresets, resolveDashboardTheme, resolveSchoolTheme } from '../../../shared/themes/presets';
 import { BACKGROUND_INPUT_TYPES, prepareBackgroundImage, sha256Hex } from '../../../shared/themes/backgroundImage';
 
 const headers = schoolId => ({ headers: { 'X-School-Id': schoolId } });
@@ -42,7 +42,7 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   // older server sends the single `dashboardThemeAsset` only.
   const assets = Array.isArray(incoming.dashboardThemeAssets) ? incoming.dashboardThemeAssets : incoming.dashboardThemeAsset ? [incoming.dashboardThemeAsset] : [];
   const libraryLimit = Number.isInteger(incoming.dashboardThemeLibraryLimit) ? incoming.dashboardThemeLibraryLimit : 5;
-  const storedPreset = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'image' ? 'image' : stored?.kind === 'none' ? 'none' : null;
+  const storedPreset = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'image' ? 'image' : stored?.kind === 'none' ? 'none' : stored?.kind === 'school' ? 'school' : null;
   const storedAssetId = stored?.kind === 'image' && typeof stored.imageAssetId === 'string' ? stored.imageAssetId : null;
   const storedFit = normalizeImageFit(stored?.fit);
   const storedName = typeof stored?.name === 'string' ? stored.name : '';
@@ -63,12 +63,16 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   const today = calendar ? resolveDashboardTheme({ kind: 'preset', preset: preset === 'advent' ? 'advent' : 'fall', calendar: true }, { timeZone, calendar: schoolCalendar }) : null;
   // What following the school shows today: the admin's fixed theme or the school calendar's pick.
   const schoolToday = resolveSchoolTheme(incoming, { timeZone });
+  const schoolFollowsCalendar = preset === 'school' && incoming.schoolTheme?.calendar === true;
+  const calendarChecked = calendar || schoolFollowsCalendar;
+  const adventChecked = schoolFollowsCalendar ? schoolCalendar?.holidays?.includes('advent') === true : preset === 'advent';
   const effectivePreset = preset === 'image' ? 'image' : preset === 'none' ? 'none' : calendar ? (preset === 'advent' ? 'advent' : (today?.id ?? 'fall')) : preset;
-  const personal = effectivePreset !== null && effectivePreset !== 'none';
+  const personal = effectivePreset !== null && effectivePreset !== 'none' && effectivePreset !== 'school';
   const nameValid = name.trim().length <= 40;
   const payloadTheme = () => {
     const label = { ...(name.trim() ? { name: name.trim() } : {}), ...(kiosk ? {} : { kiosk: false }) };
     if (effectivePreset === 'none') return { kind: 'none' };
+    if (effectivePreset === 'school') return { kind: 'school' };
     if (effectivePreset === 'image') return asset ? { kind: 'image', imageAssetId: asset.id, fit, ...label } : null;
     return effectivePreset ? { kind: 'preset', preset: effectivePreset, ...(calendar ? { calendar: true } : {}), ...label } : null;
   };
@@ -91,15 +95,16 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   }, onError: () => { if (alive.current) setNotice('The background could not be removed. Try again.'); } });
   const busy = save.isPending || remove.isPending;
   useAdminNavigationBlocker({ id: 'dashboard-theme', dirty, busy, shouldBlock: teachingToolsShouldBlock, onDiscard: () => setDraft(null) });
-  const choose = id => { setDraft({ baseline, preset: id, name, calendar: id === 'image' || id === 'none' || id === null ? false : calendar, kiosk, assetId, fit }); setNotice(''); };
+  const choose = id => { setDraft({ baseline, preset: id, name, calendar: id === 'image' || id === 'none' || id === 'school' || id === null ? false : calendar, kiosk, assetId, fit }); setNotice(''); };
   const chooseImage = id => { setDraft({ baseline, preset: 'image', name, calendar: false, kiosk, assetId: id, fit }); setNotice(''); };
   const setFit = next => { setDraft({ baseline, preset, name, calendar, kiosk, assetId, fit: normalizeImageFit(next) }); setNotice(''); };
-  const setCalendar = next => { setDraft({ baseline, preset: next && (preset === null || preset === 'image') ? (today?.id ?? 'fall') : preset, name, calendar: next, kiosk, assetId, fit }); setNotice(''); };
+  const setCalendar = next => { setDraft({ baseline, preset: next ? (preset === null || preset === 'none' || preset === 'school' || preset === 'image' ? 'advent' : preset) : 'none', name, calendar: next, kiosk, assetId, fit }); setNotice(''); };
+  const setAdvent = next => { setDraft({ baseline, preset: next ? 'advent' : 'fall', name, calendar: true, kiosk, assetId, fit }); setNotice(''); };
   return <div className="space-y-5">
     {isUnavailableDashboardTheme(stored) && <p role="status" className="text-sm text-muted-foreground" data-testid="dashboard-theme-unavailable">Your saved theme is no longer available, so your dashboard follows the school.</p>}
     <fieldset disabled={busy}><legend className="mb-2 text-sm font-medium">Preloaded themes</legend>
       <div role="radiogroup" aria-label="Preloaded themes" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <ThemeOption id={null} label="Follow the school calendar" artwork={schoolToday?.artwork} hint={schoolToday ? `Today: ${schoolToday.label}` : 'No school theme today'} selected={preset === null && !calendar} onChoose={choose} />
+        <ThemeOption id={null} label="Follow the school calendar" artwork={schoolToday?.artwork} hint={schoolToday ? `Today: ${schoolToday.label}` : 'No school theme today'} selected={preset === 'school' && !calendar} onChoose={() => choose('school')} />
         {readyDashboardThemePresets().map(option => <ThemeOption key={option.id} id={option.id} label={option.label} artwork={option.artwork} selected={preset === option.id} onChoose={choose} />)}
         <ThemeOption id="none" label="Plain, no theme" hint="Light or dark mode, nothing else" selected={preset === 'none'} onChoose={choose} />
       </div>
@@ -119,10 +124,11 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
         <input type="radio" name="dashboard-theme-fit" value={option} checked={fit === option} data-testid={`radio-dashboard-theme-fit-${option}`} onChange={() => setFit(option)} />
         {DASHBOARD_THEME_IMAGE_FIT_LABELS[option]}<span className="text-xs text-muted-foreground">{FIT_HINTS[option]}</span></label>)}
     </fieldset>}
-    {preset !== 'image' && preset !== 'none' && <div className="space-y-2 rounded-lg border p-3">
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-calendar" checked={calendar} disabled={busy} onChange={event => setCalendar(event.target.checked)} />Follow the calendar: switch themes automatically by holiday and season</label>
-      {calendar && <label className="flex items-center gap-2 pl-6 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-advent" checked={preset === 'advent'} disabled={busy} onChange={event => choose(event.target.checked ? 'advent' : (today?.id ?? 'fall'))} />Include Advent (Catholic calendar)</label>}
-      {calendar && today && <p className="pl-6 text-sm text-muted-foreground" data-testid="dashboard-theme-today">Today: {findDashboardThemePreset(today.id)?.label}</p>}
+    {preset !== 'image' && <div className="space-y-2 rounded-lg border p-3">
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-calendar" checked={calendarChecked} disabled={busy} onChange={event => setCalendar(event.target.checked)} />Follow the calendar: switch themes automatically by holiday and season</label>
+      {calendarChecked && <label className="flex items-center gap-2 pl-6 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-advent" checked={adventChecked} disabled={busy} onChange={event => setAdvent(event.target.checked)} />Include Advent (Catholic calendar)</label>}
+      {calendarChecked && <p className="pl-6 text-sm text-muted-foreground">{schoolFollowsCalendar ? 'Changing Advent uses your personal calendar, which includes all other holidays.' : 'Your personal calendar includes all other holidays.'}</p>}
+      {calendarChecked && (schoolFollowsCalendar ? schoolToday : today) && <p className="pl-6 text-sm text-muted-foreground" data-testid="dashboard-theme-today">Today: {(schoolFollowsCalendar ? schoolToday : today).label}</p>}
     </div>}
     <div className="max-w-sm space-y-2"><Label htmlFor="dashboard-theme-name">Name it (optional)</Label>
       <Input id="dashboard-theme-name" data-testid="input-dashboard-theme-name" value={name} maxLength={40} placeholder="Who Dey" disabled={busy || !personal}

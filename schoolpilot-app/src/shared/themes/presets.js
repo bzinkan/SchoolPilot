@@ -107,7 +107,7 @@ export function isUnavailableDashboardTheme(theme) {
 }
 
 export function describeDashboardTheme(theme) {
-  if (!theme || typeof theme !== 'object') return 'Follow the school';
+  if (!theme || typeof theme !== 'object' || theme.kind === 'school') return 'Follow the school';
   if (theme.kind === 'none') return 'Plain, no theme';
   if (typeof theme.name === 'string' && theme.name.trim()) return theme.name.trim();
   if (theme.kind === 'preset') return (theme.calendar === true ? 'Calendar: ' : '') + (findDashboardThemePreset(theme.preset)?.label || 'Unavailable theme');

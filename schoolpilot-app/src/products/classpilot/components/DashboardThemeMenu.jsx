@@ -30,7 +30,7 @@ export default function DashboardThemeMenu({ theme, schoolId, viewerId }) {
   });
   if (!themesEnabled || !preferences) return null;
   const stored = preferences.dashboardTheme;
-  const currentId = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'none' ? 'none' : null;
+  const currentId = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'none' ? 'none' : stored?.kind === 'school' ? 'school' : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -47,9 +47,9 @@ export default function DashboardThemeMenu({ theme, schoolId, viewerId }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>Dashboard theme</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => { if (currentId !== null) save.mutate(null); }} data-testid="dashboard-theme-option-default">
+        <DropdownMenuItem onSelect={() => { if (currentId !== 'school') save.mutate({ kind: 'school' }); }} data-testid="dashboard-theme-option-default">
           <span className="flex-1">Follow the school calendar</span>
-          {currentId === null ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+          {currentId === 'school' ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
         </DropdownMenuItem>
         {readyDashboardThemePresets().map(preset => (
           <DropdownMenuItem key={preset.id} onSelect={() => { if (currentId !== preset.id) save.mutate({ kind: 'preset', preset: preset.id }); }}

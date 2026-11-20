@@ -62,7 +62,7 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', store
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   if (storedMode) await page.addInitScript(mode => localStorage.setItem('sp_theme', mode), storedMode);
   if (route.startsWith('/classpilot/my-settings/manual-today')) await page.clock.setFixedTime(new Date('2026-10-30T18:00:00.000Z'));
-  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
+  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme ?? { kind: 'preset', preset: 'advent', calendar: true }, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: theme ?? { kind: 'preset', preset: 'advent', calendar: true }, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
   state.manualToday = { schoolDate: '2026-10-30', timezone: 'America/New_York', resumesOn: '2026-10-31', resumesAt: '2026-10-31T04:00:00.000Z',
@@ -782,7 +782,7 @@ test('light and dark mode stays in Appearance and preserves the saved preference
 });
 
 test('Appearance saves a personal dashboard theme through the preference writer and hides choices when themes are off', async () => {
-  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance' });
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance', theme: { kind: 'school' } });
   try {
     await page.getByTestId('card-dashboard-theme').waitFor();
     await page.getByText('Preloaded themes', { exact: true }).waitFor();
@@ -803,7 +803,7 @@ test('Appearance saves a personal dashboard theme through the preference writer 
     await page.getByText('Unsaved theme', { exact: true }).waitFor();
     await page.getByTestId('button-save-dashboard-theme').click();
     await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
-    assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 1, dashboardTheme: null });
+    assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 1, dashboardTheme: { kind: 'school' } });
     assert.equal(await page.getByTestId('dashboard-theme-hint-default').textContent(), 'No school theme today');
     // Plain is its own saved choice, distinct from following the school.
     await page.getByTestId('dashboard-theme-choice-none').click();
@@ -824,6 +824,102 @@ test('Appearance saves a personal dashboard theme through the preference writer 
     assert.deepEqual(writes(off.state), []);
     assert.deepEqual(off.state.errors, []);
   } finally { await off.page.close(); }
+});
+
+test('default calendar and Advent can each be turned off and stay off after reload', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance' });
+  try {
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    await page.clock.setFixedTime(new Date('2026-12-03T18:00:00.000Z'));
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    const calendar = page.getByTestId('checkbox-dashboard-theme-calendar');
+    const advent = page.getByTestId('checkbox-dashboard-theme-advent');
+    assert.equal(await calendar.isChecked(), true);
+    assert.equal(await advent.isChecked(), true);
+    assert.deepEqual(writes(state), [], 'defaults are displayed without a write');
+    await advent.uncheck();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.equal(state.preference.dashboardTheme.calendar, true);
+    assert.notEqual(state.preference.dashboardTheme.preset, 'advent');
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await calendar.isChecked(), true);
+    assert.equal(await advent.isChecked(), false);
+    await calendar.uncheck();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(state.preference.dashboardTheme, { kind: 'none' });
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await calendar.isChecked(), false);
+    assert.equal(await advent.count(), 0);
+    await calendar.check();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(state.preference.dashboardTheme, { kind: 'preset', preset: 'advent', calendar: true });
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('school calendar selection shows its active settings and can be opted out of', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance', theme: { kind: 'school' } });
+  try {
+    state.preference.schoolTheme = { kind: 'preset', preset: 'fall', calendar: true, source: 'school' };
+    state.preference.schoolCalendar.holidays.push('advent');
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await page.getByTestId('dashboard-theme-choice-default').getAttribute('aria-checked'), 'true');
+    const calendar = page.getByTestId('checkbox-dashboard-theme-calendar');
+    const advent = page.getByTestId('checkbox-dashboard-theme-advent');
+    assert.equal(await calendar.isChecked(), true);
+    assert.equal(await advent.isChecked(), true);
+    await page.getByText('Changing Advent uses your personal calendar, which includes all other holidays.', { exact: true }).waitFor({ timeout: 1000 });
+    await advent.uncheck();
+    await page.getByText('Your personal calendar includes all other holidays.', { exact: true }).waitFor();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.equal(state.preference.dashboardTheme.calendar, true);
+    assert.notEqual(state.preference.dashboardTheme.preset, 'advent');
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await calendar.isChecked(), true);
+    assert.equal(await advent.isChecked(), false);
+    await page.getByText('Your personal calendar includes all other holidays.', { exact: true }).waitFor();
+    await page.getByTestId('dashboard-theme-choice-default').click();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(state.preference.dashboardTheme, { kind: 'school' });
+    await calendar.uncheck();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(state.preference.dashboardTheme, { kind: 'none' });
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('following a fixed or disabled school theme does not show an automatic calendar as active', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance', theme: { kind: 'school' } });
+  try {
+    state.preference.schoolTheme = { kind: 'preset', preset: 'christmas', source: 'school' };
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await page.getByTestId('dashboard-theme-choice-default').getAttribute('aria-checked'), 'true');
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-calendar').isChecked(), false);
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-advent').count(), 0);
+    assert.equal(await page.getByTestId('dashboard-theme-hint-default').textContent(), 'Today: Christmas');
+    state.preference.schoolTheme = null;
+    state.preference.schoolCalendar.autoCalendar = false;
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route: '/classpilot/my-settings?section=appearance', role: 'teacher' })}`);
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await page.getByTestId('dashboard-theme-choice-default').getAttribute('aria-checked'), 'true');
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-calendar').isChecked(), false);
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-advent').count(), 0);
+    assert.equal(await page.getByTestId('dashboard-theme-hint-default').textContent(), 'No school theme today');
+    assert.deepEqual(writes(state), []);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
 });
 
 const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');

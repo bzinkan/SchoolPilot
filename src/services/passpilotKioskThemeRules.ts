@@ -15,7 +15,7 @@
 // Calendar mode is resolved here, in the school's time zone, so the kiosk only
 // ever receives a concrete preset.
 
-import { concreteSchoolPreset, imageThemeFit, schoolThemeFor, type DashboardTheme, type DashboardThemeAsset, type DashboardThemeImageFit,
+import { DEFAULT_TEACHER_DASHBOARD_THEME, concreteSchoolPreset, imageThemeFit, schoolThemeFor, type DashboardTheme, type DashboardThemeAsset, type DashboardThemeImageFit,
   type DashboardThemePresetId, type PresetDashboardTheme, type SchoolAppearance } from "./classpilotThemes.js";
 import { calendarPresetFor, localDateParts, teacherCalendarHolidays } from "./classpilotThemeCalendar.js";
 
@@ -62,9 +62,10 @@ export function resolveKioskTheme(inputs: KioskThemeInputs): KioskTheme | null {
   const school = schoolThemeFor(appearance, { now, timeZone });
   const schoolDefault: KioskTheme | null = school ? { kind: "preset", preset: concreteSchoolPreset(appearance, school, { now, timeZone }) } : null;
   if (appearance.lockToSchoolTheme) return schoolDefault;
-  const own = teacher?.dashboardTheme ?? null;
+  const own = teacher ? (teacher.dashboardTheme ?? DEFAULT_TEACHER_DASHBOARD_THEME) : null;
   if (own && appearance.teacherThemesEnabled) {
     if (own.kind === "none") return null;
+    if (own.kind === "school") return schoolDefault;
     if (own.kiosk !== false) {
       if (own.kind === "preset") return concreteTeacherPreset(own, appearance, timeZone, now);
       if (appearance.teacherUploadsEnabled && appearance.kioskCustomBackgrounds && inputs.storeConfigured

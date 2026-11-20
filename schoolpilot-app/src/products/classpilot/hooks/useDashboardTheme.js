@@ -21,7 +21,10 @@ export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone
   });
   const preferences = query.data ?? null;
   const themesEnabled = preferences?.dashboardThemesEnabled === true;
-  const active = resolveDashboardTheme(preferences?.effectiveDashboardTheme ?? preferences?.dashboardTheme,
+  // An explicit null effective theme is authoritative (for example, a school
+  // lock to a plain dashboard); only older responses omit this field entirely.
+  const effectiveTheme = preferences?.effectiveDashboardTheme === undefined ? preferences?.dashboardTheme : preferences.effectiveDashboardTheme;
+  const active = resolveDashboardTheme(effectiveTheme,
     { enabled: themesEnabled, timeZone, schoolId, uploadsEnabled: preferences?.dashboardThemeUploadsEnabled === true, calendar: preferences?.schoolCalendar ?? null });
   const { setDashboardThemeActive } = useTheme();
   const activeId = active?.id ?? null;

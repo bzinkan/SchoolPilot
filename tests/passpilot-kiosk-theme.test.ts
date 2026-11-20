@@ -20,6 +20,13 @@ const resolve = (inputs: Partial<Parameters<typeof resolveKioskTheme>[0]>) =>
   resolveKioskTheme({ appearance: appearance(), teacher: null, timeZone: "America/New_York", now: NOW, enabled: true, storeConfigured: true, ...inputs });
 
 describe("PassPilot kiosk theme resolution", () => {
+  it("defaults a bound teacher with no preference to the Advent calendar, leaving unbound kiosks on the school calendar", () => {
+    assert.deepEqual(resolve({ teacher: teacher({}), now: DEC_10 }), { kind: "preset", preset: "advent" });
+    assert.deepEqual(resolve({ now: DEC_10 }), { kind: "preset", preset: "winter" });
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "school" } }), now: DEC_10 }), { kind: "preset", preset: "winter" });
+    assert.deepEqual(resolve({ teacher: teacher({}), now: DEC_10, appearance: appearance({ lockToSchoolTheme: true }) }), { kind: "preset", preset: "winter" });
+    assert.deepEqual(resolve({ teacher: teacher({}), now: DEC_10, appearance: appearance({ teacherThemesEnabled: false }) }), { kind: "preset", preset: "winter" });
+  });
   it("shows nothing while the launch gate is off, whatever is stored", () => {
     assert.equal(resolve({ enabled: false, teacher: teacher({ dashboardTheme: { kind: "preset", preset: "halloween" } }),
       appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }), null);
