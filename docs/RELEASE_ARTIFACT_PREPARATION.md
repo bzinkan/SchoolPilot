@@ -178,17 +178,40 @@ deployment or the retired rehearsal flags or paused capacity executor.
 
 ## Exact image consumption and failed operations
 
-After a separate reviewed deployment authorization, the current ordinary
-backend path can consume the published main image with
+After a separate reviewed deployment authorization, the signed CI path can
+consume the published main image with
 `--immutable-image-sha <full-sha> --immutable-image-digest <actual-digest>`.
 It requires clean main equal to origin/main, green main push CI and exact full
-SHA tag resolution to that digest. It rejects `--tag`, same-image and rehearsal
-reuse combinations. The existing default legacy path rebuilds and republishes
-the short tag, so it does not promise consumption of the prepared bytes.
-The existing resolver does not require the GitHub publisher variable or verify
-a signature; its "signed CI" status wording must not be used as proof of a
-manual image signature. All other deployment/admission guards and approved
-operations remain independently required.
+SHA tag resolution to that digest. Install Cosign on the release host. The
+deploy verifies the `release-image.yml` main-branch signer, signed application
+SHA, and CycloneDX SBOM on the exact digest before any ECS task registration.
+The reviewed v5 publication flags continue to serve manually published images.
+The default local path builds and scans an image on the release host. All
+deployment and admission guards still apply.
+
+### Signed CI publisher activation
+
+Configure the GitHub `release-image` environment for deployments from protected
+`main`. Ensure the AWS account has a GitHub OIDC provider with the
+`sts.amazonaws.com` audience. In a separately reviewed production Terraform
+change, enable `enable_release_image_publisher`. The publisher references the
+account's provider and manages its own role and policy. Set
+`AWS_RELEASE_IMAGE_ROLE_ARN` in the environment from the Terraform output and enable the
+`IMMUTABLE_RELEASE_IMAGE_ENABLED` repository variable. The role publishes to
+the SchoolPilot ECR repository and reads ECS rollback identities. The release
+workflow uses the image digest reported by the push and verifies its SHA tag
+against that digest before signing.
+
+For two green main releases, download the immutable image receipt and verify
+the SHA and digest from the release host before advancing to an approved
+backend release. The same check can run independently of an ECS rollout.
+
+```bash
+node scripts/release/verify-ci-release-image.mjs <full-sha> <ecr-repository@sha256:digest>
+```
+
+Keep the signed path opt-in during the shadow runs. Review the receipts and the
+first approved rollout before making signed-publisher output the default.
 
 The adapter performs no automatic retry, deregistration, image deletion or
 rollback. A transport timeout can leave a publication or registration outcome

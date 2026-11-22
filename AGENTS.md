@@ -27,11 +27,9 @@ and Host belong to `ClassPilotDesktop`. SchoolPilot owns their server integratio
 Read `docs/CLASSPILOT_WINDOWS_BROWSER_INTEGRATION.md` before changing that contract;
 source integration and simulated-host checks do not establish pilot readiness.
 
-Windows deploy note: if frontend deploy stops during `npm ci` with an `EPERM`
-unlink error on a native package such as `lightningcss`, it is usually a local
-file lock. Repair the frontend install with `npm install`, rerun
-`schoolpilot-app`'s build, then finish the documented S3 sync and CloudFront
-invalidation steps from `CLAUDE.md`.
+Frontend deploys use the exact standard web bundle from successful main push
+CI. Use `deploy.sh` for artifact checks, publication, and rollback. Follow the
+frontend deployment sequence in `CLAUDE.md`.
 
 ClassPilot Teacher Dashboard boundary: teacher classroom actions must use the
 server-enforced command contract documented in `CLAUDE.md`. Do not expose
