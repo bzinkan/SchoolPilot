@@ -205,7 +205,7 @@ const start = deploy.indexOf('  if [[ -n "$RELEASE_ARTIFACT_PUBLICATION" ]]; the
 const end = deploy.indexOf('  # Register API, worker, and one-off migration definitions', start);
 assert.ok(start > 0 && end > start);
 const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
-for (const failure of ['build', 'scan', 'registry', 'none', 'immutable']) test(`actual legacy deployment fragment orders publication/registration safely: ${failure}`, t => {
+for (const failure of ['build', 'scan', 'registry', 'none', 'immutable', 'signature']) test(`actual deployment fragment orders publication/registration safely: ${failure}`, t => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'deploy fragment ')); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const slash = value => value.replaceAll('\\', '/');
   const trace = path.join(directory, 'trace'), script = path.join(directory, 'test.sh');
@@ -213,6 +213,7 @@ for (const failure of ['build', 'scan', 'registry', 'none', 'immutable']) test(`
   writeFileSync(path.join(directory, 'scan.json'), JSON.stringify(scan));
   writeFileSync(script, `set -euo pipefail
 info() { :; }; success() { :; }; error() { :; }
+cleanup_frontend_bundle() { printf 'cleanup-frontend\\n' >> "$TRACE"; }
 cleanup_temp_files() { printf 'cleanup-scratch\\n' >> "$TRACE"; }
 cleanup_protected_window_recovery_files() { printf 'cleanup-recovery\\n' >> "$TRACE"; }
 ${deploy.slice(trapStart, trapEnd)}
@@ -229,6 +230,9 @@ node() {
    scan) [[ "$FAILURE" != scan ]] || return 1; cat "$SCAN_DIR/scan.json" ;;
    verify-registry) [[ "$FAILURE" != registry ]] || return 1 ;;
   esac
+ elif [[ "$1" == *verify-ci-release-image.mjs ]]; then
+  printf '%s\\n' "signature:$2:$3" >> "$TRACE"
+  [[ "$FAILURE" != signature ]]
  else "$REAL_NODE" "$@"; fi
 }
 docker() { printf '%s\\n' "docker:$*" >> "$TRACE"; if [[ "$1" == build && "$FAILURE" == build ]]; then return 1; fi; }
@@ -238,22 +242,29 @@ printf 'register-task-definition\\n' >> "$TRACE"
 `);
   const result = spawnSync(bash, [slash(script)], { shell: false, encoding: 'utf8', windowsHide: true,
     env: { ...process.env, FAILURE: failure, TRACE: slash(trace), SCAN_DIR: slash(directory), REAL_NODE: slash(process.execPath),
-      SCRIPT_DIR: '/unused scripts', RELEASE_ARTIFACT_PUBLICATION: '', IMMUTABLE_IMAGE_DIGEST: failure === 'immutable' ? imageId : '', IMMUTABLE_IMAGE_SHA: sourceSha,
+      SCRIPT_DIR: '/unused scripts', RELEASE_ARTIFACT_PUBLICATION: '', IMMUTABLE_IMAGE_DIGEST: ['immutable', 'signature'].includes(failure) ? imageId : '', IMMUTABLE_IMAGE_SHA: sourceSha,
       LOCAL_SHA: sourceSha, NAME: 'schoolpilot-production', IMAGE_TAG: sourceSha, REGION: 'us-east-1', ACCOUNT_ID: '123456789012',
       ECR_REPO: '123456789012.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api', CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION: 'false', TEST_DIGEST: imageId },
     timeout: 15_000 });
   const calls = readFileSync(trace, 'utf8');
   assert.equal(result.status, ['none', 'immutable'].includes(failure) ? 0 : 1, result.stderr);
   assert.equal(calls.includes('register-task-definition'), ['none', 'immutable'].includes(failure));
-  assert.match(calls, /cleanup-scratch\ncleanup-recovery\n$/);
-  if (failure !== 'immutable') assert.match(calls, /^docker:build --pull /m);
+  assert.match(calls, /cleanup-frontend\ncleanup-scratch\ncleanup-recovery\n$/);
+  const immutable = ['immutable', 'signature'].includes(failure);
+  if (!immutable) assert.match(calls, /^docker:build --pull /m);
   if (['build', 'scan'].includes(failure)) assert.doesNotMatch(calls, /aws:| push | login /);
   if (failure === 'none') {
     assert.ok(calls.indexOf('helper:scan') < calls.indexOf('aws:ecr get-login-password'));
     assert.ok(calls.indexOf('helper:verify-registry') < calls.indexOf('register-task-definition'));
     assert.match(calls, new RegExp(` tag ${imageId} `));
   }
-  if (failure === 'immutable') assert.doesNotMatch(calls, /docker:|helper:/);
+  if (immutable) {
+    assert.doesNotMatch(calls, /docker:|helper:/);
+    const signature = 'signature:' + sourceSha + ':123456789012.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@' + imageId;
+    assert.ok(calls.includes(signature));
+    assert.ok(calls.indexOf('aws:ecr describe-images') < calls.indexOf(signature));
+    if (failure === 'immutable') assert.ok(calls.indexOf(signature) < calls.indexOf('register-task-definition'));
+  }
 });
 
 test('source rechecks reject moved, dirty and newly introduced image inputs', async () => {
