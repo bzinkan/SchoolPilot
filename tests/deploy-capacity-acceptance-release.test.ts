@@ -300,11 +300,8 @@ validate_capacity_acceptance_frontend_mode
       deploySource,
       /CAPACITY_ACCEPTANCE_FRONTEND_SHA[\s\S]*LOCAL_SHA[\s\S]*capacity-acceptance frontend SHA does not match/
     );
-    const createIndex = deploySource.indexOf("aws cloudfront create-invalidation");
-    const waitIndex = deploySource.indexOf("aws cloudfront wait invalidation-completed", createIndex);
-    const statusIndex = deploySource.indexOf("aws cloudfront get-invalidation", waitIndex);
-    const successIndex = deploySource.indexOf("CloudFront invalidation completed", statusIndex);
-    assert.ok(createIndex >= 0 && waitIndex > createIndex && statusIndex > waitIndex && successIndex > statusIndex);
+    const frontend = deploySource.slice(deploySource.indexOf("# FRONTEND DEPLOY"));
+    assert.match(frontend, /node "\$FRONTEND_CLI" publish "\$ENV" "\$FRONTEND_BUNDLE_DIR" "\$LOCAL_SHA"\s+success "Frontend deploy complete!"/);
   });
 
   it("runs the strict gate before migration and again after exact convergence", () => {

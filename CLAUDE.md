@@ -1551,20 +1551,43 @@ terraform -chdir=infra validate -no-tests
 
 ### Deploy Sequence — Frontend
 
+Use the existing deploy command from a clean, current `main` worktree. CI
+packages the standard web bundle after its production-preview and Router
+checks. The command uses that run's bundle and verifies its file hashes before
+publishing. Run the read-only preflight to confirm the current rollback target.
+
 ```bash
-# Step 1: Build frontend
-cd schoolpilot-app && npm run build
-
-# Step 2: Sync to S3 (--delete removes old files)
-MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/SchoolPilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
-
-# Step 3: Invalidate CloudFront cache (use targeted paths to reduce costs — "/*" causes ALL cached objects to refetch)
-MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/" --region us-east-1
-
-# Step 4: VERIFY — check invalidation completed
-MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7C2CXR --region us-east-1 --query 'InvalidationList.Items[0]'
-# Status should be "Completed" (may take 1-2 minutes)
+./scripts/deploy.sh production --frontend-plan
+./scripts/deploy.sh production --frontend
+./scripts/deploy.sh production --frontend-rollback <release-receipt-path>
 ```
+
+For a coupled release, prepare the web artifact before the backend rollout and
+publish after the API and scheduler worker converge. A frontend-only release
+requires compatibility with the serving API. If the CI artifact has expired,
+rerun the exact main push CI from GitHub and wait for its frontend job and all
+release checks to succeed.
+
+S3 versioning and a bucket lock protect the cutover. Hashed assets are retained
+for open sessions. Stable public files use revalidation. Use a versioned URL
+for any public file whose bytes must change in step with JavaScript. The deploy
+publishes the HTML last, waits for the scoped invalidation, and checks the
+served HTML and its entry assets through CloudFront.
+
+Keep the receipt from `soc2-evidence/frontend-releases/` in the private release
+evidence when retiring the worktree. The rollback command uses the receipt and
+serving S3 versions, so it can run after `main` advances. It restores the prior
+web entry files and verifies the restored page. When recovery is uncertain,
+inspect the receipt and live S3 versions before retrying. A visible prior
+version alone cannot settle a pending write with a lost response. Reconcile
+that request and confirm that the process has exited before removing a stranded
+`__schoolpilot_frontend_lock`. Match its body to the receipt's `lockToken`, its
+`schoolpilot-release` metadata to the receipt ID, and its current version to the
+recorded version when available. Remove only that exact lock version. Preserve
+the original receipt and use the resulting recovery receipt for any subsequent
+recovery. If AWS definitively rejected a pending write, preserve that evidence
+with the original receipt before clearing `pendingWrite` in a recovery copy.
+Staging discovers the distribution for the staging bucket and alias.
 
 ### Common Deployment Pitfalls
 
@@ -1576,6 +1599,6 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
 8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Production schema changes are handled by the explicit deploy-script migration task (`RUN_MIGRATIONS_ONLY=true`), not by normal web/worker startup.
-9. **Busy main checkout** — When `C:\GitHub\SchoolPilot` is on another branch or dirty (another agent may be working there), run `deploy.sh` and `deploy-classpilot-runtime-config.ps1` from a throwaway clean worktree on `main` (`git worktree add C:\GitHub\SchoolPilot-plan main`, then `git pull --ff-only` inside it). Both tools derive their repository root from their own location and their guards are cwd-relative; `--frontend` runs its own `npm ci`. Never switch or reset the main checkout out from under the other session.
+9. **Busy main checkout** — When `C:\GitHub\SchoolPilot` is on another branch or dirty (another agent may be working there), run `deploy.sh` and `deploy-classpilot-runtime-config.ps1` from a throwaway clean worktree on `main` (`git worktree add C:\GitHub\SchoolPilot-plan main`, then `git pull --ff-only` inside it). Both tools derive their repository root from their own location and their guards are cwd-relative. Never switch or reset the main checkout out from under the other session.
 10. **Runtime-config apply capacity** — `deploy-classpilot-runtime-config.ps1` applies at any admitted API desired count (1–3 ordinary; 1–6 only inside an admitted protected-window run). Under the ordinary `100/200` configuration ECS surges before it drains, so `describe-target-health` showing up to twice the desired count healthy mid-rollout is expected and passes: the converging gate mirrors the live deployment configuration (`[max(1, N-1), floor(N × maximumPercent / 100)]`) and only the pre-mutation and post-convergence gates require exactly N. A run that still ends `apply_failed_manual_intervention` leaves autoscaling suspended and the DynamoDB lease `mutating` by design; follow `docs/CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md` to recover before any new Plan.
 11. **Wave-1 product flags** — `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE`/`_SCHOOL_IDS`, `PASSPILOT_RULES_MODE`, `PASSPILOT_APPOINTMENTS_MODE`, `PASSPILOT_REPORTS_MODE`, `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE`, `CLASSPILOT_USAGE_ROLLUP_MODE` and `CLASSPILOT_DIGITAL_USAGE_MODE` change in production only through `scripts/deploy-product-runtime-config.ps1` (Plan → review → Apply → verify, Rollback; `docs/PRODUCT_RUNTIME_CONFIG_OPERATIONS.md`). `deploy.sh` carries each service's live values forward and Terraform never sets them, so never hand-edit a task definition. The tool refuses every other name (capabilities, TURN, My Desk, RLS), refuses activation of an RLS-gated feature until its tables are admitted on both API and worker, and needs clean shadow evidence to promote the daily rollup. Main must not move between its Plan and Apply; it shares the ClassPilot runtime-config lease.

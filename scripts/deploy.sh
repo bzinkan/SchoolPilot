@@ -6,7 +6,11 @@
 # Usage:
 #   ./scripts/deploy.sh                  # Deploy everything (backend + frontend)
 #   ./scripts/deploy.sh --backend        # Backend only (Docker → ECR → ECS)
-#   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
+#   ./scripts/deploy.sh --frontend       # Frontend only (tested CI bundle → S3 → CloudFront)
+#   ./scripts/deploy.sh production --frontend-plan
+#                                       # Verify bundle and live rollback target without AWS writes
+#   ./scripts/deploy.sh production --frontend-rollback <receipt>
+#                                       # Restore the frontend versions bound to the receipt
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered reviewed-size (1024/2048) API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
@@ -56,11 +60,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CAPACITY_ACCEPTANCE_AUTHORIZATION_PATH="$SCRIPT_DIR/load/capacity-acceptance-authorization.json"
+FRONTEND_CLI="$SCRIPT_DIR/release/frontend-cli.mjs"
 
 # --- Parse arguments ---
 ENV="production"
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
+FRONTEND_PLAN=false
+FRONTEND_ROLLBACK=""
+FRONTEND_BUNDLE_DIR=""
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
 CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=false
@@ -119,6 +127,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
+    --frontend-plan) DEPLOY_BACKEND=false; FRONTEND_PLAN=true; shift ;;
+    --frontend-rollback)
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { echo "--frontend-rollback requires a receipt path"; exit 1; }
+      [[ -z "$FRONTEND_ROLLBACK" ]] || { echo "--frontend-rollback may be specified only once"; exit 1; }
+      DEPLOY_BACKEND=false
+      FRONTEND_ROLLBACK="$2"
+      shift 2
+      ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
     --confirm-protected-window-production-mutation)
       CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=true
@@ -226,6 +242,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$FRONTEND_PLAN" == true || -n "$FRONTEND_ROLLBACK" ]]; then
+  if [[ "$DEPLOY_FRONTEND" != true || "$SKIP_WAIT" == true || -n "$IMAGE_TAG" ||
+        ( "$FRONTEND_PLAN" == true && -n "$FRONTEND_ROLLBACK" ) ]]; then
+    echo "Frontend plan and rollback are separate frontend-only modes."
+    exit 1
+  fi
+fi
+
 # --- Configuration ---
 REGION="us-east-1"
 PROJECT="schoolpilot"
@@ -233,7 +257,6 @@ NAME="${PROJECT}-${ENV}"
 
 # Hardcoded known values (faster than querying AWS each time)
 ACCOUNT_ID="135775632425"
-CF_DIST_ID="E1TPPJOD7C2CXR"
 
 ECR_REPO="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${NAME}-api"
 CLUSTER="${NAME}-cluster"
@@ -1577,6 +1600,13 @@ cleanup_temp_files() {
   rm -f "${TEMP_FILES[@]}"
 }
 
+cleanup_frontend_bundle() {
+  if [[ -n "$FRONTEND_BUNDLE_DIR" ]]; then
+    node "$FRONTEND_CLI" discard "$FRONTEND_BUNDLE_DIR" || warn "Could not discard frontend download directory: $FRONTEND_BUNDLE_DIR"
+    FRONTEND_BUNDLE_DIR=""
+  fi
+}
+
 cleanup_protected_window_recovery_files() {
   rm -f "${PROTECTED_WINDOW_RECOVERY_FILES[@]}"
 }
@@ -1598,6 +1628,7 @@ assert_no_preserved_protected_window_recovery_artifacts() {
 deploy_exit_cleanup() {
   local exit_code=$?
   trap - EXIT
+  cleanup_frontend_bundle
 
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true &&
         "$CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED" == true &&
@@ -5019,9 +5050,9 @@ validate_immutable_image_mode() {
     error "Immutable-image deployment requires both a lowercase full application SHA and sha256 digest."
     return 1
   fi
-  if [[ "$DEPLOY_BACKEND" != true || -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$IMAGE_TAG" ||
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$IMAGE_TAG" ||
         -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
-    error "Immutable-image deployment requires a backend deploy and rejects same-image, --tag, and rehearsal-reuse modes."
+    error "Immutable-image deployment requires a production backend deploy and rejects same-image, --tag, and rehearsal-reuse modes."
     return 1
   fi
 }
@@ -6148,7 +6179,6 @@ echo ""
 info "ECR:        $ECR_REPO"
 info "ECS:        $CLUSTER / $SERVICE"
 info "S3:         $BUCKET"
-info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "Emergency API: $ACTIVATE_EMERGENCY (${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB)"
@@ -6213,11 +6243,20 @@ success "AWS credentials OK"
 cd "$PROJECT_ROOT"
 info "Working directory: $PROJECT_ROOT"
 
-if ! assert_no_preserved_protected_window_recovery_artifacts; then
-  exit 1
+if [[ -n "$FRONTEND_ROLLBACK" ]]; then
+  node "$FRONTEND_CLI" rollback "$ENV" "$FRONTEND_ROLLBACK"
+  exit 0
 fi
-trap deploy_exit_cleanup EXIT
-cleanup_temp_files
+
+if [[ "$FRONTEND_PLAN" == true ]]; then
+  trap cleanup_frontend_bundle EXIT
+else
+  if ! assert_no_preserved_protected_window_recovery_artifacts; then
+    exit 1
+  fi
+  trap deploy_exit_cleanup EXIT
+  cleanup_temp_files
+fi
 
 if ! command -v gh > /dev/null 2>&1; then
   error "GitHub CLI (gh) is required so deploys can verify green checks on origin/main."
@@ -6308,6 +6347,15 @@ else
   IMAGE_TAG="${IMAGE_TAG:-${IMMUTABLE_IMAGE_SHA:-$(git rev-parse --short=12 HEAD)}}"
   success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
   info "Image tag:   $IMAGE_TAG"
+fi
+
+if [[ "$DEPLOY_FRONTEND" == true ]]; then
+  info "Preparing the tested frontend bundle for ${LOCAL_SHA}..."
+  FRONTEND_BUNDLE_DIR=$(node "$FRONTEND_CLI" prepare "$LOCAL_SHA")
+  node "$FRONTEND_CLI" plan "$ENV" "$FRONTEND_BUNDLE_DIR" "$LOCAL_SHA"
+  if [[ "$FRONTEND_PLAN" == true ]]; then
+    exit 0
+  fi
 fi
 
 # A concurrent 200% API/worker rollout is safe under the reviewed 150-connection
@@ -6404,6 +6452,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       error "The ECR SHA tag does not resolve to the authorized immutable image digest."
       exit 1
     fi
+    node "$SCRIPT_DIR/release/verify-ci-release-image.mjs" "$IMMUTABLE_IMAGE_SHA" "${ECR_REPO}@${DIGEST}"
     success "Using signed CI release image: ${ECR_REPO}@${DIGEST}"
   else
     # Legacy build path remains until two successful shadow deployments prove
@@ -7032,79 +7081,10 @@ fi
 if [[ "$DEPLOY_FRONTEND" == true ]]; then
   echo ""
   echo "=========================================="
-  echo "  Frontend: Vite Build → S3 → CloudFront"
+  echo "  Frontend: Tested CI bundle → S3 → CloudFront"
   echo "=========================================="
 
-  # Step 1: Build frontend
-  info "Installing dependencies..."
-  cd "$PROJECT_ROOT/schoolpilot-app"
-  npm ci --silent
-
-  info "Building frontend..."
-  npm run build
-  cd "$PROJECT_ROOT"
-  success "Frontend build complete"
-
-  # Step 2: Sync to S3
-  info "Syncing to S3..."
-
-  # Hashed assets get long cache (immutable)
-  aws s3 sync schoolpilot-app/dist/ "s3://${BUCKET}/" \
-    --delete \
-    --cache-control "public, max-age=31536000, immutable" \
-    --exclude "index.html" \
-    --exclude "*.json" \
-    --region "$REGION"
-
-  # index.html — never cache (always serve fresh)
-  aws s3 cp schoolpilot-app/dist/index.html "s3://${BUCKET}/index.html" \
-    --cache-control "no-cache, no-store, must-revalidate" \
-    --region "$REGION"
-
-  # JSON manifests — short cache
-  for f in schoolpilot-app/dist/*.json; do
-    if [[ -f "$f" ]]; then
-      aws s3 cp "$f" "s3://${BUCKET}/$(basename "$f")" \
-        --cache-control "public, max-age=60" \
-        --region "$REGION"
-    fi
-  done
-  success "S3 sync complete"
-
-  # Step 3: Invalidate CloudFront. index.html is no-cache and references the hashed
-  # asset bundles, so invalidating it + root is sufficient. MSYS_NO_PATHCONV=1 stops
-  # Git Bash on Windows from rewriting the leading-slash "/index.html" "/" into
-  # Windows paths (which CloudFront rejects as InvalidArgument); harmless elsewhere.
-  info "Invalidating CloudFront cache..."
-  CLOUDFRONT_INVALIDATION_ID=$(MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation \
-    --distribution-id "$CF_DIST_ID" \
-    --paths "/index.html" "/" \
-    --query 'Invalidation.Id' \
-    --output text \
-    --no-cli-pager)
-  CLOUDFRONT_INVALIDATION_ID="${CLOUDFRONT_INVALIDATION_ID%$'\r'}"
-  if [[ ! "$CLOUDFRONT_INVALIDATION_ID" =~ ^I[A-Z0-9]+$ ]]; then
-    error "CloudFront did not return one exact invalidation ID."
-    exit 1
-  fi
-  info "Waiting for CloudFront invalidation ${CLOUDFRONT_INVALIDATION_ID}..."
-  aws cloudfront wait invalidation-completed \
-    --distribution-id "$CF_DIST_ID" \
-    --id "$CLOUDFRONT_INVALIDATION_ID" \
-    --no-cli-pager
-  CLOUDFRONT_INVALIDATION_STATUS=$(aws cloudfront get-invalidation \
-    --distribution-id "$CF_DIST_ID" \
-    --id "$CLOUDFRONT_INVALIDATION_ID" \
-    --query 'Invalidation.Status' \
-    --output text \
-    --no-cli-pager)
-  CLOUDFRONT_INVALIDATION_STATUS="${CLOUDFRONT_INVALIDATION_STATUS%$'\r'}"
-  if [[ "$CLOUDFRONT_INVALIDATION_STATUS" != "Completed" ]]; then
-    error "CloudFront invalidation did not reach Completed."
-    exit 1
-  fi
-  success "CloudFront invalidation completed (id=${CLOUDFRONT_INVALIDATION_ID}, appSha=${LOCAL_SHA})"
-
+  node "$FRONTEND_CLI" publish "$ENV" "$FRONTEND_BUNDLE_DIR" "$LOCAL_SHA"
   success "Frontend deploy complete!"
 fi
 
@@ -7123,5 +7103,5 @@ if [[ "$DEPLOY_BACKEND" == true && -n "$EMERGENCY_TASK_DEF_ARN" ]]; then
     echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, ${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB; not deployed)"
   fi
 fi
-[[ "$DEPLOY_FRONTEND" == true ]] && echo "  Frontend: S3 synced, CloudFront invalidated"
+[[ "$DEPLOY_FRONTEND" == true ]] && echo "  Frontend: Tested CI bundle verified through CloudFront"
 echo ""

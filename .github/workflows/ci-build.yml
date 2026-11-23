@@ -731,6 +731,19 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run audit:router:postbuild:standard
 
+      - name: Package the tested SchoolPilot web bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/release/frontend-bundle.mjs pack schoolpilot-app/dist "$RUNNER_TEMP/schoolpilot-web"
+
+      - name: Upload the tested SchoolPilot web bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: schoolpilot-web-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/schoolpilot-web/
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Build GoPilot frontend
         working-directory: schoolpilot-app
         run: npm run build:gopilot
