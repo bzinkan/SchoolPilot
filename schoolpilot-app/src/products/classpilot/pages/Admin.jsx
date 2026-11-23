@@ -223,23 +223,6 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
     enabled: activeTab === "audit",
   });
 
-  const getFriendlyErrorMessage = (error) => {
-    if (!error) return "";
-    const message = error instanceof Error ? error.message : String(error);
-    const jsonMatch = message.match(/\{.*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.error) {
-          return parsed.error;
-        }
-      } catch {
-        return message;
-      }
-    }
-    return message;
-  };
-
   const createStaffMutation = useMutation({
     mutationFn: async (data) => {
       const payload = {
@@ -535,15 +518,14 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   });
 
   const resetPasswordMutation = useMutation({
-    mutationFn: async (payload) => {
-      return await apiRequest("POST", `/admin/users/${payload.userId}/password`, {
-        newPassword: payload.newPassword,
-      });
-    },
-    onSuccess: () => {
+    mutationFn: ({ membershipId, newPassword }) =>
+      apiRequest("POST", `/admin/users/${membershipId}/password`, { newPassword }),
+    onSuccess: (_result, { userId }) => {
       toast({
         title: "Password reset",
-        description: "The staff member's password has been reset successfully.",
+        description: userId === currentUser.id
+          ? "Sign in again to continue."
+          : undefined,
       });
       setPasswordDialogOpen(false);
       setStaffToResetPassword(null);
@@ -552,10 +534,14 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
     },
     onError: (error) => {
+      const { code, message } = getApiErrorDetails(error);
+      const requiresSuperAdmin = code === "STAFF_PASSWORD_CENTRAL_REVIEW_REQUIRED";
       toast({
         variant: "destructive",
-        title: "Failed to reset password",
-        description: getFriendlyErrorMessage(error) || "An error occurred",
+        title: requiresSuperAdmin ? "Super Admin required" : "Failed to reset password",
+        description: requiresSuperAdmin && currentUser.impersonating
+          ? "Stop impersonating and retry from your Super Admin session."
+          : message,
       });
     },
   });
@@ -585,7 +571,8 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   const handleResetPasswordSubmit = () => {
     if (!staffToResetPassword || !newPassword) return;
     resetPasswordMutation.mutate({
-      userId: staffToResetPassword.id,
+      membershipId: staffToResetPassword.membershipId,
+      userId: staffToResetPassword.userId,
       newPassword,
     });
   };
@@ -1167,6 +1154,7 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
               <Input
                 id="new-password"
                 type="password"
+                autoComplete="new-password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Enter new password (min 10 characters)"

@@ -636,29 +636,40 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
 
 // POST /admin/users/:id/password - Reset staff password (ClassPilot Admin panel)
 // :id is the membership ID; look up the userId from it
-router.post("/admin/users/:id/password", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
-  try {
-    const { newPassword } = req.body;
-    if (!newPassword) {
-      return res.status(400).json({ error: "newPassword is required" });
-    }
-    await resetSchoolScopedStaffPassword({
-      schoolId: res.locals.schoolId!,
-      membershipId: param(req, "id"),
-      password: newPassword,
-      audit: {
-        userId: req.authUser!.id,
-        userRole: res.locals.membershipRole,
-        source: "compat.admin.users.password",
-      },
-    });
+router.post(
+  "/admin/users/:id/password",
+  ...schoolAuth,
+  requireRole("admin"),
+  requireProductLicense("CLASSPILOT"),
+  async (req, res, next) => {
+    try {
+      const newPassword = req.body?.newPassword;
+      if (typeof newPassword !== "string" || newPassword.length < 10) {
+        return res.status(400).json({
+          error: "Password must be at least 10 characters.",
+          code: "INVALID_STAFF_PASSWORD",
+        });
+      }
+      await resetSchoolScopedStaffPassword({
+        schoolId: res.locals.schoolId!,
+        membershipId: param(req, "id"),
+        password: newPassword,
+        allowCentralIdentityMutation: req.authUser!.isSuperAdmin
+          && !req.session?.impersonating && !req.session?.originalUserId,
+        audit: {
+          userId: req.authUser!.id,
+          userRole: res.locals.membershipRole,
+          source: "compat.admin.users.password",
+        },
+      });
 
-    return res.json({ ok: true });
-  } catch (err) {
-    if (sendStaffIdentityError(res, err)) return;
-    next(err);
+      return res.json({ ok: true });
+    } catch (err) {
+      if (sendStaffIdentityError(res, err)) return;
+      next(err);
+    }
   }
-});
+);
 
 // DELETE /admin/users/:id - Delete staff member (ClassPilot Admin panel)
 router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {

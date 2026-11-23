@@ -968,14 +968,15 @@ export async function updateSchoolScopedStaffProfile(options: {
 }
 
 /**
- * A school administrator may rotate credentials only for an identity owned by
- * exactly that school. Super Admin and multi-school credentials require the
- * central workflow so a tenant administrator cannot take over global access.
+ * School administrators can rotate credentials for identities owned by their
+ * school. Rotating Super Admin or multi-school credentials requires explicit
+ * authority from a signed-in Super Admin.
  */
 export async function resetSchoolScopedStaffPassword(options: {
   schoolId: string;
   membershipId: string;
   password: string;
+  allowCentralIdentityMutation?: boolean;
   audit: StaffIdentityAuditActor;
 }): Promise<{ user: User; membership: SchoolMembership }> {
   const password = await hashPassword(options.password);
@@ -1032,12 +1033,12 @@ export async function resetSchoolScopedStaffPassword(options: {
       .from(schoolMemberships)
       .where(eq(schoolMemberships.userId, user.id));
     if (
-      user.isSuperAdmin
-      || memberships.some((row) => row.schoolId !== options.schoolId)
+      (user.isSuperAdmin || memberships.some((row) => row.schoolId !== options.schoolId))
+      && options.allowCentralIdentityMutation !== true
     ) {
       throw new StaffIdentityError(
         "STAFF_PASSWORD_CENTRAL_REVIEW_REQUIRED",
-        "This identity has central or multi-school access. Its password can only be changed through the Super Admin workflow.",
+        "This account has access beyond this school. Ask a Super Admin to reset its password.",
         409
       );
     }

@@ -466,3 +466,89 @@ describe("staff password login policy", () => {
     assert.equal(unchanged?.name, `${TAG} policy`);
   });
 });
+
+describe("ClassPilot staff password reset", () => {
+  it("lets a ClassPilot staff administrator reset a school-owned account", async () => {
+    const target = await createUser(userFixture("reset-local", await hashPassword(PASSWORD)));
+    const membership = await inSchool(schoolPolicy.id, () =>
+      createMembership(membershipFixture(target.id, schoolPolicy.id, "teacher"))
+    );
+    const path = `/admin/users/${membership.id}/password`;
+    const newPassword = "LocalReplacement123!";
+    const teacher = await requestJson("POST", path, { newPassword }, bearerFor(teacherPolicy, schoolPolicy.id));
+    assert.equal(teacher.status, 403);
+
+    const admin = await requestJson("POST", path, { newPassword }, bearerFor(adminPolicy, schoolPolicy.id));
+    assert.equal(admin.status, 200);
+    assert.equal((await login(target)).status, 401);
+    assert.equal((await login(target, { password: newPassword })).status, 200);
+  });
+
+  it("requires ClassPilot entitlement for a school-level reset", async () => {
+    const target = await createUser(userFixture("reset-gopilot", await hashPassword(PASSWORD)));
+    const membership = await inSchool(schoolNative.id, async () => {
+      await createMembership({
+        ...membershipFixture(adminPolicy.id, schoolNative.id, "admin"),
+        gopilotRole: "parent",
+      });
+      return createMembership(membershipFixture(target.id, schoolNative.id, "teacher"));
+    });
+    const response = await requestJson<{ error?: string }>("POST", `/admin/users/${membership.id}/password`,
+      { newPassword: "ReplacementPass123!" }, bearerFor(adminPolicy, schoolNative.id));
+    assert.equal(response.status, 403);
+    assert.equal(response.body?.error, "Product license required");
+  });
+
+  it("lets a direct Super Admin reset their password from ClassPilot without granting impersonated or school-level authority", async () => {
+    const target = await createUser(userFixture("reset-super", await hashPassword(PASSWORD), true));
+    const membership = await inSchool(schoolEnabled.id, () =>
+      createMembership(membershipFixture(target.id, schoolEnabled.id, "admin"))
+    );
+    const path = `/admin/users/${membership.id}/password`;
+    const newPassword = "ReplacementPass123!";
+    const reset = (headers: Record<string, string>) =>
+      requestJson<{ ok?: boolean; code?: string }>("POST", path, { newPassword }, headers);
+
+    const wrongSchool = await reset(bearerFor(target, schoolDisabled.id));
+    assert.equal(wrongSchool.status, 404);
+
+    const impersonation = await requestJson("POST", `/super-admin/schools/${schoolEnabled.id}/impersonate`,
+      undefined, bearerFor(superUser, schoolEnabled.id));
+    assert.equal(impersonation.status, 200);
+    const cookie = impersonation.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(cookie);
+    const impersonated = await reset({ ...bearerFor(superUser, schoolEnabled.id), cookie });
+    assert.equal(impersonated.status, 409);
+    assert.equal(impersonated.body?.code, "STAFF_PASSWORD_CENTRAL_REVIEW_REQUIRED");
+
+    await inSchool(schoolEnabled.id, () =>
+      createMembership(membershipFixture(adminPolicy.id, schoolEnabled.id, "admin"))
+    );
+    const restricted = await reset(bearerFor(adminPolicy, schoolEnabled.id));
+    assert.equal(restricted.status, 409);
+    assert.equal(restricted.body?.code, "STAFF_PASSWORD_CENTRAL_REVIEW_REQUIRED");
+    assert.equal((await login(target)).status, 200);
+
+    const originalCredentials = bearerFor(target, schoolEnabled.id);
+    for (const invalid of ["short", 1234567890]) {
+      const response = await requestJson<{ code?: string }>("POST", path, { newPassword: invalid }, originalCredentials);
+      assert.equal(response.status, 400);
+      assert.equal(response.body?.code, "INVALID_STAFF_PASSWORD");
+    }
+    const changed = await reset(originalCredentials);
+    assert.equal(changed.status, 200);
+    assert.deepEqual(changed.body, { ok: true });
+    assert.equal((await requestJson("GET", "/auth/me", undefined, originalCredentials)).status, 401);
+    assert.equal((await login(target)).status, 401);
+    assert.equal((await login(target, { password: newPassword })).status, 200);
+
+    const audits = await auditRows(target.id, "school.staff.password_reset");
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0]?.school_id, schoolEnabled.id);
+    assert.deepEqual(audits[0]?.changes, { fields: ["authVersion", "password"] });
+    assert.deepEqual(audits[0]?.metadata, {
+      source: "compat.admin.users.password",
+      targetUserId: target.id,
+    });
+  });
+});
