@@ -17,6 +17,7 @@ import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import{BrowserRouter,Routes,Route,Link,useLocation}from'react-router-dom';
 import{QueryClientProvider,useQuery}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';
 import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import{FixtureAuthContext}from'/src/contexts/AuthContext.jsx';
+import{Toaster}from'/src/components/ui/toaster.jsx';
 import Layout from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';
 import Boundary from'/src/products/classpilot/components/admin/AdminQueryBoundary.jsx';
 import Admin from'/src/products/classpilot/pages/Admin.jsx';
@@ -60,7 +61,7 @@ h(Route,{path:'/classpilot/admin/classes/scheduling',element:h(Editor)}),h(Route
 h(Route,{path:'/classpilot/students',element:h(Destination)}),
 h(Route,{path:'/classpilot/coverage',element:h(Editor)}),h(Route,{path:'/classpilot/settings',element:h(Destination)})),
 h(Route,{path:'/classpilot',element:h('h1',null,'ClassPilot dashboard')}))));}
-createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(Harness)))));
+createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(Harness),h(Toaster)))));
 `;
 
 before(async () => {
@@ -79,12 +80,13 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await vite?.close(); });
 
-async function open({ mode = 'guard', route, role, year = 'current', classes = [] } = {}) {
+async function open({ mode = 'guard', route, role, year = 'current', classes = [], staff = [] } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', async request => {
     const url = new URL(request.request().url()); requests.push(url.pathname);
+    if (url.pathname === '/api/users/staff') return request.fulfill({ json: { staff } });
     if (url.pathname.endsWith('/classpilot/admin/classes/classroom/import-preview')) {
       return request.fulfill({ json: { enabled: true, courses: [{ googleCourseId: 'course-a', name: 'Synthetic Biology', studentCount: 2, matchedTeacher: { id: 'teacher-a' } }] } });
     }
@@ -187,6 +189,29 @@ test('Overview distinguishes missing school-year dates from a failed read', asyn
       assert.deepEqual(errors, []);
     } finally { await page.close(); }
   }
+});
+
+test('the Staff password reset shows the server explanation for a protected account', async () => {
+  const { page, errors } = await open({
+    mode: 'overview',
+    route: '/classpilot/admin?tab=staff',
+    staff: [{ id: 'member-a', userId: 'user-a', role: 'teacher', status: 'active',
+      user: { id: 'user-a', displayName: 'Taylor Woods', email: 'taylor@example.invalid' } }],
+  });
+  try {
+    const explanation = 'Only a Super Admin can reset this account’s password.';
+    await page.route('**/api/admin/users/member-a/password', route => route.fulfill({
+      status: 409,
+      json: { error: explanation, code: 'STAFF_PASSWORD_CENTRAL_REVIEW_REQUIRED' },
+    }));
+    await page.getByRole('button', { name: /Reset password for Taylor Woods/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Reset Password' });
+    await dialog.getByLabel('New Password', { exact: true }).fill('FixturePassword123!');
+    await dialog.getByRole('button', { name: 'Reset Password', exact: true }).click();
+    await page.getByText(explanation, { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(await dialog.isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });
 
 test('legacy URL redirects and section links preserve history state and mounted drafts', async () => {
