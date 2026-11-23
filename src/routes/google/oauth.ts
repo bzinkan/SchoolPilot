@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
@@ -16,6 +16,12 @@ import {
   fetchGoogleUserInfo,
 } from "../../util/googleOAuthTokenExchange.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import { logSystemAudit } from "../../services/audit.js";
+import {
+  consumeGoogleConnectState,
+  issueGoogleConnectState,
+  type GoogleConnectPurpose,
+} from "../../services/googleConnectState.js";
 import {
   CLASSROOM_RESOURCE_SCOPES,
   missingGoogleOAuthScopes,
@@ -53,7 +59,7 @@ const WORKSPACE_IMPORT_SCOPES = [
   // src/routes/google/workspaceAudit.ts for easy re-activation.
 ];
 
-type GooglePurpose = "workspace_import" | "classroom_resources";
+type GooglePurpose = GoogleConnectPurpose;
 
 function normalizePurpose(value: unknown): GooglePurpose {
   return value === "classroom_resources" ? "classroom_resources" : "workspace_import";
@@ -74,14 +80,29 @@ function requestCanRequestPurpose(req: any, res: any, purpose: GooglePurpose): b
   );
 }
 
-function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]): URL | null {
-  if (!returnTo) return null;
+function returnOriginAllowlist(): string[] {
+  return (process.env.CORS_ALLOWLIST || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function getAllowedReturnUrl(returnTo: unknown, allowlist: string[]): URL | null {
+  if (typeof returnTo !== "string" || !returnTo) return null;
   try {
     const url = new URL(returnTo);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (url.username || url.password) return null;
     return allowlist.includes(url.origin) ? url : null;
   } catch {
     return null;
   }
+}
+
+function saveSession(req: Request): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.save((err) => (err ? reject(err) : resolve()));
+  });
 }
 
 // GET /api/google/auth-url - Get Google OAuth URL
@@ -109,18 +130,38 @@ router.get("/auth-url", authenticate, requireSchoolContext, requireActiveSchool,
       });
     }
 
+    // Bearer auth wins over the cookie, so the two can name different users.
+    // Stop here rather than after the teacher has been through Google consent.
+    if (req.session.userId && req.session.userId !== req.authUser!.id) {
+      return res.status(409).json({
+        error: "GOOGLE_CONNECT_SESSION_MISMATCH: Sign in again before connecting Google.",
+        code: "GOOGLE_CONNECT_SESSION_MISMATCH",
+      });
+    }
+    // A bearer-only browser has no stored session yet. The callback can only
+    // recognise this browser through a session cookie, so create one now.
+    if (!req.session.userId && !req.session.googleConnectBound) {
+      req.session.googleConnectBound = true;
+      await saveSession(req);
+    }
+
+    const requestedReturnTo =
+      typeof req.query.returnTo === "string" ? req.query.returnTo : req.headers.referer;
+    const state = await issueGoogleConnectState(req.sessionID, {
+      userId: req.authUser!.id,
+      schoolId,
+      purpose,
+      returnTo: getAllowedReturnUrl(requestedReturnTo, returnOriginAllowlist())?.href ?? null,
+    });
+
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
       scope: scopesForPurpose(purpose),
-      state: JSON.stringify({
-        userId: req.authUser!.id,
-        schoolId,
-        purpose,
-        returnTo: (req.query.returnTo as string) || req.headers.referer || "",
-      }),
+      state,
     });
 
+    res.setHeader("Cache-Control", "no-store");
     return res.json({ url });
   } catch (err) {
     next(err);
@@ -130,14 +171,29 @@ router.get("/auth-url", authenticate, requireSchoolContext, requireActiveSchool,
 // GET /api/google/callback - OAuth callback
 router.get("/callback", async (req, res, next) => {
   try {
-    const code = req.query.code as string;
-    const state = req.query.state as string;
+    res.setHeader("Cache-Control", "no-store");
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
 
     if (!code || !state) {
       return res.status(400).json({ error: "Missing code or state" });
     }
 
-    const { userId, schoolId, purpose, returnTo } = JSON.parse(state);
+    // Everything below acts on this verified grant. Nothing about the user,
+    // school, purpose or destination is read from the request.
+    const grant = await consumeGoogleConnectState(state, req.sessionID);
+    if (!grant || (req.session.userId && req.session.userId !== grant.userId)) {
+      await logSystemAudit({
+        action: "auth.rejected",
+        metadata: { reason: "invalid_google_connect_state", method: "google_connect" },
+      });
+      return res.status(400).json({
+        error: "This Google connection link is invalid or has expired. Return to SchoolPilot and try connecting again.",
+        code: "GOOGLE_CONNECT_STATE_INVALID",
+      });
+    }
+
+    const { userId, schoolId, purpose, returnTo } = grant;
     const oauth2Client = getOAuth2Client();
     const tokens = await exchangeGoogleAuthCode({
       code,
@@ -163,7 +219,7 @@ router.get("/callback", async (req, res, next) => {
     const refreshToken = tokens.refresh_token || existing?.refreshToken || "";
     connectedEmail = connectedEmail || existing?.connectedEmail || null;
     const connectedDomain = getEmailDomain(connectedEmail) || existing?.connectedDomain || null;
-    const selectedScopes = scopesForPurpose(normalizePurpose(purpose));
+    const selectedScopes = scopesForPurpose(purpose);
 
     await upsertGoogleOAuthToken(userId, {
       refreshToken,
@@ -174,10 +230,7 @@ router.get("/callback", async (req, res, next) => {
       expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
     });
 
-    const allowlist = (process.env.CORS_ALLOWLIST || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const allowlist = returnOriginAllowlist();
     const allowedReturnUrl = getAllowedReturnUrl(returnTo, allowlist);
 
     if (allowedReturnUrl) {

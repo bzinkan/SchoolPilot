@@ -18,6 +18,7 @@ declare module "express-session" {
     googleOAuthState?: string;
     googleOAuthNonce?: string;
     googleOAuthRedirect?: string;
+    googleConnectBound?: boolean;
     microsoftOAuthState?: string;
     microsoftOAuthNonce?: string;
     microsoftOAuthCodeVerifier?: string;
