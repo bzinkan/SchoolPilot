@@ -11,6 +11,29 @@ PR #510 contains all three immutable migrations. Feature modes do not defer DDL.
 Do not downgrade that combined artifact or edit its checksummed migrations.
 Operational evidence, not this document, establishes actual production status.
 
+## Shelving boundary
+
+Brian shelved My Desk on September 28, 2026. Keep the hub, Notes, Seating,
+Discipline, Student Information, paperwork and contact imports, sidebar, phone
+header and student-drawer entry points unmounted until he lifts the hold.
+Old My Desk and Discipline URLs redirect to ClassPilot. The legacy student
+profile URL redirects to Students. Preserve routes, data, RLS, workers, cleanup
+and private storage on the backend.
+
+The shelving change turned off `MYDESK_AI_IMPORT_MODE`. Contact AI was already
+off. Base and seating stayed on at that time. Verify serving flags before any
+authorized recovery. The rollout and acceptance procedures below describe the
+shelved feature. Keep AI imports off and preserve private/backend-only behavior
+until the operator explicitly approves reactivation. The Git history for
+`Shelve My Desk` identifies the removed routes and entry points.
+
+Preserve author-only ownership, active membership and support impersonation
+denial. Preserve school-owned access controls on shared
+[discipline records](SCHOOL_DISCIPLINE_RECORDS.md) and
+[student information](STUDENT_INFORMATION.md). Use
+[paperwork progress](PAPERWORK_PROGRESS_RELEASE.md) for protocol/schema rollout
+and rollback. Progress polling and extraction cannot overwrite an author's draft.
+
 ## Workspace redesign release
 
 The workspace redesign's historical Terraform baseline adopted the exact 119-table runtime CSV verified

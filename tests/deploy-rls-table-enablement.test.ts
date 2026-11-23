@@ -17,7 +17,7 @@ import {
 const targetTable = "passpilot_grade_students";
 const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-const claudeSource = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
+const productionRunbook = readFileSync(new URL("../docs/PRODUCTION_DEPLOYMENT.md", import.meta.url), "utf8");
 const terraformVariables = readFileSync(new URL("../infra/variables.tf", import.meta.url), "utf8");
 const productionTfvars = readFileSync(new URL("../infra/production.tfvars", import.meta.url), "utf8");
 const rlsRegistry = JSON.parse(
@@ -751,23 +751,23 @@ describe("one-release RLS table enablement", () => {
 
   it("documents the reviewed bundle, adopted production baseline, and kill-switch preservation", () => {
     assert.match(
-      claudeSource,
+      productionRunbook,
       /--enable-rls-table passpilot_grade_students/
     );
     assert.match(
-      claudeSource,
+      productionRunbook,
       /--enable-rls-table authorized_pickups,custody_alerts,dismissal_changes,dismissal_overrides,dismissal_queue,family_group_students,homeroom_teachers/
     );
     assert.match(
-      claudeSource,
+      productionRunbook,
       /--enable-rls-table classpilot_schedule_change_pairs,classpilot_schedule_changes,classpilot_schedule_change_legs/
     );
     assert.match(
-      claudeSource,
+      productionRunbook,
       /--enable-rls-table classpilot_chat_deliveries,poll_responses,polls,session_settings/
     );
-    assert.match(claudeSource, /Omit the flag on later deploys/);
-    assert.match(claudeSource, /per-table kill-switch removal then remains removed/);
+    assert.match(productionRunbook, /Omit the flag on later deploys/);
+    assert.match(productionRunbook, /per-table kill-switch removal then remains removed/);
     const defaultAllowlist = terraformVariables.match(
       /variable "rls_enabled_tables"[\s\S]*?default\s*=\s*"([^"]+)"/
     )?.[1] ?? "";
@@ -801,8 +801,8 @@ describe("one-release RLS table enablement", () => {
       ),
       [...CLASSPILOT_FAB_RLS_TABLES],
     );
-    assert.match(claudeSource, /exact observed 72-table live/);
-    assert.match(claudeSource, /75-table 2\.7\.0/);
-    assert.match(claudeSource, /Do not use the Terraform baseline to bypass/);
+    assert.match(productionRunbook, /exact observed 72-table live/);
+    assert.match(productionRunbook, /75-table 2\.7\.0/);
+    assert.match(productionRunbook, /Do not use the Terraform baseline to bypass/);
   });
 });

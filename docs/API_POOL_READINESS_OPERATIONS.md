@@ -39,7 +39,7 @@ task resources, RLS, pool sizes, task-definition identities and cookie stickines
    real PostgreSQL fixture before deployment, including main-pool exhaustion,
    healthy bursts, recovery, shared-database failure and shutdown.
 2. Merge and deploy from clean `main` using the documented guarded backend
-   procedure in `CLAUDE.md`. Finish exact-image API/worker convergence, target
+   procedure in the [production runbook](PRODUCTION_DEPLOYMENT.md#deploy-sequence--backend). Finish exact-image API/worker convergence, target
    health, migration/RLS and public/detailed health verification. Record the
    deployed full Git SHA, immutable digest, and exact API/worker task definitions.
    Leave the ALB on `/livez` throughout that rollout.

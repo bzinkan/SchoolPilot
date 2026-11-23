@@ -77,11 +77,36 @@ Teacher opt-in and kiosk checkout never set a legacy school's canonical-write
 cutover marker. No additional migration is needed for teacher-based scheduling
 on top of the original kiosk-scheduling schema.
 
+## Public kiosk API and launch tickets
+
+- Public kiosk requests require `X-School-Id` plus either `X-Kiosk-Token` or the compatibility `X-Kiosk-Pin`. `POST /api/passpilot/kiosk/auth` exchanges a valid PIN for a 15-minute token; current school lifecycle, PassPilot license, kiosk enablement, and PIN-hash state are rechecked on every request, so revocation or PIN rotation takes effect immediately.
+- `GET /api/passpilot/kiosk/snapshot?classId=...` is the bounded polling contract. It returns config, the optional teacher-bound kiosk session, roster students, active passes, revisions, and an ETag. The existing `/config`, `/students`, and PIN routes remain available during migration.
+- `POST /api/passpilot/kiosk/client-health` accepts only the bounded `snapshot_failure` / `snapshot_recovery` enum contract after at least three consecutive failures. Event types are rate-limited for five minutes using an opaque Redis key with a bounded local fallback.
+- `POST /api/classpilot/kiosk/launch-ticket/preflight` requires `X-School-Id` plus that exact school's `X-ClassPilot-Enrollment-Key`, applies no-store/rate-limit policy, and negotiates `scopedAuthorityChecksV1` plus `kioskLaunchTicketV2` without a directory identifier. The extension must not call `chrome.enterprise.deviceAttributes` unless this preflight accepts V2.
+- `POST /api/classpilot/kiosk/launch-ticket` revalidates the exact school/key, ClassPilot and PassPilot entitlements, school lifecycle, kiosk configuration, Redis, and accepted ticket capability. V1 remains a disabled 60-second compatibility path. V2 returns a one-use 600-second ticket and immediately reduces the raw directory identifier to the new school-scoped HMAC ID plus the exact legacy 2.6.9 deterministic ID; only those opaque identifiers, the school, and bounded timestamps enter Redis. The raw identifier is never stored, logged, returned, or placed in a URL.
+- `POST /api/passpilot/kiosk/launch-ticket/redeem` requires current kiosk PIN/token authorization before consuming the ticket. It returns only `continuityOnly: true` plus an opaque school-scoped UUID-shaped `deviceId`; this ID preserves same-school kiosk continuity and is never a kiosk credential. Tickets are HMAC-keyed and atomically consumed with Redis `GETDEL` in production.
+- Public kiosk hot paths execute tenant queries inside one RLS checkout. Kiosk tokens, PINs, device IDs, session IDs, and school/student identifiers must never be added to kiosk metric labels or logs. Student roster DTOs remain separate from kiosk/Chromebook device records.
+
+### Kiosk credentials and ticket rotation
+
+`KIOSK_TOKEN_SECRET` falls back to `JWT_SECRET`. The opaque health rate-limit
+keys can rotate independently with `KIOSK_HEALTH_HMAC_SECRET`. Keep
+`CLASSPILOT_KIOSK_TICKET_HMAC_SECRET` stable during ordinary deployments.
+Its rotation also resets managed-device continuity. Use the reviewed
+coordinated rollout and preserve purpose-separated HMACs.
+
+### PassPilot Overdue Lifecycle
+- `schools.default_pass_duration` is the administrator-configurable overdue threshold for newly issued passes (1-240 whole minutes), not an automatic return timer.
+- A pass remains `active` after `expires_at` until an explicit return or cancellation. Active-pass reads and duplicate-issuance checks must not filter or mutate rows based on `expires_at`.
+- Derive overdue presentation as `status === "active" && now >= expiresAt`; do not persist a new overdue status. Retain historical `expired` rows unchanged.
+- Teacher, kiosk, and AI issuance use the school threshold when no per-pass duration override is provided. Existing passes keep their recorded `duration` and `expires_at` when the setting changes.
+- Return authority is independent of the issuing teacher, kiosk, class, or activity. Authorized same-school kiosks and PassPilot teachers/managers can return an exact active pass, including overdue passes, even between class assignments. Keep checkout, history, cancellation, school isolation, and kiosk authentication separate. The bounded **Return a pass** lookup exposes only return-selection identity; kiosk clients include the selected pass ID to reject stale selections.
+
 ## Release procedure (requires a separate deployment request)
 
 This implementation does not deploy or alter production. For a later release:
 
-1. Use the documented backend deploy process in `CLAUDE.md`, admitting the new
+1. Use the [backend deployment runbook](PRODUCTION_DEPLOYMENT.md#deploy-sequence--backend), admitting the new
    singleton with `--enable-rls-table passpilot_teacher_kiosk_settings` only on
    its first rollout. Preserve every other live RLS setting. The checksum-ledger
    expand migration is `passpilot-kiosk-schedule-20260924`.

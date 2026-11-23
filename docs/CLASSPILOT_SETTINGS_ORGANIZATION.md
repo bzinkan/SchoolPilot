@@ -249,3 +249,33 @@ Synthetic screenshots:
 - [Website tools, phone viewport](images/settings-organization/teaching-tools-websites-mobile.png)
 - [Classroom defaults, desktop](images/settings-organization/teaching-tools-defaults-desktop.png)
 - [Classroom defaults, phone viewport](images/settings-organization/teaching-tools-defaults-mobile.png)
+
+## Teaching tools and resource boundaries
+
+School and personal settings use separate narrow, version-checked writers.
+`/api/classpilot/admin/settings` returns canonical school identity and section
+snapshots; PATCH each named section only. `/api/classpilot/teacher/preferences`
+uses the exact school/author row in `classpilot_teacher_preferences`. Null tab
+limit inherits the school default, and saving it only changes the Dashboard
+Manage Tabs prefill, never student commands. Legacy mixed POST settings writes
+fail with `SETTINGS_REFRESH_REQUIRED`; preserve legacy reads and unrelated stored
+fields. Never repost school settings snapshots from roster grade editors.
+
+Teaching tools is personal for both teaching
+administrators and teachers; it does not broaden official class permissions.
+
+Optional automatic Flight Paths are configured per scheduled teaching class in
+Teaching tools → Class setup, off by default. Freeze the approved path only at
+the live occurrence transition or creation of a server-verified Manual today
+session; never backfill a preset into an existing manual session. Setting changes affect future sessions. The
+canonical whole-class remove command's `stopAutomaticFlightPath` option persists
+an occurrence-level off decision, including offline students and later returns
+from supervision. Preserve automatic-origin/manual-override metadata through
+reconnect and restoration, keep independent controls intact, and use existing
+class expiry/finalization. See `docs/CLASSPILOT_AUTOMATIC_FLIGHT_PATHS.md` for the
+API, capability boundaries, tests, and rollback floor.
+
+[Paperwork progress release](PAPERWORK_PROGRESS_RELEASE.md) records the
+September 28, 2026 121-table baseline and import-stage migration.
+Use the separate [runtime-config runbook](PRODUCT_RUNTIME_CONFIG_OPERATIONS.md)
+for shared teaching resources. Preserve personal, school and worker ownership.

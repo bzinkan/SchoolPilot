@@ -88,3 +88,19 @@ Each product's Gradle project fails a requested release build when any of its fo
 6. Test administrator, office-staff, and teacher routing on a clean Android installation.
 7. Verify sign-in fails closed when secure storage is intentionally unavailable.
 8. Publish the Android release separately from the SchoolPilot web/API deployment.
+
+## Local GoPilot debug build
+
+From Git Bash, run the product-specific build and sync before Gradle.
+
+```bash
+cd schoolpilot-app
+npm run mobile:gopilot
+cd android-gopilot
+JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+"$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The native clients use the published API origin. Preserve product routing
+through `VITE_APP_PRODUCT`, the GoPilot staff adapter and secure-storage
+failure behavior.

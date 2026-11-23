@@ -18,7 +18,7 @@ test("ClassPilot FAB/chat/poll startup migration is fail-closed and RLS-wired", 
     readFile(new URL("../.github/workflows/ci-build.yml", import.meta.url), "utf8"),
     readFile(new URL("../scripts/deploy.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/enforce-deploy-rls-allowlist.mjs", import.meta.url), "utf8"),
-    readFile(new URL("../CLAUDE.md", import.meta.url), "utf8"),
+    readFile(new URL("../docs/PRODUCTION_DEPLOYMENT.md", import.meta.url), "utf8"),
     readFile(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
   ]);
   for (const table of REQUIRED_FAB_TABLES) {

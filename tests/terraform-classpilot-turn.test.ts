@@ -15,7 +15,7 @@ const releaseRunbook = readFileSync(
   "docs/CLASSPILOT_2_7_1_RELEASE.md",
   "utf8"
 );
-const repositoryGuidance = readFileSync("CLAUDE.md", "utf8");
+const productionRunbook = readFileSync("docs/PRODUCTION_DEPLOYMENT.md", "utf8");
 const certificateRefresh = readFileSync(
   "infra/modules/turn/refresh-certificate.sh",
   "utf8"
@@ -42,7 +42,7 @@ describe("ClassPilot AWS TURN infrastructure contract", () => {
         `TURN operations must name the authorized address ${address}`
       );
     }
-    for (const document of [turnOperations, releaseRunbook, repositoryGuidance]) {
+    for (const document of [turnOperations, releaseRunbook, productionRunbook]) {
       assert.match(document, /6 to create, 3 to update, 4 to destroy/);
       assert.doesNotMatch(document, /4 to create, 2 to update, 4 to destroy/);
     }
