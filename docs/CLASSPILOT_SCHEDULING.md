@@ -144,3 +144,64 @@ reconnect, at school midnight, and periodically while the dashboard is visible.
 ## Automatic Dashboard Class transitions
 
 The optional scheduled Class rollout presents regular classes, applied schedule changes, testing and scheduled-class coverage in Class, with offline students included. Ad hoc supervision remains in Claimed. It retains the same authoritative occurrences and supervision/reporting boundaries while introducing full scheduled-testing tools and a due-boundary worker. This rollout requires additive database migrations and a separate compatible extension release; it is distinct from the earlier profile-only changes above. See [Automatic Class rollout and rollback](CLASSPILOT_AUTOMATIC_CLASS.md).
+
+## Runtime boundaries and recurring class starts
+
+Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per group. When `scheduleEnabled = true`:
+- `reconcileClasspilotScheduledSessions()` (`src/services/scheduler.ts`, every 60s) finalizes occurrences at their frozen end, then calls `processScheduledClassAutoStart()` for each group whose window is open; the scheduled teacher or a connected co-teacher carries the bell start
+- A live occurrence is never re-started: the tick reports `already_live` and performs no write, no roster control-state re-push, and no replacement finalization
+- Normal scheduled starts use the effective occurrence window. An unavailable automatic occurrence requires the explicit, authorized Manual for today workflow; never bypass the window or silently convert a start.
+- Every finalized scheduled occurrence is terminal for its frozen school-local date, including an early End Class. Finalization sets `scheduleSkippedDate` to that occurrence's `scheduledDate`; neither the scheduler nor a repeated normal start may resurrect it. A separately authorized Manual for today session does not reopen that scheduled occurrence.
+- An actual admin recurring-schedule change **clears** `scheduleSkippedDate` so a stale skip cannot block the new window. No-op class edits and Google Classroom imports preserve it.
+
+`autoEndStaleClassPilotSessions()` in scheduler runs every 60s as a safety net for teachers who forget to end class:
+- **Hard 12-hour cap** on any open session
+- **After school hours**: if `trackingEndTime` passed AND session running ≥ 1 hour, auto-end
+- Sends same session summary email as manual end
+- Broadcasts `session-ended` to teacher dashboard
+
+- **Scheduler** (`src/services/scheduler.ts`): `reconcileClasspilotScheduledSessions()` runs every 60s. Auto-end runs first (`listScheduledSessionsReadyToFinalize` → `finalizeClasspilotSession(reason: "scheduled_end")`), then `processScheduledClassAutoStart()` (`src/services/classpilotScheduledStart.ts`) runs for each group at its effective window. Idempotency contract: a live occurrence is never re-started — the tick returns `already_live` with no control-state re-push and no replacement finalization; only `started` / `coverage_needed` / `claimed` / `skipped` are logged. Skips non-instructional calendar dates. Uses school timezone.
+- **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
+- **Recurring schedule boundary**: Class Management creates and edits the recurring `groups.schedule_*` / `groups.block_*` configuration. These writes are audited as `class.recurring_schedule_updated`; they do not create a dated schedule-change/swap record. No-op class edits and Google Classroom imports preserve `schedule_skipped_date`.
+- **Administrator Manual today recovery**: `groups.schedule_manual_date` retains a school-local, class-wide exception for audited administrator recovery and existing sessions. Teacher all-day override writes are retired regardless of the Today write flag. Administrators must review the exact effective revision and live sessions affected; repeated recovery advances that revision. Existing deadline-bound manual sessions retain their frozen Flight Path and midnight/12-hour limits. See `docs/CLASSPILOT_MANUAL_TODAY.md` for retained recovery contracts.
+- **Reviewed start/switch**: selecting a class never starts it. Normal reviewed switches use `expectedActiveSessionId`; stale reviews fail with `CLASS_START_REVIEW_STALE`. An unavailable automatic meeting returns `TODAY_SCHEDULE_CHANGE_REQUIRED` with a Teaching tools URL. Teachers change timing through Today’s schedule, while ordinary Start/Join and unscheduled-class behavior remain. Administrator composite recovery retains `manualToday: { expectedSchoolDate, expectedTodayRevision? }`. Reuse requires frozen session-staff authority and preserves existing controls. The new occurrence-aware API/worker and separately ledgered conflict-index contraction establish the rollback floor described in `docs/CLASSPILOT_TODAY_SCHEDULE.md`.
+- **Session summary email**: both manual and scheduled end use `finalizeClasspilotSession()` in `src/services/classpilotSessionLifecycle.ts`. Finalization owns the durable report/delivery state; routes call `kickSummaryDispatch()` and scheduler retry paths complete delivery. Preserve school timezone, frozen staff/roster snapshots, and idempotency rather than building a second route-specific sender.
+
+See [Manual today](CLASSPILOT_MANUAL_TODAY.md) and [Today’s schedule](CLASSPILOT_TODAY_SCHEDULE.md) for their separate authority and release gates.
+
+## Legacy Planned time swaps
+Future Planned time swaps retain the existing linked-class workflow below. New
+same-day teacher changes use Teaching tools → Today’s schedule and the four-class
+reciprocal workflow in [Today’s schedule](CLASSPILOT_TODAY_SCHEDULE.md).
+
+ClassPilot can exchange the scheduled time windows of two administrator-linked
+official classes for one instructional date. This is a dated exception, not a
+recurring schedule edit: teachers, co-teachers, rosters, and class ownership do
+not move, and the normal `groups.block_*` schedule resumes the next day.
+
+- **Eligibility:** administrators and school administrators configure exact
+  eligible class pairs. Primary teachers may request and accept; co-teachers and
+  office staff are view-only. Teacher requests default off and require the other
+  primary teacher's acceptance. Administrator approval, the teacher same-day
+  cutoff, and required teacher reasons are independent policies that default on.
+  Disabling the cutoff never bypasses the absolute earliest affected-class start
+  guard, and administrator-created changes always require a reason.
+- **Authority:** `classpilot_schedule_change_pairs`,
+  `classpilot_schedule_changes`, and `classpilot_schedule_change_legs` are the
+  tenant-scoped workflow and effective-window authority. Never implement a
+  one-day change by updating `groups.block_start_time` or `block_end_time`.
+- **Effective schedule:** every pre-occurrence path—scheduler readiness,
+  automatic/manual start, occurrence freezing, Skip Today, and scheduled
+  conflict projection—must use the shared effective-window resolver. An
+  approved leg suppresses the original window for that class/date.
+- **Frozen history:** approval does not pre-create a teaching session. The
+  canonical occurrence and roster snapshot are created at the effective bell;
+  once created, the occurrence remains immutable. Skip Today skips only that
+  class's effective occurrence and never falls back to the original window.
+- **Concurrency:** request transitions, cancellation, Skip Today, and occurrence
+  creation share the instructional-calendar school/date lock and deterministic
+  class-row locks. Every workflow mutation is revisioned and audited.
+- **UI:** future teacher operations live under Teaching tools → Advanced →
+  Planned time swaps; existing saved links continue to work. Administrator pairing
+  and operations remain under Classes → Schedule Changes. The dashboard has no
+  swap manager or manual-start shortcut.

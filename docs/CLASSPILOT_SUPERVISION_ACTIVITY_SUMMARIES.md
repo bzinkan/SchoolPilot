@@ -24,7 +24,7 @@ Student details and retained results follow the school's activity-retention poli
 
 Each supervision reporting period preserves its staff assignment and actual start/end boundaries. Per-student rows preserve participation intervals separately from the context's mutable current staff assignment. Report materialization and delivery rows use those captured facts rather than reconstructing earlier responsibility from the latest context or audit log.
 
-Apply the reviewed checksum-ledger migration and forced tenant policies for the report, student-result and delivery tables before activating compatible API and scheduler-worker code. Admit the exact reviewed table bundle through the documented deployment procedure in `CLAUDE.md`; do not preload a future production RLS baseline. Release verification must confirm all writers understand the new reporting lifecycle before enabling capture with `CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM` and delivery with `CLASSPILOT_SUPERVISION_SUMMARY_EMAIL_ENABLED`.
+Apply the reviewed checksum-ledger migration and forced tenant policies for the report, student-result and delivery tables before activating compatible API and scheduler-worker code. Admit the exact reviewed table bundle through the [RLS admission procedure](PRODUCTION_DEPLOYMENT.md#deploy-time-rls-admission); do not preload a future production RLS baseline. Release verification must confirm all writers understand the new reporting lifecycle before enabling capture with `CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM` and delivery with `CLASSPILOT_SUPERVISION_SUMMARY_EMAIL_ENABLED`.
 
 The first release adds this exact one-shot argument to the documented backend deployment command:
 

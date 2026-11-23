@@ -89,7 +89,7 @@ describe("PassPilot guarded clean-school cutover CLI", () => {
       "utf8"
     );
     const packageJson = readFileSync("package.json", "utf8");
-    const runbook = readFileSync("CLAUDE.md", "utf8");
+    const runbook = readFileSync("docs/PRODUCTION_DEPLOYMENT.md", "utf8");
     const startupAndReads = [
       "src/index.ts",
       "src/routes/passpilot/classes.ts",

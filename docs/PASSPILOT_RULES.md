@@ -193,3 +193,14 @@ checksum-ledger migrations are never reverted. Denials keep expiring on schedule
   writes rejected by `WITH CHECK`, and denial writes under forced RLS.
 - `npm run test:passpilot-rules` in `schoolpilot-app` — Rules tab, override dialog
   and the kiosk denial message in Chromium.
+
+### Issuance transaction
+
+Preserve `enforcePasspilotIssuanceRules` in every transactional insert,
+including legacy, canonical and activity-kiosk paths. Keep the school lock
+around classification and insertion. Check encounter, destination capacity,
+daily limit and period limit in that order. Restrict encounter details and
+rule overrides to the authorized admin roles. Retain denials for 400 days and
+purge through the locked job, including while the feature is off. See
+[appointments](PASSPILOT_APPOINTMENTS.md) and [reports](PASSPILOT_REPORTS_V2.md)
+for their separate admissions.

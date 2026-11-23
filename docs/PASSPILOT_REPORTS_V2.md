@@ -134,3 +134,12 @@ neutralized. A strict, content-free same-transaction
 failure returns an error. The audit records scope, kind, bounded range, filter
 keys and row count, never CSV content, notes or confidential relationship data.
 Existing retained tables and student-deletion cascades remain authoritative.
+
+## Teacher My Class summary
+
+The legacy Pass Data summary shows class and student views, all students
+including zero counts, and period filters. Keep its CSV aligned with the
+chosen view. History reads use opaque keyset cursors (`limit <= 500`,
+`nextCursor`, `hasMore`). Follow every page when building a full report or
+export. V2 reports use their scoped, audited server aggregate and CSV
+contracts above.

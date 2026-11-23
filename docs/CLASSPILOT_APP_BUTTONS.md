@@ -28,7 +28,7 @@ School app changes are audited atomically using identifiers without copying save
 
 `classpilot-apps-20261118` adds `classpilot_app_buttons` and `classpilot_app_button_preferences` with forced tenant RLS. The reviewed `classpilotApps` bundle appends the two tables after the immutable 140-table Today Schedule candidate inventory. The new source/CI target is `classpilotAppsPostExpand` with 142 tables. Source inventory is not production admission; preserve the actual live API/worker table lists and all existing flags, adding only these two app tables.
 
-Follow CLAUDE.md. Deploy backend migrations and their live RLS catalog check before the frontend, using the reviewed one-shot table delta:
+Follow the [production runbook](PRODUCTION_DEPLOYMENT.md#schema-changes). Deploy backend migrations and their live RLS catalog check before the frontend, using the reviewed one-shot table delta:
 
 ```text
 --enable-rls-table classpilot_app_buttons,classpilot_app_button_preferences

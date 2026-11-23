@@ -180,7 +180,8 @@ each independent source and immutable record in
   Preserve historical checksums/inventories. Never preload production tfvars or
   rerun an already-admitted bundle. Admit only missing bundles in registry order.
 - Prepare dark backend migration/API/worker release, then frontend release using
-  `CLAUDE.md`. SchoolPilot deploys API/web only; the extension is separate.
+  the [production runbook](PRODUCTION_DEPLOYMENT.md). The ClassPilot extension
+  follows its separate release procedure.
 - Produce fresh reviewed runtime plans after any main/tool-SHA change. Product
   modes use `deploy-product-runtime-config.ps1`; capabilities use
   `deploy-classpilot-runtime-config.ps1`. No hand-edited task definitions,

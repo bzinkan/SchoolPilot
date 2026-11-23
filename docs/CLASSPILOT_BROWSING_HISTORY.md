@@ -43,3 +43,19 @@ With the existing `(student_id, timestamp)` index, PostgreSQL scanned 102 rows, 
 The grouped query was separately measured with `EXPLAIN ANALYZE` against 100,000 synthetic retained observations for one student. The first and second 100-visit pages took approximately 1.42 and 1.44 seconds locally, retaining complete 300-observation visits. Window sorting used approximately 6,670 temporary 8 KiB blocks. Visit mode deliberately scans the authorized selected stream again on each page; broad retained ranges cost more than the compatibility raw-row seek. This local measurement is not a production latency or concurrency guarantee, and no index or schema change was introduced.
 
 Run `node --env-file-if-exists=.env --import tsx scripts/verify-browsing-history-plan.ts` for the bounded synthetic comparison. The script refuses non-local database hosts. Unit tests in `tests/classpilot-browsing-history.test.ts` cover school-local DST dates, interval subtraction, cursor precision/scope and duration boundaries. The integration suite covers pagination, retention, cross-school denial and frozen teacher/supervision authorization.
+
+## Student Detail and Student Data
+
+The student sidebar (Screens, Timeline, History) is student-scoped and bound to the active teaching/supervision context:
+- Date-selected browsing uses the separate `/classpilot/students/:studentId/browsing-history` cursor API. Teacher authority comes from frozen historical staff/roster and supervision windows; whole-day totals remain administrator-only. Partial supervision cannot expose a whole-session aggregate. See `docs/CLASSPILOT_BROWSING_HISTORY.md`.
+- Teacher UI batches current screenshots with `POST /api/classpilot/tiles/screenshots` and history with `POST /api/classpilot/tiles/history`; the server resolves the exact internal binding and never returns or accepts a teacher-facing device ID.
+- History is constrained to the authorized active session/context window, and a binding/ownership change clears stale image, tab, classification, and capability state before applying the next revision.
+- The class badge shows the active group name (for example, "Science"), while coverage views identify the supervision context. Fetch failures must remain distinguishable from signed-out, signal-lost, stale, unauthorized, and genuinely empty states.
+
+Student Data dialog (accessible from dashboard toolbar) shows:
+- Time period filter (Today/Week/Month/Year) using school timezone
+- Class view: all students sorted by last name with browsing time and top domains
+- Click student for per-student domain breakdown
+- Browsing history tab: independent student name/email lookup, grade/class filters and school-local date range, available with no active class or online student. Teachers filter by current official primary/co-teacher assignments; administrators filter school grades/classes. Filters only narrow discovery; unfiltered lookup and detailed reads retain frozen historical teaching/supervision authority. See `docs/CLASSPILOT_BROWSING_HISTORY.md`.
+- Export CSV button for current view
+- Backend: `/student-analytics/:studentId` supports `startDate`/`endDate` query params

@@ -209,7 +209,7 @@ that archive unchanged and adds the separate approval-column migration.
    checks. The shared case fixture must have the same SHA-256 in both repos:
    `4b04de889de92a89225d0e5b33bdf9d4f5b0ecce86c95cbe67d21b116bffa0f5`.
 2. Deploy the new API/worker and web app with the new capability off, following
-   `CLAUDE.md`. No migration or new RLS admission is introduced.
+   the [production runbook](PRODUCTION_DEPLOYMENT.md). No migration or new RLS admission is introduced.
 3. Separately version, build and review a successor ClassPilot package. Reconfirm
    the Store's live/pending versions immediately before upload. Record the exact
    source/tag/ZIP identity and package tests; Store publication alone is insufficient.

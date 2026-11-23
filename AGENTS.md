@@ -1,42 +1,21 @@
 # AGENTS.md
 
-All agent guidance for this repository lives in [CLAUDE.md](./CLAUDE.md).
+Read [CLAUDE.md](./CLAUDE.md) before making changes. It is the shared startup
+guide for all coding agents. It links to the authorities for tenant isolation,
+development, CI, product boundaries, and production releases.
 
-That file covers the project overview, repository structure, development
-commands, architecture notes, environment variables, secrets hygiene, CI,
-school lifecycle/inquiry rules, and deployment procedures. It applies to any
-coding agent working in this repo, not just Claude Code — read it before making
-changes.
+For backend, frontend, and runtime changes, use the
+[production deployment runbook](./docs/PRODUCTION_DEPLOYMENT.md). Publish
+with `deploy.sh` and the exact standard web bundle from successful main push
+CI. Roll back with the private release receipt and its recorded S3 versions.
 
-Review workflow: inspect the branch, `git status`, and current GitHub main before
-editing. Preserve unrelated changes and use an isolated worktree when the shared
-checkout is busy or behind. Package scripts, CI workflows, and the owning source
-define executable commands; dated release observations do not establish current
-production, Chrome Web Store, or managed-device state.
+SchoolPilot releases cover the API, scheduler worker, and web app. The
+ClassPilot extension, Windows browser packages, and desktop software have
+separate release procedures. Follow the ownership and verification rules in
+[CLAUDE.md](./CLAUDE.md#releases-and-operations).
 
-Important boundary: SchoolPilot deploys the API and web app only. The
-ClassPilot Chrome extension is released separately from the `ClassPilot` repo
-through a versioned Chrome Web Store upload. The operator confirmed `2.9.7`
-is live on October 7, 2026. The August 22, 2026 `2.6.9` listing observation is
-historical. Store publication does not establish the uploaded ZIP identity or
-managed-device adoption. Confirm the live version and pending submissions again
-immediately before uploading any separately reviewed successor.
-
-Windows browser packages also belong to `ClassPilot`; the native Agent, Guard,
-and Host belong to `ClassPilotDesktop`. SchoolPilot owns their server integration.
-Read `docs/CLASSPILOT_WINDOWS_BROWSER_INTEGRATION.md` before changing that contract;
-source integration and simulated-host checks do not establish pilot readiness.
-
-Frontend deploys use the exact standard web bundle from successful main push
-CI. Use `deploy.sh` for artifact checks, publication, and rollback. Follow the
-frontend deployment sequence in `CLAUDE.md`.
-
-ClassPilot Teacher Dashboard boundary: teacher classroom actions must use the
-server-enforced command contract documented in `CLAUDE.md`. Do not expose
-device IDs in teacher-facing API/UI flows, and never treat missing targets as a
-class-wide or school-wide broadcast.
-
-ClassPilot Rosters boundary: the Rosters tab is not a student-to-device
-assignment surface. Student roster work uses school student records; Chromebook
-status work uses extension/Chromebook records. Do not reintroduce `deviceId`
-as part of student roster create/edit flows.
+For teacher classroom actions, use the
+[server-enforced command contract](./ARCHITECTURE.md#classpilot-teacher-dashboard-commands).
+Missing targets cannot become class-wide or school-wide broadcasts. Keep
+device IDs out of teacher-facing API and UI flows. Use school student records
+in Rosters and extension or Chromebook records for device status.

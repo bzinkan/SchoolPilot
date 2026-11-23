@@ -120,6 +120,6 @@ node --import ./tests/test-environment.mjs --import tsx --test --test-concurrenc
 
 These suites cover readiness/error classification, blocked sends, exact-scope
 recovery, signed-out cleanup, Windows freshness and delivery compatibility, and
-rendered composer behavior. Run the broader gates in `CLAUDE.md` as well.
+rendered composer behavior. Run the broader [required test gates](../DEVELOPMENT_NOTES.md#required-test-gates) as well.
 Disposable-browser and synthetic service tests do not establish managed-device
 adoption or physical Chromebook acceptance.
