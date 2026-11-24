@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PassPilot Bluetooth test</title>
+<style>
+  :root { color-scheme: light dark; font: 1rem/1.55 system-ui, sans-serif; }
+  body { margin: 0; }
+  main { max-width: 37rem; margin: 14vh auto 3rem; padding: 0 1.25rem; }
+  h1 { line-height: 1.2; margin-block: 0 1rem; }
+  button { font: inherit; font-weight: 650; padding: .65rem 1.05rem; border: 0; border-radius: .5rem; background: #1653bd; color: white; cursor: pointer; }
+  button:focus-visible { outline: 3px solid CanvasText; outline-offset: 3px; }
+  button:disabled { cursor: wait; opacity: .65; }
+  #result { margin-top: 1.25rem; overflow-wrap: anywhere; }
+</style>
+<main>
+  <h1>Test your PassPilot light</h1>
+  <p>Turn on the light and keep it near this Chromebook. When Chrome asks, choose the device whose name starts with <strong>PP-Light</strong>.</p>
+  <button id="test" type="button">Test Bluetooth light</button>
+  <p id="result" role="status" aria-live="polite"></p>
+</main>
+<script>
+  const serviceId = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+  const receiveId = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+  const transmitId = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+  const button = document.querySelector("#test");
+  const result = document.querySelector("#result");
+
+  async function receiveGreeting(characteristic) {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let received;
+    let timer;
+    const greeting = new Promise(resolve => { received = resolve; });
+
+    function onNotification(event) {
+      buffer += decoder.decode(event.target.value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop().slice(-32);
+      if (lines.some(line => /^(?:H,)[0-9a-f]{16}\r?$/i.test(line))) received(true);
+    }
+
+    characteristic.addEventListener("characteristicvaluechanged", onNotification);
+    try {
+      await characteristic.startNotifications();
+      timer = setTimeout(() => received(false), 8000);
+      return await greeting;
+    } finally {
+      clearTimeout(timer);
+      characteristic.removeEventListener("characteristicvaluechanged", onNotification);
+    }
+  }
+
+  button.addEventListener("click", async () => {
+    if (!window.isSecureContext) {
+      result.textContent = "Open the test using the PassPilot HTTPS address.";
+      return;
+    }
+    if (!navigator.bluetooth?.requestDevice) {
+      result.textContent = "Chrome does not offer browser Bluetooth access on this page.";
+      return;
+    }
+
+    button.disabled = true;
+    result.textContent = "Waiting for you to choose the light in Chrome…";
+    let device;
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: "PP-Light-", services: [serviceId] }],
+      });
+      result.textContent = "Connecting to the light…";
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(serviceId);
+      const characteristics = await service.getCharacteristics();
+      const receive = characteristics.find(characteristic => characteristic.uuid === receiveId);
+      const transmit = characteristics.find(characteristic => characteristic.uuid === transmitId);
+      if (!receive?.properties.write || !transmit?.properties.notify) {
+        throw new Error("The selected light did not expose the expected Bluetooth controls.");
+      }
+
+      const greeted = await receiveGreeting(transmit);
+      result.textContent = greeted
+        ? "Success. This Chromebook connected to the PassPilot light and received its greeting."
+        : "The Chromebook connected, but the light did not send its greeting. Restart the light and try again.";
+    } catch (error) {
+      result.textContent = "Bluetooth test stopped. " + error.message;
+    } finally {
+      if (device?.gatt.connected) device.gatt.disconnect();
+      button.disabled = false;
+    }
+  });
+</script>
+</html>
