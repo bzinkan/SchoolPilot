@@ -18,7 +18,40 @@ test('staff selects an exact kiosk or fixed class and keeps the gateway credenti
     const page = await browser.newPage({ acceptDownloads: true, viewport: { width: 430, height: 900 } });
     const requests = [], errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.addInitScript(() => localStorage.setItem('sp_activeSchoolId', 'school-a'));
+    await page.addInitScript(() => {
+      localStorage.setItem('sp_activeSchoolId', 'school-a');
+      const probe = { blocked: true, disconnects: 0, filters: null };
+      window.passPilotLightProbe = probe;
+      Object.defineProperty(navigator, 'bluetooth', {
+        configurable: true,
+        value: {
+          async requestDevice({ filters }) {
+            probe.filters = filters;
+            if (probe.blocked) throw new DOMException('Bluetooth access was blocked.', 'NotAllowedError');
+            const transmitter = Object.assign(new EventTarget(), {
+              uuid: '6e400003-b5a3-f393-e0a9-e50e24dcca9e',
+              properties: { notify: true },
+              async startNotifications() {
+                for (const chunk of ['H,010203', '0405060708\n']) {
+                  this.value = new DataView(new TextEncoder().encode(chunk).buffer);
+                  this.dispatchEvent(new Event('characteristicvaluechanged'));
+                }
+              },
+            });
+            return { gatt: {
+              connected: false,
+              async connect() { this.connected = true; return this; },
+              async getPrimaryService() {
+                return { async getCharacteristics() {
+                  return [{ uuid: '6e400002-b5a3-f393-e0a9-e50e24dcca9e', properties: { write: true } }, transmitter];
+                } };
+              },
+              disconnect() { this.connected = false; probe.disconnects++; },
+            } };
+          },
+        },
+      });
+    });
     const token = `ppi_${'a'.repeat(43)}`;
     const pairingId = '9801f5da-6f71-4c88-a370-2ea2112c114a';
     const kioskSessionId = '5f0a1994-c142-40f8-9332-58af90d578a1';
@@ -46,6 +79,16 @@ test('staff selects an exact kiosk or fixed class and keeps the gateway credenti
     await page.getByRole('radio', { name: 'Follow a kiosk' }).waitFor({ timeout: 4000 });
     assert.ok(await page.getByRole('radio', { name: 'Follow a kiosk' }).isChecked());
     await page.getByRole('alert').filter({ hasText: 'Kiosks could not be loaded' }).waitFor();
+    const connectLight = page.getByRole('button', { name: 'Connect light', exact: true });
+    await connectLight.click();
+    await page.getByRole('status').filter({ hasText: 'Bluetooth access was blocked' }).waitFor();
+    await page.evaluate(() => { window.passPilotLightProbe.blocked = false; });
+    await connectLight.click();
+    await page.getByRole('status').filter({ hasText: 'Bluetooth test passed' }).waitFor();
+    const probe = await page.evaluate(() => window.passPilotLightProbe);
+    assert.deepEqual(probe.filters, [{ namePrefix: 'PP-Light-', services: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e'] }]);
+    assert.equal(probe.disconnects, 1);
+    assert.ok(requests.every(r => r.method !== 'POST'));
     kioskListResponse = 'empty';
     await page.getByRole('button', { name: 'Refresh kiosk list' }).click();
     await page.getByText('No active kiosks found.', { exact: false }).waitFor();

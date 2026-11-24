@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/button';
+import BluetoothLightTest from '../components/BluetoothLightTest';
 import { passPilotClassRequest, useCanonicalPassPilotClasses } from '../classData';
 import { kioskLightPairingCode } from '../indicatorPairing';
 
@@ -78,8 +79,8 @@ export default function IndicatorSetup({ user }) {
   }
 
   return <div className="mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
-    <header><h1 className="text-2xl font-semibold">Classroom light prototype</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Pair a gateway with your PassPilot kiosk or one class. Pairings expire after 30 days.</p></header>
+    <header><h1 className="text-2xl font-semibold">Classroom light</h1></header>
+    <BluetoothLightTest />
     <section className={sectionClass}>
       <h2 className="text-lg font-medium">What the lights show</h2>
       <p className="text-sm">Blue: restroom or water. Yellow: office. Red: nurse. A light stays on until all matching active passes are returned. Off means clear; pulsing white means status is unavailable.</p>
@@ -88,6 +89,7 @@ export default function IndicatorSetup({ user }) {
     {notice ? <p role="status" className="text-sm">{notice}</p> : null}
     <form className={sectionClass} onSubmit={create}>
       <h2 className="text-lg font-medium">Create a pairing</h2>
+      <p className="text-sm text-muted-foreground">Pair an ESP32 gateway with your kiosk or one class. Pairings expire after 30 days.</p>
       <fieldset className="space-y-2 text-sm" disabled={locked}>
         <legend className="mb-2 font-medium">What should the light follow?</legend>
         <label className="flex items-center gap-2"><input type="radio" name="indicator-target" checked={followsKiosk} onChange={() => setTarget('kiosk')} />Follow a kiosk</label>

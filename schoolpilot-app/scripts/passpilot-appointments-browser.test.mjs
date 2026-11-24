@@ -202,6 +202,11 @@ test('mode off and staff roles gate navigation and reminder surfaces', async () 
       await page.getByText('Synthetic content').waitFor();
       if (options.role === 'office_staff') await page.getByRole('link', { name: 'Appointments', exact: true }).first().waitFor();
       else { await page.waitForFunction(() => window.appointmentCapabilityReady()); assert.equal(await page.getByRole('link', { name: 'Appointments', exact: true }).count(), 0); }
+      await page.getByRole('button', { name: 'Kiosk Mode' }).click();
+      await page.getByRole('menuitem', { name: /Open Kiosk/ }).waitFor();
+      const classroomLight = page.getByRole('menuitem', { name: 'Classroom light', exact: true });
+      if (options.role === 'office_staff') assert.equal(await classroomLight.count(), 0);
+      else assert.equal(await classroomLight.getAttribute('href'), '/passpilot/indicators');
     } finally { await closePage(page); }
   }
   const { page, requests } = await setup('teacher', { role: 'office_staff' });

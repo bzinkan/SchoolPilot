@@ -15,6 +15,7 @@ import {
   Pencil,
   Hash,
   CalendarDays,
+  Lightbulb,
 } from 'lucide-react';
 import ClaimKioskDialog from './ClaimKioskDialog';
 import { useKioskSessions } from '../useKioskSessions';
@@ -181,6 +182,14 @@ export default function AppShell({ children, currentTab }) {
                 <Monitor className="mr-2 h-4 w-4" />
                 Open Kiosk{kioskName ? ` (${kioskName})` : ''}
               </DropdownMenuItem>
+              {(isTeacher || isAdmin) && (
+                <DropdownMenuItem asChild>
+                  <Link to="/passpilot/indicators">
+                    <Lightbulb className="mr-2 h-4 w-4" />
+                    Classroom light
+                  </Link>
+                </DropdownMenuItem>
+              )}
               {!legacyKioskServer && (
                 <>
                   <DropdownMenuSeparator />
