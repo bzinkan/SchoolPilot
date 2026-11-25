@@ -4,7 +4,7 @@
 
 Run the compiled CLI in an isolated instance of the candidate production image. Supply a separately bootstrapped disposable local PostgreSQL database named `schoolpilot_paperwork…` or `schoolpilot_benchmark…`. The CLI rejects remote database hosts and refuses to proceed when other imports are queued or processing. Both normal and privileged connection settings must identify that same disposable database. No schema bootstrap, production task update, storage provisioning, or feature activation occurs inside this command.
 
-Set `PAPERWORK_BENCHMARK_ISOLATED=1` in that isolated process. The default transport generates strict synthetic responses with a 500-millisecond delay; no API key is needed:
+Set `PAPERWORK_BENCHMARK_ISOLATED=1` and `SCHOOLPILOT_EXTERNAL_AI_MODE=on` in that disposable process so the real worker can claim the fixture jobs. The default transport generates synthetic responses with a 500-millisecond delay and requires no API key.
 
 ```text
 node dist/cli/benchmarkPaperworkPreparation.js --transport synthetic --pairs 3 --image-digest sha256:<candidate digest>
