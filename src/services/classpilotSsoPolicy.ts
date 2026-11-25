@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseDomain } from "tldts";
 
 export const CLASSPILOT_SSO_POLICY_SCHEMA_VERSION = 1 as const;
@@ -94,6 +95,18 @@ export function disabledClasspilotSsoPolicy(): ClasspilotSsoPolicy {
     profiles: builtInClasspilotSsoProfiles(),
   };
 }
+
+// Compare fresh persisted values with this private immutable definition. The
+// common default needs no repeated URL/domain validation; no school policy,
+// revision, authorization decision, or caller-owned object is cached.
+const DISABLED_DEFAULT_POLICY = disabledClasspilotSsoPolicy();
+for (const profile of DISABLED_DEFAULT_POLICY.profiles) {
+  for (const rule of profile.hostRules) Object.freeze(rule);
+  Object.freeze(profile.hostRules);
+  Object.freeze(profile);
+}
+Object.freeze(DISABLED_DEFAULT_POLICY.profiles);
+Object.freeze(DISABLED_DEFAULT_POLICY);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -401,6 +414,9 @@ export function classpilotSsoPolicyFromSettings(row: {
     return { policy: disabledClasspilotSsoPolicy(), revision, valid: true };
   }
   try {
+    if (isDeepStrictEqual(row.classpilotSsoPolicy, DISABLED_DEFAULT_POLICY)) {
+      return { policy: disabledClasspilotSsoPolicy(), revision, valid: true };
+    }
     return {
       policy: canonicalizeClasspilotSsoPolicy(row.classpilotSsoPolicy),
       revision,
