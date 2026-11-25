@@ -1,7 +1,7 @@
 # SchoolPilot Platform — Principal & IT Review
 
 **Audience:** School Principals, IT Directors, and Technology Coordinators
-**Prepared:** 2026
+**Scope:** Version 1 principal and IT overview. Classroom activity rules, safety notifications, privacy and backup statements reviewed November 25, 2026. Check the current school agreement and product guides for the features approved for your school.
 **Vendor:** SchoolPilot LLC (Ohio)
 **Contact:** support@school-pilot.net
 
@@ -22,9 +22,9 @@ ClassPilot is positioned as a **"GoGuardian / Securely Light"** alternative: it 
 | Identity model | **Student email**, not device serial |
 | Hosting | AWS (us-east-1) |
 | Multi-tenancy | Hard school-domain isolation (every record scoped by `schoolId`) |
-| Compliance posture | FERPA-compliant, COPPA-aware, SOC 2 readiness in progress (not certified — see §6) |
-| Data retention | Configurable per school (default 30 days) |
-| Pricing model | Per-student/year, no base fee: $3 (1 product) / $5 (2) / $7 (all 3); +$1 for 24/7 monitoring — see §9 |
+| School privacy and security | Confirm applicable FERPA and COPPA obligations with the school. SOC 2 readiness is in progress. See §6. |
+| Data retention | Periods differ for browser activity, previews, safety evidence, records, and backups. See §6 and the [Privacy Policy](https://school-pilot.net/privacy). |
+| Pricing model | Per-student/year, no base fee: $3 (1 product) / $5 (2) / $7 (all 3); +$1 for the optional extended monitoring window — see §9 |
 
 ---
 
@@ -59,14 +59,9 @@ The student-side component is a single Manifest V3 Chrome extension, deployed th
 - Renders an in-tab notification overlay when the teacher sends a hand-raise response or a quick message.
 - Shows a small disclosure badge during a class session so the student knows monitoring is active (privacy transparency).
 
-**What the extension does NOT do:**
-- It does not capture keystrokes, passwords, or form data.
-- It does not record audio or video.
-- It does not screenshot or record the student's screen.
-- It does not run outside school hours unless the school explicitly enables after-hours mode in settings (off by default).
-- It does not modify SSL/TLS, install root certificates, or perform any network-level interception.
+**Student privacy and visibility**
 
-**Extension footprint:** ~60 KB. No native binaries. No background CPU when no session is active.
+ClassPilot reports authorized browser activity. School-approved features can show current tabs and titles, temporary screen previews, and staff-initiated live views or downloads. Certain safety events have a separate evidence process. URLs and page titles can contain information a student entered. The school should describe each approved feature, tracking window, and after-hours setting in its family notice. See the [Privacy Policy](https://school-pilot.net/privacy).
 
 ### 2.4 Teacher Features
 
@@ -74,7 +69,7 @@ The teacher dashboard is the daily-driver UI. Designed to be glanceable during i
 
 **Live class view:**
 - All students currently signed in to the active class shown as cards with their current page title + favicon.
-- Color-coding for on-task vs. off-task (AI classification, see §2.5).
+- A fresh student tile can show an Off-Task badge when a local website rule or the school’s approved-site list flags the page. See §2.5.
 - Click a student card to see tab history for the current session.
 
 **FAB — Floating Action Buttons (the teacher↔student interaction layer):**
@@ -94,34 +89,17 @@ The FAB groups the live, two-way classroom-engagement features. Both messaging a
 - **Flight Path** — push a pre-built browsing scene to the class (allowed/blocked URL set). Similar concept to GoGuardian "Scenes": one click swaps the class into "test mode," "research mode," "free-read mode," etc. Flight Paths are configurable per school.
 - **Block** — add a domain to the school or class blocklist immediately; takes effect within seconds.
 
-**Off-task alerts:**
-When the AI classifier (see §2.5) flags content as likely off-task during an active session, the teacher gets a non-blocking toast notification on the dashboard. The teacher can:
-- Acknowledge and let it ride
-- Send a quick "stay on task" message to the student
-- Open the student's current page in a teacher-side tab to verify
+**Off-task indicators and class summaries**
 
-**End-of-class email report:**
-When a teacher ends a class session, an email is delivered to the teacher's school email address within a few minutes. The report includes:
-- Class name, date, duration, students present
-- Top 10 domains visited across the class
-- Per-student top URLs (or a "no concerns" line)
-- Any AI-flagged off-task content and the teacher's response
-- A simple text "anything notable?" summary
-- A CSV attachment for the teacher's records
+The teacher can review the active page in the context of the assignment, allow a site for the class, or contact the student using available classroom tools. When a class ends, eligible reports are queued for delivery. Coverage gaps, connectivity and email delivery can affect what staff receive. Refer to the [teacher guide](CLASSPILOT_TEACHER_GUIDE.md) for current controls.
 
-**Goal of the email:** the teacher can review the class on their phone over coffee, not by logging into another portal. This is a frequent request from veteran teachers who are not going to add another dashboard to their day.
+### 2.5 Local website rules and safety alerts
 
-### 2.5 AI Off-Task Classification
+ClassPilot uses built-in domain and search rules during authorized monitoring. Teachers may see an Off-Task badge for a known game. An approved lesson site can remain clear. An unfamiliar site can stay Unknown and can still be flagged if it falls outside an active school approved-site list. A badge describes observed browsing in context. The teacher determines whether that activity fits the assignment.
 
-Students' active URLs and page titles are classified by an LLM (Google Gemini Flash-Lite) into:
-- **On task** — relevant to the active assignment / class subject
-- **Borderline** — gray area; logged but not surfaced
-- **Off task** — clearly unrelated (games, social, video)
-- **Concerning** — adult content, weapons content, self-harm signals
+Qualifying safety concerns enter Safety Center. Email is queued for eligible active school administrators. A school with no eligible recipients can have a recorded alert and no queued email. Delivery can be delayed or fail. Staff acknowledgment is a separate action. The school designates a primary responder and backup, checks the roster when staff change, and uses its own emergency procedures when urgent help is needed.
 
-Only **off task** and **concerning** classifications trigger UI/teacher notifications. The classification is text-only; no page content is sent to the LLM beyond URL + page title + the teacher's stated class subject.
-
-**Concerning content** triggers an immediate email to the school admin email and an audit log entry. The school admin can opt out of these emails in settings.
+External AI processing is paused pending legal approval. Google Gemini and Anthropic receive no new model requests from SchoolPilot. Local Class Chat and poll safety rules continue where enabled. See the [AI Transparency notice](https://school-pilot.net/ai-transparency).
 
 ### 2.6 Schedule & Auto-Sessions
 
@@ -130,12 +108,11 @@ Each class can have an "auto-schedule" — block start / block end times. The sy
 - Ends a session at block end
 - Skips weekends and holidays per the school timezone
 
-Teachers can manually start and end sessions at any time within those boundaries. Outside the boundaries, sessions cannot be started (prevents accidental after-hours monitoring).
+Class sessions and school tracking hours are separate controls. Verify the configured local days, timezone and hours, whether tracking-hour limits are enabled, and what the school authorizes while no class is active.
 
-After-hours behavior is governed by a school-level **After Hours Mode** setting:
-- `off` (default) — no monitoring outside scheduled tracking days/hours
-- `limited` — heartbeats only, no classification, no email reports
-- `full` — full monitoring continues
+- With tracking hours enabled, `off` restricts monitoring outside the configured window.
+- `limited` can allow eligible after-hours safety reports. After-hours safety-related tab closure is disabled in this mode.
+- `full` allows broader after-hours monitoring subject to the other controls. Each permitted use needs to be covered by the school’s authorization and notice.
 
 This setting is auditable and changes are logged.
 
@@ -190,8 +167,8 @@ Configurable from a single Settings page:
 - School-wide blocked / allowed domain lists
 - Hand-raising on/off
 - Student messaging on/off
-- AI safety emails on/off
-- Retention period (default 720 hours = 30 days)
+- Review eligible active school administrators, notification status and the school response procedure.
+- Configurable browser-activity retention. Other data categories follow separate schedules.
 - IP allowlist (admin login)
 
 ### 3.5 Audit Logs
@@ -208,7 +185,7 @@ A planned admin tool that will connect (read-only) to the school's Google Worksp
 
 ### 3.7 Email Monitoring Add-On (MailPilot)
 
-Optional add-on. Monitors school-hosted Gmail mailboxes for safety signals (self-harm language, threats, bullying). Requires a separate one-time Workspace OAuth grant and is disabled by default. Not described in detail here; available on request.
+MailPilot’s external safety scanning is paused. New school Gmail messages receive no automated scan or model alert during the pause. Existing findings remain available to authorized staff. Review any gap in coverage with the school before resuming a separately authorized service.
 
 ---
 
@@ -259,7 +236,7 @@ Current capacity is comfortable for thousands of concurrent classrooms across hu
 
 - **Region:** AWS `us-east-1` (Northern Virginia)
 - **Compute:** ECS Fargate (containerized Node.js + Express)
-- **Database:** RDS PostgreSQL with daily automated snapshots, 30-day retention, encryption at rest (AWS-managed KMS keys)
+- **Database:** The production RDS PostgreSQL instance reported encrypted storage and a 14-day automated-backup retention setting on November 25, 2026.
 - **Cache / pub-sub:** ElastiCache Redis with TLS in transit, AUTH password, encryption at rest
 - **Frontend hosting:** S3 with CloudFront CDN
 - **TLS / HTTPS:** Application Load Balancer with ACM-managed certificates; HSTS enforced
@@ -268,11 +245,7 @@ Current capacity is comfortable for thousands of concurrent classrooms across hu
 
 ### 5.2 Backup & Disaster Recovery
 
-- **Database backups:** Automated daily snapshots, 30-day retention. Point-in-time recovery for the last 7 days.
-- **Manual snapshots:** Created before any major release or migration.
-- **RPO target:** 24 hours.
-- **RTO target:** 4 hours from snapshot to fully restored environment.
-- **Configuration as code:** Infrastructure changes are managed via repeatable scripts; a complete rebuild from snapshot has been rehearsed.
+Automated backups on the production RDS instance have a 14-day retention setting, verified November 25, 2026. Manual snapshots, restored copies, exports and object storage have separate rules. Request dated restore-test evidence for recovery claims.
 
 ### 5.3 Native Mobile (Companion Products Only)
 
@@ -286,31 +259,19 @@ GoPilot is available as a staff-only Android app via Capacitor. ClassPilot remai
 
 | Framework | Status |
 |---|---|
-| FERPA | Compliant; full posture documented |
-| COPPA | Compliant for the schools-as-agent model; data-processing agreement available |
+| FERPA | For a covered school, document the authority for disclosure, direct school control and permitted use in the school agreement. |
+| COPPA | For covered collection from children under 13, identify the operator notice, who may authorize each use, and any parental consent needed. |
 | SOC 2 Type I/II | **Readiness in progress; not certified.** Certification is deferred until revenue supports the audit cost (~$25K). Several technical controls are implemented and others remain in the SOC 2 remediation register. We can provide our Written Information Security Program (WISP), HECVAT Lite questionnaire, public subprocessor list, and readiness evidence summary. |
-| NDPA / SDPC | Standard contract available |
+| NDPA / SDPC | Review the district’s data privacy agreement and applicable state supplement. Only an executed agreement establishes terms for that school. |
 | iKeepSafe | Not certified (cost-deferred) |
 
-### 6.2 FERPA Compliance
+### 6.2 Student records and school control
 
-ClassPilot operates under the "school official" exception to FERPA: the school is the data controller; SchoolPilot is the processor acting under the school's direction. Specifically:
+A school that receives covered federal funding should identify a FERPA basis before disclosing personally identifiable education records. When relying on the school-official exception, document the educational purpose, legitimate educational interest, direct school control and limits on use and redisclosure. Authorize staff access for the relevant school and purpose. [US Department of Education guidance](https://studentprivacy.ed.gov/faq/which-educational-agencies-or-institutions-does-ferpa-apply)
 
-- The school owns and controls all student data in the platform.
-- SchoolPilot does not sell, advertise against, or share student data with any third party for marketing.
-- All access to student records is role-gated; only the school's authorized staff can view their students.
-- Every access to a student record by an admin or super-admin is audit-logged.
-- A school can request bulk export or bulk deletion of all student data at any time and receive it within 30 days.
-- Retention is configurable per school; the default of 30 days for activity records is well within FERPA's expectations.
+### 6.3 Children under thirteen
 
-### 6.3 COPPA Compliance
-
-For users under 13, the platform relies on **school consent under COPPA's school exception** rather than parental consent for each student. This is the same model used by Google Workspace for Education, GoGuardian, Securely, and other school-deployed monitoring tools. Specifically:
-
-- The school's terms of service with parents authorize the school to consent on behalf of parents to school-approved educational services.
-- ClassPilot is configured as a school-approved service when the school signs SchoolPilot's Data Processing Agreement.
-- No advertising, no profile-building, no cross-context tracking.
-- The extension displays a disclosure indicator to students when a class session is active.
+School authorization under COPPA depends on the actual educational use. SchoolPilot must provide the school with direct notice of collection, use and disclosure when relying on school authorization. Identify all intended purposes and third parties and determine whether a parent must separately consent. The operator remains responsible for its own COPPA obligations. Record the school’s authorization and make the agreed family notice available. [FTC guidance for schools](https://www.ftc.gov/business-guidance/resources/complying-coppa-frequently-asked-questions)
 
 ### 6.4 SOC 2 Readiness Controls (Selected)
 
@@ -391,22 +352,14 @@ ClassPilot integrates with Google Workspace using standard OAuth 2.0 with **read
 - Admins can also revoke access from their Google account at `myaccount.google.com/permissions`
 - Refresh-token rotation follows Google's standard schedule
 
-**Verification status:** ClassPilot's OAuth client is **verified by Google.** Both brand verification and data-access (scope) verification are complete and shown in the Google Cloud Verification Center as approved. Users see Google's standard consent screen with no unverified-app warning.
-
-**Scopes requested in the current release:** `classroom.courses.readonly`, `classroom.rosters.readonly`, `classroom.profile.emails`, `admin.directory.user.readonly`, `admin.directory.orgunit.readonly`, and standard `openid` / `userinfo` scopes — all verified. The two additional scopes for the planned Workspace Security Audit are **not requested today**; they will be submitted for Google's lightweight sensitive-scope review when that feature is re-enabled (CASA / third-party assessment is **not required** — both are classified as sensitive, not restricted).
-
-**For IT directors:** all current ClassPilot flows are covered by the existing Google verification. There is no "unverified app" warning when an administrator connects their Workspace — they see the same standard consent screen they'd see for any verified third-party education app.
+**Google sign-in and Workspace permissions.** Confirm the client, requested OAuth scopes and delegated administrator permissions in the school’s current Google Admin Console. Approving an OAuth scope grants only that service access. Separate agreements and school authorization govern any model use. SchoolPilot’s external model processing is paused.
 
 ### 6.6 Privacy Posture (Plain English)
 
-- We collect the **minimum** data needed to make the product work: student email, browsing during active class sessions, page titles, and URLs.
-- We do not record keystrokes, passwords, screen content, or audio.
-- We do not sell student data.
-- We do not advertise to students.
-- We do not profile students across schools or for marketing.
-- We retain activity data for 30 days by default (configurable).
-- We honor deletion requests within 30 days.
-- We tell students when monitoring is active via an in-browser indicator.
+- School-configured monitoring may include student identifiers, page addresses, page titles and authorized previews. Local off-task flags and safety rules have limited coverage.
+- SchoolPilot does not sell student data or use it for student advertising.
+- For access, correction, return or deletion, use the school’s privacy contact or privacy@school-pilot.net. Identify the record categories, applicable agreement, time limits and who holds any downloaded copies. Deactivating an account removes access and can leave records in storage.
+- Describe all approved features and monitoring periods to families. The [Privacy Policy](https://school-pilot.net/privacy) gives data-category and retention details.
 
 ### 6.7 Public Documents Available
 
@@ -530,26 +483,26 @@ This is closed at the Google Workspace policy level — see §8 (Required Google
 Each school is a fully isolated tenant — separate roster, separate settings, separate audit logs, separate billing if needed. A super-admin user can be granted visibility across multiple schools in a district for cross-school reporting.
 
 **Q: What happens if your service is down?**
-Chromebooks continue to function normally. The extension fails open — students can browse, and the teacher dashboard simply doesn't update until service is restored. No monitoring data is lost during a brief outage; the extension queues and reports on reconnection.
+A service interruption can delay or interrupt teacher visibility, commands and reporting. Review actual monitoring coverage after reconnection and use the school’s usual supervision procedures during the gap.
 
 **Q: Can we self-host?**
 Not currently. SchoolPilot is SaaS only.
 
 **Q: Where is the data stored?**
-AWS us-east-1 (Northern Virginia). Data does not leave US AWS regions.
+Core hosting is in AWS us-east-1. Review the [subprocessor list](https://school-pilot.net/subprocessors) and the executed school agreement for separate provider handling and geographic commitments.
 
 **Q: Can we get a SOC 2 report?**
 We have not yet undergone a SOC 2 audit. We can provide our WISP, HECVAT Lite questionnaire, public subprocessor list, remediation register summary, and readiness evidence package. SOC 2 Type I certification is on our roadmap.
 
 **Q: How long are records retained?**
-Default: 30 days for browsing activity, indefinitely for audit logs. Retention is configurable by your school admin. Deletion requests honored within 30 days.
+Retention differs by data category, school settings, agreement, applicable law and separately retained copies. Identify the requested data and verify its disposition, including backup expiry, before issuing any destruction certificate.
 
 **Q: What's the price?**
 Per-school annual subscription, scaled by enrolled student count, no base fee:
 - **1 product** (e.g., ClassPilot only): **$3 / student / year**
 - **Any 2 products**: **$5 / student / year**
 - **All 3 products** (ClassPilot + PassPilot + GoPilot): **$7 / student / year**
-- Optional **24/7 monitoring add-on**: **+$1 / student / year**
+- Optional extended monitoring window, **+$1 / student / year**. The school approves the hours and arranges its own response coverage.
 
 Example: a 500-student school running ClassPilot = **$1,500 / year**. Contact `support@school-pilot.net` for volume or multi-year discounts.
 
