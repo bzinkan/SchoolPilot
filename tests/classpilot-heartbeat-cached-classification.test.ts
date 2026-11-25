@@ -12,6 +12,7 @@ import type { AiClassification, AiClassificationOptions } from "../src/services/
 
 type FastClassification = (url: string, title?: string, options?: AiClassificationOptions) => AiClassification | null;
 type Classifier = {
+  isAiAvailable: typeof import("../src/services/aiClassification.js").isAiAvailable;
   classifyUrl: typeof import("../src/services/aiClassification.js").classifyUrl;
   classifyImmediateEducationalUrl: typeof import("../src/services/aiClassification.js").classifyImmediateEducationalUrl;
   classifyImmediateHeartbeatUrl: FastClassification;
@@ -33,7 +34,7 @@ function assertClassifier(value: unknown): asserts value is Classifier {
 // Run the real module with only provider I/O and clock controlled. Capturing its
 // Map constructors lets the namespace tests supply foreign cache entries without
 // adding production cache-reset/inspection methods or changing source bytes.
-function fixture() {
+function fixture(browserMode: { CLASSPILOT_BROWSER_GEMINI_MODE?: string } = { CLASSPILOT_BROWSER_GEMINI_MODE: "on" }) {
   let now = 1_800_000_000_000;
   let denyProviderInput = false;
   let providerCalls = 0;
@@ -57,7 +58,7 @@ function fixture() {
   runInNewContext(executable, {
     exports: exported,
     require(name: string) { return Object.hasOwn(dependencies, name) ? dependencies[name] : require(name); },
-    process: { env: { GEMINI_API_KEY: "synthetic-key" } },
+    process: { env: { GEMINI_API_KEY: "synthetic-key", ...browserMode } },
     fetch: async () => { providerCalls++; return respond(); },
     URL, Buffer, AbortController, AbortSignal, performance, setTimeout, clearTimeout,
     Date: Clock, Map: CapturedMap,
@@ -232,4 +233,20 @@ test("credential redaction never merges different original observations in the f
   assert.equal(f.fast(other, "Lesson"), null);
   assert.equal(f.fast(first, "Lesson password=SYNTHETIC_SECRET"), null);
   assert.equal(f.calls(), 1);
+});
+
+
+test("browser Gemini defaults to local rules with a configured key and no explicit enablement", async () => {
+  for (const browserMode of [{}, { CLASSPILOT_BROWSER_GEMINI_MODE: "off" }, { CLASSPILOT_BROWSER_GEMINI_MODE: "invalid" }]) {
+    const f = fixture(browserMode);
+    assert.equal(f.api.isAiAvailable(), false);
+    const unknown = "https://unlisted-pause-fixture.test/lesson";
+    assert.equal(f.fast(unknown, "Synthetic private title"), null);
+    const result = await f.api.classifyUrl(unknown, "Synthetic private title", { useAiFallback: true });
+    assert.equal(result?.source, "unknown");
+    assert.equal(f.fast(unknown, "Synthetic private title")?.source, "unknown");
+    assert.equal((await f.api.classifyUrl("https://school.example.test/course", undefined, { schoolDomain: "school.example.test" }))?.source, "school-domain");
+    assert.equal((await f.api.classifyUrl("https://draftkings.com/game"))?.safetyAlert, "gambling");
+    assert.equal(f.calls(), 0, "No browser content may leave through Gemini while the pause is active");
+  }
 });

@@ -63,12 +63,14 @@ function controlledProvider() {
 }
 
 describe("Gemini URL classification provider budget", () => {
+  const priorBrowserMode = process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
   const priorKey = process.env.GEMINI_API_KEY;
   const priorFetch = globalThis.fetch;
   let classifyUrl: ClassifyUrl;
   let provider = controlledProvider();
 
   before(async () => {
+    process.env.CLASSPILOT_BROWSER_GEMINI_MODE = "on";
     process.env.GEMINI_API_KEY = "test-budget-key-never-sent";
     globalThis.fetch = (input, init) => provider.fetch(input, init);
     ({ classifyUrl } = await import("../src/services/aiClassification.js"));
@@ -76,6 +78,8 @@ describe("Gemini URL classification provider budget", () => {
 
   after(() => {
     globalThis.fetch = priorFetch;
+    if (priorBrowserMode === undefined) delete process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
+    else process.env.CLASSPILOT_BROWSER_GEMINI_MODE = priorBrowserMode;
     if (priorKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = priorKey;
   });
