@@ -280,7 +280,7 @@ export const adminGuideTopics = [
   },
   {
     id: "email-monitoring", phase: "Operations", title: "Operate Email Monitoring",
-    summary: "Configure the entitled Gmail safety add-on separately from roster imports.",
+    summary: "Gmail safety scanning is paused pending legal approval. Schools can manage their authorized mailbox connections and review existing alerts.",
     keywords: ["mailpilot","email monitoring","gmail","domain wide delegation","alerts","review"],
     role: "Administrator; entitlement is granted by a super administrator",
     entitlement: "mailpilot",
@@ -288,8 +288,8 @@ export const adminGuideTopics = [
     steps: [
       { title: "Confirm entitlement and server setup", body: "An active ClassPilot school needs the Email Monitoring add-on. If service-account configuration is missing, contact SchoolPilot support before setup." },
       { title: "Authorize the displayed Gmail access", body: "Use the Email Monitoring setup wizard’s client ID and read-only Gmail scope in Google Admin domain-wide delegation. This is separate from the read-only Directory/Classroom Workspace Roster Connector." },
-      { title: "Verify, then enable", body: "Verify access to an authorized school mailbox before enabling. Review the watches-started and failed counts, monitored-mailbox errors, and roster resync results; enabled does not prove every mailbox is watched." },
-      { title: "Review concerns and disable deliberately", body: "Email detections appear in Safety Center and retain the administrator notification and review trail. They do not supply a browser URL to approve or block. Disabling monitoring locally and revoking Google delegation are separate actions." },
+      { title: "Verify, then enable", body: "Verify access to an authorized school mailbox before starting Gmail watches. Review the watches-started and failed counts, mailbox errors and roster resync results. Active watches do not start safety scanning during the pause." },
+      { title: "Review concerns and disable deliberately", body: "Existing email detections remain in Safety Center under the applicable retention rules and retain their notification and review trail. They do not supply a browser URL to approve or block. Disabling monitoring locally and revoking Google delegation are separate actions." },
     ],
   },
   {

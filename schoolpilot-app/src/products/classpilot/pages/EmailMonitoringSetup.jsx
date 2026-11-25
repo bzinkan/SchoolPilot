@@ -46,7 +46,7 @@ export default function EmailMonitoringSetup() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/mailpilot/setup/info"] });
       toast({
-        title: "Email monitoring enabled",
+        title: "Mailbox watches started",
         description: `Started watches on ${data.watchesStarted} mailbox${data.watchesStarted === 1 ? "" : "es"}${data.failed ? ` • ${data.failed} failed` : ""}`,
       });
       refetch();
@@ -60,7 +60,7 @@ export default function EmailMonitoringSetup() {
     mutationFn: () => apiRequest("POST", "/mailpilot/setup/disable", {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mailpilot/setup/info"] });
-      toast({ title: "Monitoring disabled" });
+      toast({ title: "Mailbox watches stopped" });
       refetch();
     },
     onError: (err) => {
@@ -111,6 +111,10 @@ export default function EmailMonitoringSetup() {
         </Button>
       </div>)}
 {adminShell && (<Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring")}><ArrowLeft className="mr-2 size-4" />Back to Email monitoring</Button>)}
+      <p className="text-sm text-muted-foreground">
+        Gmail safety scanning is paused pending legal approval. Setting up a mailbox watch does not
+        start message analysis while the pause is in effect.
+      </p>
       {!configured && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
           <CardHeader>
@@ -130,10 +134,10 @@ export default function EmailMonitoringSetup() {
           <CardHeader>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <CardTitle>Monitoring is active</CardTitle>
+              <CardTitle>Gmail watches are configured</CardTitle>
             </div>
             <CardDescription>
-              {info.mailboxesMonitored} active mailbox{info.mailboxesMonitored === 1 ? "" : "es"}
+              {info.mailboxesMonitored} mailbox watch{info.mailboxesMonitored === 1 ? "" : "es"}
               {info.mailboxesWithErrors ? ` • ${info.mailboxesWithErrors} with errors` : ""}
             </CardDescription>
           </CardHeader>
@@ -145,11 +149,11 @@ export default function EmailMonitoringSetup() {
               </Button>
               <Button variant="destructive" onClick={() => disableMutation.mutate()} disabled={disableMutation.isPending}>
                 <PowerOff className="h-4 w-4 mr-2" />
-                Disable monitoring
+                Stop mailbox watches
               </Button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Resync adds watches for newly-added students and stops watches for removed students. Disable halts all monitoring and stops every active Gmail watch — you can re-enable later.
+              Resync adds watches for newly-added students and stops watches for removed students. Stopping watches disconnects the active Gmail watches.
             </p>
           </CardContent>
         </Card>
@@ -164,10 +168,10 @@ export default function EmailMonitoringSetup() {
             <Card>
               <CardHeader>
                 <CardTitle>Before you begin</CardTitle>
-                <CardDescription>Understand what will be scanned and who gets alerted.</CardDescription>
+                <CardDescription>Review the scope of school-authorized mailbox access.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <p>Email monitoring scans every student's inbound and outbound Gmail for AI-detected safety concerns:</p>
+                <p>Before the pause, MailPilot could scan authorized student mailboxes for concerns including the following.</p>
                 <ul className="list-disc pl-6 space-y-1">
                   <li><strong>Self-harm</strong> — suicidal ideation, self-injury, hopelessness</li>
                   <li><strong>Violence</strong> — threats of violence, weapons, graphic content</li>
@@ -175,7 +179,7 @@ export default function EmailMonitoringSetup() {
                   <li><strong>Drugs</strong> — drug use, acquisition, distribution</li>
                   <li><strong>Bullying / harassment</strong> — targeted insults, exclusion campaigns</li>
                 </ul>
-                <p>Alerts are sent by email to all active admins and school admins at your school, and appear in the Email Monitoring dashboard for review.</p>
+                <p>Administrators can review previously generated alerts in the Email Monitoring dashboard.</p>
                 <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
                   <AlertTriangle className="inline-block h-4 w-4 mr-1 text-amber-700" />
                   <strong>Not scanned:</strong> staff accounts, Gmail drafts, Google Docs/Drive, attachments. Most states require disclosing student monitoring to parents — review your policy before enabling.
@@ -238,7 +242,7 @@ export default function EmailMonitoringSetup() {
             <Card>
               <CardHeader>
                 <CardTitle>Verify and enable</CardTitle>
-                <CardDescription>Test your authorization, then enable monitoring for all students.</CardDescription>
+                <CardDescription>Test your authorization and start Gmail watches for student mailboxes.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -284,7 +288,7 @@ export default function EmailMonitoringSetup() {
                     disabled={!verifyResult?.ok || enableMutation.isPending}
                   >
                     <Power className="h-4 w-4 mr-2" />
-                    {enableMutation.isPending ? "Starting watches…" : "Enable monitoring"}
+                    {enableMutation.isPending ? "Starting watches…" : "Start mailbox watches"}
                   </Button>
                 </div>
                 {!verifyResult?.ok && (
