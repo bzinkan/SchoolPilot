@@ -28,28 +28,25 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: November 9, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 25, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI-Powered Content Classification</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">External AI Processing Is Paused</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot uses <strong>Google's Gemini API</strong> to help classify browser activity
-              and identify potential safety concerns in ClassPilot. When a school separately enables
-              MailPilot, Schoolpilot uses Anthropic's Claude API for email safety classification.
-              ClassPilot can also use Anthropic for safety review of student chat and text poll responses.
-              Classification supports school staff review; it does not establish whether a student
-              is learning or whether a safety concern is confirmed.
+              Schoolpilot's use of external AI providers, including Google Gemini and Anthropic Claude,
+              is paused pending legal approval. Schoolpilot sends no new requests to external AI providers.
+              Google sign-in and school-authorized Workspace and Classroom connections continue.
+              Teachers can still use classroom controls, chat and polls.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">How ClassPilot Reviews Browsing</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              During authorized Chromebook monitoring, Schoolpilot may send the active page's URL and
-              page title to Google's Gemini API. This can also occur when a school's configured
-              after-hours safety monitoring is active. Reviewed website and search rules handle some
-              observations without a model request. Browser activity categories are:
+              During school-authorized monitoring, ClassPilot applies local website and search rules.
+              These rules also apply to configured after-hours safety monitoring. An unfamiliar page can
+              remain unclassified and appear as Unknown. The activity categories are:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
               <li><strong>Educational</strong> — Content related to learning, research, or school work</li>
@@ -63,14 +60,13 @@ export default function AITransparency() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">What Data Is Sent</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Previous Browser Classification Requests</h2>
             <p className="text-slate-700 leading-relaxed">
-              The browsing inputs in a ClassPilot website-classification request are the
-              <strong> URL and page title</strong>, alongside classification instructions. Schoolpilot
-              does not attach student roster names, student IDs, device IDs, screenshots, page bodies,
-              or full browsing history to that request. However, URLs and titles can themselves contain
-              names, email addresses, search terms, or access tokens. Those embedded values may reach
-              the provider; the inputs are not guaranteed to be anonymous or free of personal information.
+              Before the pause, ClassPilot could send the active URL and page title to Gemini with
+              classification instructions. Those requests did not include separate roster identifiers,
+              screenshots, page bodies, or full browsing histories. URLs and titles can themselves contain
+              names, email addresses, search terms, or access tokens. Provider terms and account settings
+              govern retention of data previously sent.
             </p>
           </section>
 
@@ -111,53 +107,48 @@ export default function AITransparency() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Student Chat and Poll Safety Review</h2>
             <p className="text-slate-700 leading-relaxed">
               ClassPilot checks student-authored chat messages and text poll responses with local safety
-              rules. When text matches a safety rule, AI enrichment is enabled, and the provider is available,
-              up to 500 characters of that text may be sent to Anthropic's Claude API to assess severity and
-              provide an explanation for school review. This processing is separate from MailPilot and the
-              optional staff assistant. Message text can contain names, email addresses or other personal
-              information. A provider failure does not suppress the local-rule alert, and a classification
-              does not establish that a safety concern is confirmed.
+              rules. A rule match can still create an alert for school staff to review. Anthropic enrichment is
+              paused. Before the pause, a request could include up to 500 characters of matching text
+              to assess severity and explain the flag. Messages can contain names, email addresses or
+              other personal information.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">MailPilot Email Safety Classification</h2>
             <p className="text-slate-700 leading-relaxed">
-              If a school separately enables MailPilot email monitoring, Schoolpilot may use Anthropic's
-              Claude API to classify student Gmail messages for safety concerns such as self-harm, violence,
-              sexual content, drugs, or bullying. MailPilot is not enabled by default; it requires school
-              authorization and operational setup. The classification request includes whether a message
-              is inbound or outbound, its sender and recipient fields, subject, and up to 4,000 characters
-              of message text. These fields can contain names, email addresses, and other personal or
-              sensitive information. For flagged messages, Schoolpilot stores sender and recipient fields,
-              the subject, an excerpt of up to 600 characters, and classification and review information
-              for authorized school administrators. MailPilot records follow the separate retention rules
-              described in our <a href="/privacy" className="text-blue-600 underline">Privacy Policy</a>.
+              MailPilot's external email safety scanning is paused. MailPilot does not analyze new Gmail
+              messages or generate new scan alerts while the pause is in effect. Existing email alerts
+              remain available for authorized administrator review under the usual retention rules.
+              A school-authorized Gmail connection may remain in place.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              Before the pause, separately authorized MailPilot scanning could send Anthropic the
+              message direction, sender, recipients, subject and up to 4,000 characters of message
+              text. For flagged messages, Schoolpilot could save the sender, recipients, subject,
+              an excerpt of up to 600 characters, and classification and review information.
+              See our <a href="/privacy" className="text-blue-600 underline">Privacy Policy</a>.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Optional AI Assistant</h2>
             <p className="text-slate-700 leading-relaxed">
-              The optional staff AI assistant is not exposed in the current app interface. Its backend is
-              disabled by default and requires separate operational enablement; the school-facing data flow
-              must be reviewed before activation. When enabled, staff prompts, conversation history, and
-              authorized tool results may be processed by Anthropic to answer the request. Tools are limited
-              by role, product license, and school. Tool responses omit attendance reasons, and the individual
-              browsing-history tool is unavailable to the assistant. Free-text prompts and other permitted
-              tool results can still contain personal information; these controls do not make the conversation
-              anonymous. Schoolpilot logs AI tool activity for audit review.
+              The optional staff assistant is unavailable. It cannot generate replies or execute
+              assistant-requested actions during the pause. Its design allows staff prompts,
+              conversation history and authorized tool results to be included in requests to Anthropic.
+              These can contain personal information. Tools are limited by role, product license and
+              school. They omit attendance reasons and individual browsing history.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Providers</h2>
             <p className="text-slate-700 leading-relaxed">
-              ClassPilot website classification uses <strong>Google Gemini</strong>. Provider terms are
-              described in the{" "}
+              For the terms applicable to previous browser-classification requests, see Google's{" "}
               <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Gemini API Terms
-              </a>. Schoolpilot also uses Anthropic's API. Anthropic's{" "}
+              </a>. For Anthropic requests, the provider's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Commercial Terms
               </a>{" "}
@@ -165,8 +156,7 @@ export default function AITransparency() {
               <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Privacy Center
               </a>{" "}
-              explain the terms for student chat/poll safety review, MailPilot email safety classification
-              and the optional staff assistant.
+              describe the terms applicable to customer API data.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
               Applicable provider/account settings and agreements determine provider retention, access,
@@ -181,8 +171,7 @@ export default function AITransparency() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Teacher-Started Paperwork and Contact Imports</h2>
             <p className="text-slate-700 leading-relaxed">
               <strong>Paused:</strong> these imports are part of My Desk, which is paused and not available
-              in ClassPilot until further notice. Teachers and administrators cannot start paperwork or
-              contact imports while it is paused. The rest of this section explains how the imports work
+              in ClassPilot until further notice. New paperwork and contact imports and external processing of pending imports are paused. The rest of this section explains how the imports work
               if the feature returns.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">

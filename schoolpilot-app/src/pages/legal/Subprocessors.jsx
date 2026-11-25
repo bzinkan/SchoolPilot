@@ -62,8 +62,8 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (OAuth, Workspace API, Classroom API)</td>
-                    <td className="px-4 py-3 text-slate-700">Sign-in, school-authorized Workspace directory and Classroom imports; Gmail access for separately enabled MailPilot</td>
-                    <td className="px-4 py-3 text-slate-700">Account identifiers, email, names, roster/class membership and selected Classroom resources; Gmail sender, recipient, subject and message text when MailPilot is enabled</td>
+                    <td className="px-4 py-3 text-slate-700">Sign-in, school-authorized Workspace directory and Classroom imports; existing Gmail connections for separately authorized MailPilot</td>
+                    <td className="px-4 py-3 text-slate-700">Account identifiers, email, names, roster/class membership and selected Classroom resources; existing Gmail connections may receive mailbox-change notifications while new email safety scans are paused</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Microsoft Corporation</strong> (Entra ID; only when enabled)</td>
@@ -149,27 +149,20 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (Gemini API)</td>
-                    <td className="px-4 py-3 text-slate-700">ClassPilot browser-activity classification and potential safety concerns</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification, which may contain personal information, search terms, or access tokens embedded in those fields</td>
+                    <td className="px-4 py-3 text-slate-700">Browser classification with Gemini is paused pending legal approval.</td>
+                    <td className="px-4 py-3 text-slate-700">ClassPilot does not currently send browsing URLs or page titles to Gemini. Previous requests could include URLs and titles containing personal information, search terms, or access tokens.</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">ClassPilot student chat/poll safety enrichment; MailPilot email safety classification; optional staff assistant; staff-started paperwork and student-contact imports (paused with My Desk and not currently available)</td>
-                    <td className="px-4 py-3 text-slate-700">For enabled ClassPilot chat/poll safety enrichment: up to 500 characters of student-authored text that already matched local safety rules. For enabled MailPilot: message direction, sender/recipient fields, subject and up to 4,000 characters of Gmail message text. If separately enabled, the staff assistant processes prompts, conversation history and authorized tool results. When available, paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. Imports do not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
+                    <td className="px-4 py-3 text-slate-700">Anthropic processing is paused pending legal approval. Affected features are chat and text-poll safety enrichment, MailPilot scanning, the optional staff assistant, and My Desk paperwork and contact imports.</td>
+                    <td className="px-4 py-3 text-slate-700">Before the pause, a chat or poll request could include up to 500 characters of matching text. A school-authorized MailPilot request could include direction, sender, recipients, subject and up to 4,000 characters of email text. The optional assistant is designed to use staff prompts, conversation history and authorized tool results. My Desk imports are designed to use staff-selected images or extracted text that may contain student names, conduct details, adult relationships, phone numbers or email addresses.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
-              API for ClassPilot student chat/poll safety enrichment, limited MailPilot and assistant workflows,
-              and for teacher-started paperwork-import
-              workflows when My Desk is available (it is currently paused). MailPilot email safety classification may
-              process student Gmail message text only when a school has separately enabled MailPilot.
-              The optional AI assistant is not available in the current app interface and its backend is
-              disabled by default. If enabled, its tools are limited by school role and product license;
-              tool outputs omit attendance reasons, and individual browsing history is unavailable to the
-              assistant. Staff prompts and other permitted results can still contain personal information. Anthropic's{" "}
+              No new requests go to Anthropic during the pause. ClassPilot's local chat and text-poll safety
+              rules continue, and schools may review existing alerts. Anthropic's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
                 Commercial Terms
               </a>{" "}

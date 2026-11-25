@@ -37,7 +37,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: November 10, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 25, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -76,7 +76,7 @@ export default function PrivacyPolicy() {
               <li>Active-tab and open-tab activity, including tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
               <li>Screen capture thumbnails for an authorized classroom, supervision, or administrator observation context, and separately authorized safety evidence captures, which may contain visible website content</li>
               <li>Student and teacher communications sent through ClassPilot</li>
-              <li>For schools that separately enable MailPilot, student Gmail message headers and text for safety review, including sender, recipients, subject, and a bounded message excerpt in saved alerts</li>
+              <li>Existing alerts from separately authorized MailPilot scanning may contain Gmail sender, recipients, subject and a bounded excerpt. New email safety scanning is paused</li>
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
               <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
@@ -114,8 +114,8 @@ export default function PrivacyPolicy() {
               <li>Generate usage reports for teachers and administrators</li>
               <li>Classify monitored URL/domain signals and generate automated safety alerts for authorized human review</li>
               <li>During normal monitored browsing, request closure of a specific current tab for qualifying harmful-search or unsafe-page detections after authorization and target checks; after-hours safety-only collection remains reporting-only, and a sent closure request is not proof of client-confirmed closure</li>
-              <li>Check student-authored ClassPilot chat and text poll responses with safety rules and, when AI enrichment is enabled and available, send matching text to Anthropic for severity assessment</li>
-              <li>When a school separately enables MailPilot, review student Gmail text for potential safety concerns and provide alerts to authorized administrators</li>
+              <li>Check student-authored ClassPilot chat and text poll responses with local safety rules and flag matches for school staff review</li>
+              <li>Make previously generated MailPilot alerts available for authorized administrator review, subject to the retention rules below</li>
               <li>My Desk (private notes, school discipline records, student contact profiles, seating charts, and AI-assisted paperwork and contact imports) is paused and not available in ClassPilot until further notice. No paperwork or contact documents can be submitted for AI extraction through ClassPilot while it is paused. My Desk content saved before the pause is retained and deleted as described in Section 4</li>
               <li>Maintain and improve our service</li>
               <li>Communicate important updates about the service</li>
@@ -227,27 +227,25 @@ export default function PrivacyPolicy() {
               <li>With your explicit consent</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              For ClassPilot browser classification, the URL and page title may be sent to Google's
-              Gemini API during authorized monitoring, including configured after-hours safety monitoring.
-              Student roster identities are not attached to that request, but URLs and titles can contain
-              personal information, search terms, or access tokens. See our{" "}
+              External AI processing with Google Gemini and Anthropic Claude is paused pending legal approval.
+              ClassPilot uses local rules during authorized monitoring, including configured after-hours
+              monitoring, and does not send browsing URLs or page titles to Gemini. Earlier requests could
+              include URLs and titles containing personal information, search terms, or access tokens. See our{" "}
               <a href="/ai-transparency" className="text-blue-600 underline">AI Transparency</a> page and{" "}
               <a href="#service-providers" className="text-blue-600 underline">Service Providers</a> section for the
               disclosed data flows. Schoolpilot's deletion of data does not itself delete provider-retained data.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
-              When a school separately enables MailPilot, Gmail message sender, recipient, subject, and text
-              may be sent to Anthropic's API for safety classification. The optional staff assistant, when
-              enabled, sends staff prompts, conversation history and authorized tool results to Anthropic.
-              It is unavailable in the current app interface and its backend is disabled by default.
-              My Desk paperwork and contact imports remain paused and unavailable. The section below
-              describes the providers, data involved and agreement-review limitations.
+              MailPilot does not analyze new Gmail messages during the pause. Previously, separately
+              authorized scans could send Anthropic message direction, sender, recipients, subject
+              and up to 4,000 characters of text. The optional staff assistant and My Desk paperwork
+              and contact imports are unavailable. School-authorized Google sign-in and Workspace
+              integrations continue.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
-              Separately from MailPilot and the assistant, ClassPilot student chat messages and text poll
-              responses that match local safety rules may be sent to Anthropic for safety enrichment when
-              that processing is enabled and available. Requests contain up to 500 characters of message
-              text, which can itself contain personal information.
+              ClassPilot continues local safety checks on student chat and text poll responses. Before
+              the pause, up to 500 characters of text that matched a local rule could be sent to
+              Anthropic for severity assessment. That text could contain personal information.
             </p>
             <Subprocessors />
           </section>

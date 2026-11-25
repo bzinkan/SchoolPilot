@@ -111,12 +111,12 @@ export default function EmailMonitoring() {
               </div>
               <div>
                 <CardTitle>Email Monitoring</CardTitle>
-                <CardDescription>Protect students with AI-powered Gmail safety scanning</CardDescription>
+                <CardDescription>Gmail safety scanning is paused pending legal approval.</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p>Email Monitoring is not yet enabled for your school. Scanning student Gmail for bullying, self-harm, violence, sexual content, and drug-related messages runs automatically once setup is complete.</p>
+            <p>Email Monitoring is not yet enabled for your school. Workspace setup can connect Gmail mailboxes, but new messages will not be analyzed during the pause.</p>
             <div className="flex gap-2">
               <Button onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}>
                 Start setup
@@ -150,7 +150,7 @@ export default function EmailMonitoring() {
           <div>
             <h1 className="text-3xl font-semibold">Email Monitoring</h1>
             <p className="text-muted-foreground">
-              {statsData?.mailboxesMonitored ?? 0} mailboxes monitored{statsData?.mailboxesWithErrors ? ` • ${statsData.mailboxesWithErrors} with errors` : ""}
+              {statsData?.mailboxesMonitored ?? 0} Gmail mailbox connections{statsData?.mailboxesWithErrors ? ` • ${statsData.mailboxesWithErrors} with errors` : ""}
             </p>
           </div>
         </div>
@@ -167,7 +167,11 @@ export default function EmailMonitoring() {
           </Button>
         </div>
       </div>)}
-{adminShell && (<div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{statsData?.mailboxesMonitored ?? 0} mailboxes monitored</p><Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}><SettingsIcon className="mr-2 size-4" />Setup</Button></div>)}
+{adminShell && (<div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{statsData?.mailboxesMonitored ?? 0} Gmail mailbox connections</p><Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}><SettingsIcon className="mr-2 size-4" />Setup</Button></div>)}
+      <p className="text-sm text-muted-foreground">
+        Gmail safety scanning is paused pending legal approval. No new messages are analyzed.
+        Existing alerts remain available for review.
+      </p>
       {/* Stat cards */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

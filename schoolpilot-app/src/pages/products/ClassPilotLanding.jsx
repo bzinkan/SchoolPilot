@@ -1011,7 +1011,7 @@ export default function ClassPilotLanding() {
                 How are potential safety concerns handled?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                Reviewed website and search rules, together with Gemini classification, help identify potential concerns.
+                ClassPilot applies local website and search rules to flag potential concerns.
                 Safety Center records concerns for <strong>administrator review</strong> and queues notifications to active school administrators.
                 Staff assess the context and choose a response. Classification can be unavailable or mistaken;
                 detection, notification delivery, and review are not guaranteed to be immediate.
@@ -1021,13 +1021,13 @@ export default function ClassPilotLanding() {
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                What browser data is sent for AI classification?
+                Does ClassPilot send data to external AI providers?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                Browser classification uses the <strong>URL and page title</strong>, alongside classification instructions.
-                It does not attach roster identity fields, screenshots, page bodies, or full browsing history to that request.
-                URLs and page titles can themselves contain names, email addresses, search terms, or other personal information;
-                these inputs are not guaranteed to be anonymous. ClassPilot uses Google's Gemini API for this classification. See our{' '}
+                External AI processing with Google Gemini and Anthropic Claude is paused pending legal approval.
+                ClassPilot does not send browsing URLs or page titles to Gemini. Local rules still check
+                websites, searches, chat and text poll responses. Unfamiliar browsing activity can
+                remain unclassified. Normal teacher classroom controls remain available. See our{' '}
                 <a href="/ai-transparency" style={{ color: '#b45309' }}>AI Transparency</a> and{' '}
                 <a href="/subprocessors" style={{ color: '#b45309' }}>Subprocessors</a> pages for full details.
               </p>
