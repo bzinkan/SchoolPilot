@@ -27,7 +27,10 @@ export function createMailpilotPubsubPushHandler(options:{
     try{
       await options.processNotification(studentEmail,historyId);
       return res.status(204).end();
-    }catch{
+    }catch(error){
+      if ((error as {code?:string})?.code === "MAILPILOT_EXTERNAL_AI_PAUSED") {
+        return res.status(503).json({error:"Email classification is paused",code:"MAILPILOT_EXTERNAL_AI_PAUSED"});
+      }
       // Diagnostics must neither leak provider details nor change retry delivery.
       try{options.onProcessingFailure?.();}catch{}
       return res.status(503).json({error:"processing incomplete",code:"MAILPILOT_RETRY_REQUIRED"});

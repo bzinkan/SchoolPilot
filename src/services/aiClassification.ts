@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled, guardedExternalAiFetch } from "../config/externalAi.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { parse as parseDomain } from "tldts";
@@ -24,7 +25,7 @@ const GEMINI_GENERATE_CONTENT_URL = `https://generativelanguage.googleapis.com/v
 
 let anthropic: Anthropic | null = null;
 if (ANTHROPIC_API_KEY) {
-  anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY, fetch: guardedExternalAiFetch() });
 }
 
 export type AiClassificationSource =
@@ -114,8 +115,13 @@ function acquireProviderPermit(): Promise<(() => void) | null> {
 }
 
 async function runBoundedProviderCall<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T | null> {
+  if (!externalAiProvidersEnabled()) return null;
   const release = await acquireProviderPermit();
   if (!release) return null;
+  if (!externalAiProvidersEnabled()) {
+    release();
+    return null;
+  }
   const startedAt = performance.now();
   recordRuntimePerformanceCounter("aiProviderCalls");
   const controller = new AbortController();
@@ -212,7 +218,7 @@ const KNOWN_UNSAFE: Map<string, UnsafeSearchType> = new Map([
 ]);
 
 export function isAiAvailable(): boolean {
-  return !!GEMINI_API_KEY;
+  return externalAiProvidersEnabled() && !!GEMINI_API_KEY;
 }
 
 type GeminiGenerateContentResponse = {
@@ -233,9 +239,9 @@ async function classifyUrlWithGemini(
   input: PreparedClasspilotAiRequestInput,
   signal: AbortSignal,
 ): Promise<string | null> {
-  if (!GEMINI_API_KEY) return null;
+  if (!GEMINI_API_KEY || !externalAiProvidersEnabled()) return null;
 
-  const response = await fetch(`${GEMINI_GENERATE_CONTENT_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+  const response = await guardedExternalAiFetch()(`${GEMINI_GENERATE_CONTENT_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal,
@@ -606,7 +612,7 @@ function classifyUnsafeSearch(url: string, domain: string): AiClassification | n
 function resolveImmediateUrlClassification(url: string, options: AiClassificationOptions) {
   const domain = extractDomain(url);
   const schoolDomain = normalizeDomainValue(options.schoolDomain);
-  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${GEMINI_API_KEY && options.useAiFallback !== false ? "on" : "off"}`;
+  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${isAiAvailable() && options.useAiFallback !== false ? "on" : "off"}`;
   let cacheHit = false;
   const classify = (): AiClassification | null | undefined => {
     // Unsafe searches are query-specific and must run before the domain cache,
@@ -734,7 +740,7 @@ export function classifyImmediateHeartbeatUrl(
   // Match classifyUrl's provider/input ordering before consulting its exact
   // page cache. In particular, a current input-policy denial cannot reuse an
   // otherwise valid older model decision.
-  if (!GEMINI_API_KEY || options.useAiFallback === false
+  if (!isAiAvailable() || options.useAiFallback === false
     || prepareClasspilotAiRequestInput(url, title).kind === "unavailable") return null;
   const cached = freshCachedClassification(pageClassificationCacheKey(cacheKey, url, title));
   return cached?.safetyAlert === null
@@ -749,7 +755,7 @@ export async function classifyUrl(
   const { domain, cacheKey, classification: immediateClassification } = resolveImmediateUrlClassification(url, options);
   if (immediateClassification !== undefined) return immediateClassification;
 
-  if (!GEMINI_API_KEY || options.useAiFallback === false) {
+  if (!isAiAvailable() || options.useAiFallback === false) {
     return cacheClassification(cacheKey, {
       category: "unknown",
       safetyAlert: null,
@@ -842,7 +848,7 @@ export async function classifyEmail(input: {
   body: string;
   direction: "inbound" | "outbound";
 }): Promise<EmailClassification | null> {
-  if (!anthropic) return null;
+  if (!externalAiProvidersEnabled() || !anthropic) return null;
 
   const { subject = "", from, to, body, direction } = input;
   const truncatedBody = body.length > MAX_EMAIL_BODY_CHARS
@@ -1016,7 +1022,7 @@ const CHAT_TEXT_MODEL = "claude-haiku-4-5-20251001";
 
 /** Enrichment only: called after a lexicon hit, never on unflagged text. Null when the provider is unavailable. */
 export async function classifyChatText(content: string): Promise<ChatTextClassification | null> {
-  if (!anthropic) return null;
+  if (!externalAiProvidersEnabled() || !anthropic) return null;
   const text = String(content ?? "").slice(0, 500);
   const prompt = `You are a K-12 student safety reviewer. A student sent this message to their teacher in a classroom chat and it already matched a safety keyword rule. Grade how urgent it is.
 

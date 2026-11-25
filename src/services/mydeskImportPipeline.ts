@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { and, eq, sql } from "drizzle-orm";
 import { mydeskImports as runs, mydeskImportItems as items, mydeskImportAssets as assets,
   type MyDeskImport, type MyDeskImportItem } from "../schema/mydeskImports.js";
@@ -62,6 +63,7 @@ async function matchSubject(database: MyDeskDatabase, actor: MyDeskActor, run: M
 
 /** Durable page/form checkpoints allow independent I/O while native work stays globally bounded. */
 export async function processPipelinedMyDeskImport(claim: MyDeskImport, options: WorkerOptions = {}) {
+  if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
   const actor: MyDeskActor = { schoolId: claim.schoolId, authorId: claim.authorId, manager: false };
   const leaseId = claim.leaseId!;
   const store = options.store ?? myDeskObjectStore;
@@ -287,6 +289,7 @@ export async function processPipelinedMyDeskImport(claim: MyDeskImport, options:
       return { id: claim.id, status };
     });
   } catch (error) {
+    if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
     const interrupted = controller.signal.aborted || options.signal?.aborted === true;
     controller.abort();
     await runWithTenantContext({ schoolId: actor.schoolId }, () => db.transaction(async database => {

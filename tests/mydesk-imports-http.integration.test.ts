@@ -92,6 +92,7 @@ async function fixture() {
     await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.groupId, f.studentId]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
   process.env.MYDESK_MODE = "on"; process.env.MYDESK_AI_IMPORT_MODE = "on";
   return f;
 }

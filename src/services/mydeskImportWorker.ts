@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { studentInformationImports } from "../schema/studentInformation.js";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
@@ -251,6 +252,7 @@ export async function processClaimedMyDeskImport(
   claim: MyDeskImport,
   options: WorkerOptions = {},
 ) {
+  if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
   if (claim.processingVersion === 2) return processPipelinedMyDeskImport(claim, options);
   const actor: MyDeskActor = {
       schoolId: claim.schoolId,
@@ -575,6 +577,7 @@ export async function processClaimedMyDeskImport(
     });
     return { id: claim.id, status: "review" };
   } catch (error) {
+    if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
     const code =
       error instanceof MyDeskImportProcessingError &&
       /^[A-Z0-9_]{1,64}$/.test(error.code)
@@ -619,7 +622,7 @@ export async function processClaimedMyDeskImport(
 /** Claims are separate from execution so one slow job cannot block refilling another slot. */
 export async function claimMyDeskImportJobs(options: WorkerOptions = {}) {
   const database = options.database ?? schedulerDb;
-  if (readMyDeskModes().aiImportMode !== "on") return [];
+  if (!externalAiProvidersEnabled() || readMyDeskModes().aiImportMode !== "on") return [];
   options.signal?.throwIfAborted();
   const processingVersion = paperworkProcessingVersion();
   const claims = await database.transaction(async (tx) => {

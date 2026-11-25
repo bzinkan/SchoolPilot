@@ -1,6 +1,8 @@
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import express from "express";
 import { sql } from "drizzle-orm";
 import { SAFETY_CENTER_SQL } from "../src/db/safetyCenterMigration.js";
 import { MAILPILOT_SAFETY_DURABILITY_SQL } from "../src/db/mailpilotSafetyDurabilityMigration.js";
@@ -129,6 +131,51 @@ test("same Gmail identifier stays independent across tenants and disabled or mis
   await pool.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='CLASSPILOT'",[schoolB]);
   await assert.rejects(scoped(schoolB,()=>persistence.persistMailpilotSafetyAlert(identity(blocked,schoolB,studentB),payload(blocked,schoolB,studentB))),{code:"CLASSPILOT_NOT_ENTITLED"});
   await pool.query("UPDATE product_licenses SET status='active' WHERE school_id=$1 AND product='CLASSPILOT'",[schoolB]);
+});
+
+test("paused eligible Gmail push defers before reading content and preserves watch, scan counts and alerts", async () => {
+  const mode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+  const token = process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN;
+  delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+  process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN = "synthetic-pause-token";
+  const watch = await scoped(schoolA, () => storage.upsertMailpilotWatch({
+    schoolId: schoolA, studentId: studentA, studentEmail: email(studentA), historyId: "100",
+    expiresAt: new Date(Date.now() + 86_400_000),
+  }));
+  const counts = async () => (await pool.query(
+    "SELECT (SELECT count(*) FROM email_scan_log WHERE school_id=$1) AS scans, (SELECT count(*) FROM email_alerts WHERE school_id=$1) AS alerts", [schoolA],
+  )).rows[0];
+  const before = await counts();
+  const app = express();
+  app.use(express.json());
+  app.use((await import("../src/routes/mailpilot/pubsub.js")).default);
+  const server = createServer(app);
+  try {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const push = (historyId: string) => fetch(`http://127.0.0.1:${address.port}/push`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer synthetic-pause-token" },
+      body: JSON.stringify({ message: { data: Buffer.from(JSON.stringify({ emailAddress: email(studentA), historyId })).toString("base64") } }),
+    });
+    assert.equal((await push("100")).status, 204, "already covered notifications can be acknowledged");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await push("110");
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: "Email classification is paused", code: "MAILPILOT_EXTERNAL_AI_PAUSED" });
+    }
+    const stored = (await pool.query("SELECT history_id, status, last_error FROM mailpilot_watches WHERE id=$1", [watch.id])).rows[0];
+    assert.deepEqual(stored, { history_id: "100", status: "active", last_error: "MAILPILOT_EXTERNAL_AI_PAUSED" });
+    assert.deepEqual(await counts(), before);
+  } finally {
+    if (mode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = mode;
+    if (token === undefined) delete process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN;
+    else process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN = token;
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test("failed batches and watch renewal preserve the cursor, and stale concurrent completion cannot regress or skip it",async()=>{

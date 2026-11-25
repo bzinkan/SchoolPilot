@@ -346,8 +346,10 @@ test("contact extraction rejects incomplete, malformed, multiple-text and unexpe
 
 test("contact SDK transport suppresses inherited debug logs and does not retry provider errors", async (t) => {
   const originalKey = process.env.ANTHROPIC_API_KEY;
+  const previousExternalMode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
   const originalLog = process.env.ANTHROPIC_LOG;
   process.env.ANTHROPIC_API_KEY = "fixture-api-key";
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
   process.env.ANTHROPIC_LOG = "debug";
   const captured: unknown[][] = [];
   for (const method of ["log", "debug", "info", "warn", "error"] as const)
@@ -377,6 +379,8 @@ test("contact SDK transport suppresses inherited debug logs and does not retry p
   } finally {
     if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalKey;
+    if (previousExternalMode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previousExternalMode;
     if (originalLog === undefined) delete process.env.ANTHROPIC_LOG;
     else process.env.ANTHROPIC_LOG = originalLog;
   }

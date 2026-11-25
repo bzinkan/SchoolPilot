@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../../config/externalAi.js";
 import { Router } from "express";
 import { getMailpilotWatchByEmail, getSchoolById, upsertEmailScanLog, getStudentById } from "../../services/storage.js";
 import { fetchMessage, listHistorySince, determineDirection } from "../../services/mailpilotGmail.js";
@@ -46,6 +47,8 @@ async function processActiveWatch(studentEmail: string, watch: NonNullable<Await
   if (!school || !school.mailpilotEntitled || !school.classpilotEmailMonitoring) return;
   if (!(await resolveClasspilotEntitlement(watch.schoolId)).entitled) return;
 
+  // Preserve the last processed cursor. A paused classifier cannot establish that mail was safe.
+  if (!externalAiProvidersEnabled()) throw mailpilotRetryError("MAILPILOT_EXTERNAL_AI_PAUSED");
   const startHistoryId = watch.historyId;
   if (!validMailpilotHistoryId(startHistoryId)) throw mailpilotRetryError("MAILPILOT_HISTORY_RESYNC_REQUIRED");
   let result: Awaited<ReturnType<typeof listHistorySince>>;
