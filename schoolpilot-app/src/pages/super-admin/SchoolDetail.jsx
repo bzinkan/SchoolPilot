@@ -478,10 +478,10 @@ export default function SchoolDetail() {
               <div>
                 <p className="font-medium text-slate-900 text-sm">MailPilot entitlement</p>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Paid add-on. When enabled, school admins can complete Google setup and manage Gmail watches.
+                  School administrators with this add-on can manage authorized Gmail connections. New messages are not scanned.
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Monitoring status: {school.classpilotEmailMonitoring ? 'active' : school.mailpilotEntitled ? 'setup pending or paused' : 'hidden from school admins'}
+                  Mailbox setup: {school.classpilotEmailMonitoring ? 'configured' : school.mailpilotEntitled ? 'not configured' : 'hidden from school admins'}
                 </p>
               </div>
               <button

@@ -38,3 +38,9 @@ test("MailPilot screens accurately identify the absence of new scanning without 
     assert.doesNotMatch(text, /during the pause|before the pause|pending legal approval|once setup is complete|monitoring is active/i);
   }
 });
+
+test("school entitlement does not imply active email screening in the operator view", () => {
+  const school = source("schoolpilot-app/src/pages/super-admin/SchoolDetail.jsx");
+  assert.doesNotMatch(school, /Monitoring status:\s*\{school\.classpilotEmailMonitoring/);
+  assert.match(school, /Mailbox setup:/);
+});
