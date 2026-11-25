@@ -63,6 +63,7 @@ function controlledProvider() {
 }
 
 describe("Gemini URL classification provider budget", () => {
+  const previousExternalMode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
   const priorBrowserMode = process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
   const priorKey = process.env.GEMINI_API_KEY;
   const priorFetch = globalThis.fetch;
@@ -70,6 +71,7 @@ describe("Gemini URL classification provider budget", () => {
   let provider = controlledProvider();
 
   before(async () => {
+    process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
     process.env.CLASSPILOT_BROWSER_GEMINI_MODE = "on";
     process.env.GEMINI_API_KEY = "test-budget-key-never-sent";
     globalThis.fetch = (input, init) => provider.fetch(input, init);
@@ -78,6 +80,8 @@ describe("Gemini URL classification provider budget", () => {
 
   after(() => {
     globalThis.fetch = priorFetch;
+    if (previousExternalMode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previousExternalMode;
     if (priorBrowserMode === undefined) delete process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
     else process.env.CLASSPILOT_BROWSER_GEMINI_MODE = priorBrowserMode;
     if (priorKey === undefined) delete process.env.GEMINI_API_KEY;

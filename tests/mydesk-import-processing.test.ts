@@ -323,7 +323,9 @@ test("provider timeout aborts the request without waiting on an uncooperative tr
 });
 
 test("dedicated SDK transport suppresses inherited debug logging of private request and response bodies", async () => {
+  const previousExternalMode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
   const originalLevel = process.env.ANTHROPIC_LOG;
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
   process.env.ANTHROPIC_LOG = "debug";
   const captured: unknown[][] = [];
   const originalConsole = { log: console.log, debug: console.debug, info: console.info, warn: console.warn, error: console.error };
@@ -342,6 +344,8 @@ test("dedicated SDK transport suppresses inherited debug logging of private requ
     assert.equal(calls, 1); assert.deepEqual(captured, []);
   } finally {
     Object.assign(console, originalConsole);
+    if (previousExternalMode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previousExternalMode;
     if (originalLevel === undefined) delete process.env.ANTHROPIC_LOG; else process.env.ANTHROPIC_LOG = originalLevel;
   }
 });

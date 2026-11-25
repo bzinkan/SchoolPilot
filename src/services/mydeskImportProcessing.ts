@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled, guardedExternalAiFetch } from "../config/externalAi.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -285,8 +286,11 @@ async function aiImage(bytes: Buffer, signal?: AbortSignal): Promise<Anthropic.I
 export function createImportProviderTransport(apiKey: string, fetch?: typeof globalThis.fetch): ImportAiTransport {
   // Explicitly override ANTHROPIC_LOG: enabling SDK debugging for another product
   // must never serialize this workflow's prompts, base64 images, or generated text.
-  const client = new Anthropic({ apiKey, maxRetries: 0, timeout: MYDESK_IMPORT_PROVIDER_TIMEOUT_MS, logLevel: "off", fetch });
-  return (request, signal) => client.messages.create(request, { signal });
+  const client = new Anthropic({ apiKey, maxRetries: 0, timeout: MYDESK_IMPORT_PROVIDER_TIMEOUT_MS, logLevel: "off", fetch: guardedExternalAiFetch(fetch) });
+  return async (request, signal) => {
+    if (!externalAiProvidersEnabled()) throw processingError("MYDESK_IMPORT_AI_UNAVAILABLE", "AI import is paused.", false, 503);
+    return client.messages.create(request, { signal });
+  };
 }
 
 async function providerTransport(request: Anthropic.MessageCreateParamsNonStreaming, signal: AbortSignal): Promise<AiResponse> {

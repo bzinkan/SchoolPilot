@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { z } from "zod";
 import { readMyDeskModes } from "../config/mydeskModes.js";
 import {
@@ -49,8 +50,12 @@ export function myDeskImportLimits() {
     reviewExpiryDays: IMPORT_REVIEW_MS / (24 * 3600_000),
   };
 }
-export function myDeskImportsEnabledForSchool(schoolId: string) {
+export function myDeskImportReviewEnabledForSchool(schoolId: string) {
   return Boolean(schoolId) && readMyDeskModes().aiImportMode === "on";
+}
+
+export function myDeskImportsEnabledForSchool(schoolId: string) {
+  return myDeskImportReviewEnabledForSchool(schoolId) && externalAiProvidersEnabled();
 }
 const uuid = z.string().uuid();
 export const importMutation = z

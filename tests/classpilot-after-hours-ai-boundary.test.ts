@@ -14,11 +14,13 @@ const executable = ts.transpileModule(`${source.slice(start).replace("export asy
 }).outputText;
 
 test("after-hours privacy withholding uses the real classifier and creates no alert or delivery action", async () => {
+  const previousExternalMode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
   const priorBrowserMode = process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
   const priorKey = process.env.GEMINI_API_KEY;
   const priorAnthropicKey = process.env.ANTHROPIC_API_KEY;
   const priorFetch = globalThis.fetch;
   let providerCalls = 0;
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
   process.env.CLASSPILOT_BROWSER_GEMINI_MODE = "on";
   process.env.GEMINI_API_KEY = "synthetic-after-hours-provider-key";
   delete process.env.ANTHROPIC_API_KEY;
@@ -58,6 +60,8 @@ test("after-hours privacy withholding uses the real classifier and creates no al
     assert.deepEqual(observed, cases, "original navigation remains local; provider preparation does not rewrite it");
   } finally {
     globalThis.fetch = priorFetch;
+    if (previousExternalMode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previousExternalMode;
     if (priorBrowserMode === undefined) delete process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
     else process.env.CLASSPILOT_BROWSER_GEMINI_MODE = priorBrowserMode;
     if (priorKey === undefined) delete process.env.GEMINI_API_KEY;

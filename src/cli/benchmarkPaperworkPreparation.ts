@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,6 +93,8 @@ export async function runPaperworkBenchmark(options:PaperworkBenchmarkOptions, o
   }
   if(options.transport==="live" && (process.env.PAPERWORK_BENCHMARK_LIVE_PROVIDER!=="1" || !process.env.ANTHROPIC_API_KEY))
     throw new Error("PAPERWORK_BENCHMARK_LIVE_OPT_IN_REQUIRED");
+  // Both modes exercise the same worker admission path. Do not claim or seed a job that cannot run.
+  if (!externalAiProvidersEnabled()) throw new Error("PAPERWORK_BENCHMARK_WORKER_PAUSED");
   const sourceHashes=await benchmarkSourceHashes();
   const sourceRevision=/^[a-f0-9]{40}$/.test(process.env.PAPERWORK_BENCHMARK_SOURCE_REVISION??"") ? process.env.PAPERWORK_BENCHMARK_SOURCE_REVISION : null;
   // Only the explicitly validated disposable process is configured. No runtime service settings are changed.
@@ -239,7 +242,7 @@ export async function runPaperworkBenchmark(options:PaperworkBenchmarkOptions, o
 }
 
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
-  if(process.argv.includes("--help")) process.stdout.write("Usage: node dist/cli/benchmarkPaperworkPreparation.js [--transport synthetic|live] [--pairs 3..5] [--synthetic-delay-ms 100..10000] [--image-digest sha256:<digest>]\nRequires a disposable bootstrapped schoolpilot_paperwork*/schoolpilot_benchmark* local database and PAPERWORK_BENCHMARK_ISOLATED=1. Live mode additionally requires PAPERWORK_BENCHMARK_LIVE_PROVIDER=1 and ANTHROPIC_API_KEY in the process environment. Never supply keys in arguments. Output contains metrics only.\n");
+  if(process.argv.includes("--help")) process.stdout.write("Usage: node dist/cli/benchmarkPaperworkPreparation.js [--transport synthetic|live] [--pairs 3..5] [--synthetic-delay-ms 100..10000] [--image-digest sha256:<digest>]\nRequires a disposable bootstrapped schoolpilot_paperwork*/schoolpilot_benchmark* local database and PAPERWORK_BENCHMARK_ISOLATED=1 and SCHOOLPILOT_EXTERNAL_AI_MODE=on in the isolated benchmark process. Live mode additionally requires PAPERWORK_BENCHMARK_LIVE_PROVIDER=1 and ANTHROPIC_API_KEY in the process environment. Never supply keys in arguments. Output contains metrics only.\n");
   else try {
     const options=parsePaperworkBenchmarkArgs(process.argv.slice(2));
     const report=await runPaperworkBenchmark(options,sample=>process.stdout.write(`${JSON.stringify({event:"paperwork_benchmark_sample",...sample})}\n`));process.stdout.write(`${JSON.stringify(report)}\n`);

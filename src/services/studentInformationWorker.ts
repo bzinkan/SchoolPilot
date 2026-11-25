@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { randomUUID } from "node:crypto";
 import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import db from "../db.js";
@@ -60,6 +61,7 @@ export async function processStudentInformationClaim(
   claim: InformationRun,
   options: Options = {},
 ) {
+  if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
   const actor = { schoolId: claim.schoolId, authorId: claim.authorId },
     leaseId = claim.leaseId,
     store = options.store ?? myDeskObjectStore;
@@ -323,6 +325,7 @@ export async function processStudentInformationClaim(
     });
     return { id: claim.id, status: "review" };
   } catch (error) {
+    if (!externalAiProvidersEnabled()) return { id: claim.id, status: "paused" };
     const code =
       error instanceof Error &&
       "code" in error &&

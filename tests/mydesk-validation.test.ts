@@ -42,11 +42,12 @@ test("global modes default off and preflight rejects legacy, malformed, and cont
   }
 });
 test("enabled modes cover existing and newly entitled schools without any school configuration", () => {
-  const keys = [...MYDESK_MODE_KEYS, ...MYDESK_LEGACY_KEYS];
+  const keys = ["SCHOOLPILOT_EXTERNAL_AI_MODE", ...MYDESK_MODE_KEYS, ...MYDESK_LEGACY_KEYS];
   const original = keys.map(key => process.env[key]);
   try {
     keys.forEach(key => delete process.env[key]);
     process.env.MYDESK_MODE = "on";
+    process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "on";
     process.env.MYDESK_AI_IMPORT_MODE = "on";
     for (const schoolId of ["school-five", randomUUID()]) {
       assert.equal(myDeskEnabledForSchool(schoolId), true);

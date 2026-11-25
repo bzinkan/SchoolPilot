@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../../config/externalAi.js";
 import { Router } from "express";
 import { getMailpilotWatchByEmail, getSchoolById, upsertEmailScanLog, getStudentById } from "../../services/storage.js";
 import { fetchMessage, listHistorySince, determineDirection } from "../../services/mailpilotGmail.js";
@@ -23,6 +24,9 @@ router.post("/push", createMailpilotPubsubPushHandler({
   },
 }));
 async function processNotification(studentEmail: string, notificationHistoryId: string): Promise<void> {
+  // The push was already authenticated and validated. Defer even duplicates
+  // during the pause, before a mailbox lookup, Gmail read, or cursor change.
+  if (!externalAiProvidersEnabled()) throw mailpilotRetryError("MAILPILOT_EXTERNAL_AI_PAUSED");
   // Only this mailbox lookup is cross-tenant; all subsequent work is tenant scoped.
   const watch = await getMailpilotWatchByEmail(studentEmail, schedulerDb);
   if (!watch || watch.status !== "active") return;
@@ -46,6 +50,8 @@ async function processActiveWatch(studentEmail: string, watch: NonNullable<Await
   if (!school || !school.mailpilotEntitled || !school.classpilotEmailMonitoring) return;
   if (!(await resolveClasspilotEntitlement(watch.schoolId)).entitled) return;
 
+  // Recheck after asynchronous eligibility checks before reading any Gmail history.
+  if (!externalAiProvidersEnabled()) throw mailpilotRetryError("MAILPILOT_EXTERNAL_AI_PAUSED");
   const startHistoryId = watch.historyId;
   if (!validMailpilotHistoryId(startHistoryId)) throw mailpilotRetryError("MAILPILOT_HISTORY_RESYNC_REQUIRED");
   let result: Awaited<ReturnType<typeof listHistorySince>>;

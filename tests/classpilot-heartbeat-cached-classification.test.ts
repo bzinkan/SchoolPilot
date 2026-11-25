@@ -22,6 +22,10 @@ const source = readFileSync(new URL("../src/services/aiClassification.ts", impor
 const executable = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText;
+const gateSource = readFileSync(new URL("../src/config/externalAi.ts", import.meta.url), "utf8");
+const gateExecutable = ts.transpileModule(gateSource, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText;
 const require = createRequire(import.meta.url);
 
 function assertClassifier(value: unknown): asserts value is Classifier {
@@ -34,7 +38,7 @@ function assertClassifier(value: unknown): asserts value is Classifier {
 // Run the real module with only provider I/O and clock controlled. Capturing its
 // Map constructors lets the namespace tests supply foreign cache entries without
 // adding production cache-reset/inspection methods or changing source bytes.
-function fixture(browserMode: { CLASSPILOT_BROWSER_GEMINI_MODE?: string } = { CLASSPILOT_BROWSER_GEMINI_MODE: "on" }) {
+function fixture(browserMode: { CLASSPILOT_BROWSER_GEMINI_MODE?: string; SCHOOLPILOT_EXTERNAL_AI_MODE?: string } = { CLASSPILOT_BROWSER_GEMINI_MODE: "on" }) {
   let now = 1_800_000_000_000;
   let denyProviderInput = false;
   let providerCalls = 0;
@@ -44,7 +48,14 @@ function fixture(browserMode: { CLASSPILOT_BROWSER_GEMINI_MODE?: string } = { CL
     constructor(entries?: readonly (readonly [unknown, unknown])[] | null) { super(entries); maps.push(this); }
   }
   class Clock extends Date { static now() { return now; } }
+  const runtime = {
+    process: { env: { SCHOOLPILOT_EXTERNAL_AI_MODE: "on", GEMINI_API_KEY: "synthetic-key", ...browserMode } },
+    fetch: async () => { providerCalls++; return respond(); },
+  };
+  const gate = {};
+  runInNewContext(gateExecutable, { ...runtime, exports: gate });
   const dependencies: Record<string, unknown> = {
+    "../config/externalAi.js": gate,
     "./classpilotContentCategories.js": contentCategories,
     "./classpilotBrowserSafetySeverity.js": browserSeverity,
     "./runtimePerformanceMetrics.js": performanceMetrics,
@@ -58,8 +69,7 @@ function fixture(browserMode: { CLASSPILOT_BROWSER_GEMINI_MODE?: string } = { CL
   runInNewContext(executable, {
     exports: exported,
     require(name: string) { return Object.hasOwn(dependencies, name) ? dependencies[name] : require(name); },
-    process: { env: { GEMINI_API_KEY: "synthetic-key", ...browserMode } },
-    fetch: async () => { providerCalls++; return respond(); },
+    ...runtime,
     URL, Buffer, AbortController, AbortSignal, performance, setTimeout, clearTimeout,
     Date: Clock, Map: CapturedMap,
   });
@@ -248,5 +258,18 @@ test("browser Gemini defaults to local rules with a configured key and no explic
     assert.equal((await f.api.classifyUrl("https://school.example.test/course", undefined, { schoolDomain: "school.example.test" }))?.source, "school-domain");
     assert.equal((await f.api.classifyUrl("https://draftkings.com/game"))?.safetyAlert, "gambling");
     assert.equal(f.calls(), 0, "No browser content may leave through Gemini while the pause is active");
+  }
+});
+
+test("the global and browser switches must both authorize real classifier fallback", async () => {
+  for (const master of ["on", "off"]) {
+    for (const browser of ["on", "off"]) {
+      const f = fixture({ SCHOOLPILOT_EXTERNAL_AI_MODE: master, CLASSPILOT_BROWSER_GEMINI_MODE: browser });
+      const enabled = master === "on" && browser === "on";
+      assert.equal(f.api.isAiAvailable(), enabled);
+      const result = await f.api.classifyUrl("https://synthetic-unlisted.example.test/lesson", "Synthetic title");
+      assert.equal(result?.source, enabled ? "ai" : "unknown");
+      assert.equal(f.calls(), enabled ? 1 : 0);
+    }
   }
 });

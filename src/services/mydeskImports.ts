@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { informationQuotaTotals } from "./studentInformationImports.js";
 import { importProgress, importProgressCounts, emptyImportProgressCounts } from "./mydeskImportProgress.js";
 import { importProcessingStages as processingStages } from "../schema/importProcessingStages.js";
@@ -53,7 +54,7 @@ import {
   importCommit,
   importReservation,
   importDisciplineFields,
-  myDeskImportsEnabledForSchool,
+  myDeskImportReviewEnabledForSchool,
   myDeskImportLimits,
   IMPORT_MAX_SOURCES,
   IMPORT_MAX_PAGES,
@@ -114,13 +115,18 @@ async function importAudit(
     metadata: counts,
   });
 }
+function requireNewImportProcessing() {
+  if (!externalAiProvidersEnabled())
+    throw importError("NOT_ENABLED", "AI paperwork import is paused", 404);
+}
+
 export async function withImportActor<T>(
   actor: MyDeskActor,
   fn: (database: MyDeskDatabase, current: MyDeskActor) => Promise<T>,
   lifecycle = false,
 ) {
   return withActor(actor, async (database, current) => {
-    if (!myDeskImportsEnabledForSchool(actor.schoolId))
+    if (!myDeskImportReviewEnabledForSchool(actor.schoolId))
       throw importError(
         "NOT_ENABLED",
         "Paperwork import is temporarily unavailable",
@@ -281,6 +287,7 @@ export async function createMyDeskImport(
   actor: MyDeskActor,
   input: z.infer<typeof importCreate>,
 ) {
+  requireNewImportProcessing();
   return withImportActor(actor, async (database, current) => {
     const hash = importHash(input);
     await database.execute(
@@ -346,6 +353,7 @@ export async function createMyDeskImportFromAttachment(
   actor: MyDeskActor, input: z.infer<typeof importFromAttachment>,
   options: { store?: MyDeskObjectStore; prepare?: typeof prepareImportSource } = {},
 ) {
+  requireNewImportProcessing();
   const reserved = await withImportActor(actor, async (database, current) => {
     const fingerprint = importHash({ operation: "from-attachment", ...input });
     await database.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mydesk-import:${actor.schoolId}:${actor.authorId}:${input.clientRequestId}`},0))`);
@@ -684,6 +692,7 @@ export async function reserveMyDeskImportAsset(
   id: string,
   input: z.infer<typeof importReservation>,
 ) {
+  requireNewImportProcessing();
   return withImportActor(actor, async (database) => {
     const run = await lockImport(database, actor, id);
     assertImportOpen(run, ["uploading"]);
@@ -761,6 +770,7 @@ export async function uploadMyDeskImportAsset(
     prepare?: typeof prepareImportSource;
   } = {},
 ) {
+  requireNewImportProcessing();
   const store = options.store ?? myDeskObjectStore,
     leaseId = randomUUID();
   if (bytes.length < 1 || bytes.length > IMPORT_MAX_BYTES)
@@ -1033,6 +1043,7 @@ export async function processMyDeskImport(
   id: string,
   input: Mutation,
 ) {
+  requireNewImportProcessing();
   return mutateImport(
     actor,
     id,
@@ -1579,6 +1590,7 @@ export async function rereadMyDeskImportItem(
   itemId: string,
   input: Mutation & { itemRevision: number },
 ) {
+  requireNewImportProcessing();
   return mutateImport(
     actor,
     id,

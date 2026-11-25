@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled, guardedExternalAiFetch } from "../config/externalAi.js";
 // Core chat service — manages conversations and Claude API interaction
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -30,13 +31,13 @@ function getClient(): Anthropic {
     if (!ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY is not configured");
     }
-    client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    client = new Anthropic({ apiKey: ANTHROPIC_API_KEY, fetch: guardedExternalAiFetch() });
   }
   return client;
 }
 
 export function isChatAvailable(): boolean {
-  return AI_CHAT_ENABLED && !!ANTHROPIC_API_KEY;
+  return externalAiProvidersEnabled() && AI_CHAT_ENABLED && !!ANTHROPIC_API_KEY;
 }
 
 // --- Conversation store ---
@@ -129,6 +130,7 @@ async function executeToolWithFreshTenant(
   args: Record<string, unknown>,
   context: ToolContext
 ) {
+  if (!isChatAvailable()) throw new Error("External AI processing is paused");
   return runWithTenantContext(
     { schoolId: context.schoolId },
     async () => {
@@ -190,6 +192,10 @@ export async function* sendMessage(
   context: ConversationContext,
   options: { signal?: AbortSignal } = {}
 ): AsyncGenerator<SSEEvent> {
+  if (!isChatAvailable()) {
+    yield { type: "error", content: "AI chat is unavailable." };
+    return;
+  }
   if (activeStreams >= AI_CHAT_MAX_CONCURRENT_STREAMS) {
     yield {
       type: "error",
@@ -416,6 +422,10 @@ export async function* confirmAction(
   context: ConversationContext,
   options: { signal?: AbortSignal } = {}
 ): AsyncGenerator<SSEEvent> {
+  if (!isChatAvailable()) {
+    yield { type: "error", content: "AI chat is unavailable." };
+    return;
+  }
   let conv: Conversation | null;
   try {
     conv = await aiConversationStore.load(conversationId, context) as Conversation | null;

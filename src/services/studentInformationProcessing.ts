@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled, guardedExternalAiFetch } from "../config/externalAi.js";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   extractionSchema,
@@ -81,6 +82,7 @@ export function createInformationExtractor(options: {
     );
   return async (source, stage = {}) => {
     stage.signal?.throwIfAborted();
+    if (!options.transport && !externalAiProvidersEnabled()) throw informationError(503, "EXTRACTION_PAUSED", "External AI processing is paused");
     const content: Anthropic.ContentBlockParam[] =
       source.contentType === "text/plain"
         ? [
@@ -122,6 +124,7 @@ export function createInformationExtractor(options: {
             timeout: 90_000,
             maxRetries: 0,
             logLevel: "off",
+            fetch: guardedExternalAiFetch(),
           }).messages.create(input, { signal: stage.signal ? AbortSignal.any([stage.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000) });
       if (response.stop_reason !== "end_turn") throw Error();
       const text = privateImportResponseText(response.content);

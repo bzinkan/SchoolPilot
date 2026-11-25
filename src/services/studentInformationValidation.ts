@@ -1,3 +1,4 @@
+import { externalAiProvidersEnabled } from "../config/externalAi.js";
 import { z } from "zod";
 import { readMyDeskModes } from "../config/mydeskModes.js";
 
@@ -193,7 +194,7 @@ export function studentInformationImportEnabled() {
       "CONFIGURATION",
       "Student information import configuration is unavailable",
     );
-  return value === "on" && readMyDeskModes().mode === "on";
+  return externalAiProvidersEnabled() && value === "on" && readMyDeskModes().mode === "on";
 }
 export function requireInformationImport() {
   if (!studentInformationImportEnabled())
