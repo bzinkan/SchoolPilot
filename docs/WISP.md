@@ -46,15 +46,15 @@ This program applies to all Schoolpilot employees, contractors, systems, network
 - Annual security awareness training for all personnel.
 
 ### 4.3 Vendor / Third-Party Management
-All third-party service providers handling PII are reviewed annually and must sign Data Processing Agreements. Current providers:
+Company policy requires annual review and data processing agreements for third-party service providers handling PII. The security officer keeps the dated, account-specific agreement and review evidence for each applicable service. The inventory includes paused providers relevant to historical data.
 
 | Vendor | Purpose | Data Processed |
 |--------|---------|----------------|
 | **AWS (us-east-1)** | Hosting, database, storage | All customer data (SOC 2, ISO 27001, FERPA-aligned) |
 | **SendGrid** | Transactional email | Recipient addresses and configured message content, which can include student identity, activity/safety summaries, page title/domain, or MailPilot sender/subject/snippet fields |
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
-| **Google Gemini API** | AI-assisted URL/title classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values |
-| **Anthropic Claude** | AI-assisted email/assistant workflows and separately enabled teacher-started paperwork imports | Enabled MailPilot content, authorized staff-assistant inputs, and explicitly uploaded paperwork page images (which can contain names and conduct details) are described in the public subprocessor notice; existing notebooks/rosters are not sent by the import workflow |
+| **Google Gemini API** | Browser model classification paused pending legal approval | Before the hold, certain ClassPilot page addresses and titles could be submitted. URLs and titles can contain personal information. |
+| **Anthropic Claude** | External model processing paused pending legal approval | Previously eligible data depended on the enabled feature, including MailPilot, matched chat/poll text, staff assistant inputs, and teacher-initiated document or contact imports. Review historical requests and provider-held copies separately. |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
 | **Sentry** | Application error monitoring when enabled | Allowlisted diagnostics with user, arbitrary context, tags/extras, tokens, names, emails, and full sensitive URLs removed before transmission |
 
@@ -116,7 +116,7 @@ Any employee, contractor, or external party who suspects a security incident mus
 
 ## 8. Business Continuity and Disaster Recovery
 
-- **Database backups**: AWS RDS automated daily snapshots with 7-day retention.
+- The production RDS instance reported encrypted storage and a 14-day automated-backup retention setting on November 25, 2026. Manual snapshots, exports, restored copies, object storage and external-provider retention require separate evidence.
 - **RTO (Recovery Time Objective)**: 4 hours for critical services.
 - **RPO (Recovery Point Objective)**: 24 hours (maximum data loss window).
 - **DR testing**: Annual restore-from-backup test documented.

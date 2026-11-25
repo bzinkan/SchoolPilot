@@ -149,6 +149,9 @@ export async function getSafetyReport(schoolId:string,caseId:string,query:{alert
     ?Buffer.from(JSON.stringify({schoolId,caseId,kind,at:items[limit-1]!.cursor_at,id:items[limit-1]!.id})).toString("base64url"):null;
   const [alerts,events,notifications,settings,administrators,evidence]=await Promise.all([
     rows(db,sql`SELECT a.*,to_char(a.first_seen_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at,
+      a.id IN (SELECT event.alert_id FROM student_safety_case_events event
+        WHERE event.school_id=${schoolId} AND event.case_id=${caseId} AND event.alert_id IS NOT NULL
+        AND event.kind='alert_created' AND event.metadata->'recipientCount'='0'::jsonb) AS no_recipient_at_creation,
       EXISTS(SELECT 1 FROM safety_url_exceptions e WHERE e.school_id=a.school_id AND e.fingerprint=a.url_fingerprint AND e.revoked_at IS NULL) AS suppressed
       FROM student_safety_alerts a WHERE ${alertScope} ORDER BY a.first_seen_at DESC,a.id DESC LIMIT ${limit+1}`),
     rows(db,sql`SELECT id,alert_id,actor_id,kind,note,metadata,created_at,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
@@ -165,7 +168,7 @@ export async function getSafetyReport(schoolId:string,caseId:string,query:{alert
   const safeAlerts=alerts.slice(0,limit).map(alert=>{
     const {url_ciphertext,fingerprint,url_fingerprint,cursor_at,...safe}=alert;
     const url=decryptRetainedUrl(url_ciphertext); const domain=websiteFromSafetyUrl(url);
-    return {...safe,id:String(alert.id),url,domain,websitePolicy:domain?{...websitePolicy,
+    return {...safe,id:String(alert.id),no_recipient_at_creation:alert.no_recipient_at_creation === true,url,domain,websitePolicy:domain?{...websitePolicy,
       blocked:websitePolicy.blockedDomains.some(rule=>schoolWebsiteRuleApplies(domain,rule))}:null};
   });
   // Legacy summary/metadata can carry unretained URL contents. Only expose bounded case provenance.
