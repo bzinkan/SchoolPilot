@@ -426,6 +426,36 @@ async function reviewAll(
   }
   return run;
 }
+test("a global pause holds a claimed contact import and permits manual cancellation", async () => {
+  const f = await fixture();
+  const run = await readyRun(f);
+  await processInformationImport(f.actor, run.id, {
+    requestId: randomUUID(), revision: run.revision,
+    sectionIds: run.assets.filter(asset => asset.kind === "section").map(asset => asset.id),
+    acknowledgedWarnings: true, confirmedProvider: true,
+  });
+  const claimed = await claimStudentInformationJobs({ database });
+  const claim = claimed.find(job => job.id === run.id);
+  assert.ok(claim);
+  const snapshot = async () => (await fixturePool.query(
+    "SELECT status, lease_id, attempts, revision FROM student_information_imports WHERE id=$1", [run.id],
+  )).rows[0];
+  const before = await snapshot();
+  const previous = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "off";
+  try {
+    assert.deepEqual(await claimStudentInformationJobs({ database }), []);
+    assert.deepEqual(await processStudentInformationClaim(claim), { id: run.id, status: "paused" });
+    assert.deepEqual(await snapshot(), before);
+    const current = await getInformationImport(f.actor, run.id);
+    await cancelInformationImport(f.actor, run.id, { requestId: randomUUID(), revision: current.revision });
+    assert.equal((await snapshot()).status, "cancelled");
+  } finally {
+    if (previous === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previous;
+  }
+});
+
 test("contact extraction joins the shared provider ledger when the v2 worker is enabled", async () => {
   process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
   try {
@@ -799,33 +829,4 @@ test("cancel while a source PUT is in flight retains deletion ownership until th
     now: new Date(Date.now() + 7 * 60_000),
   });
   assert.ok(before.rows.every((row) => !objects.has(row.storage_key)));
-});
-
-test("a global pause holds a claimed contact import and permits manual cancellation", async () => {
-  const f = await fixture();
-  const run = await readyRun(f);
-  await processInformationImport(f.actor, run.id, {
-    requestId: randomUUID(), revision: run.revision,
-    sectionIds: run.assets.filter(asset => asset.kind === "section").map(asset => asset.id),
-    acknowledgedWarnings: true, confirmedProvider: true,
-  });
-  const [claim] = await claimStudentInformationJobs({ database });
-  assert.ok(claim && claim.id === run.id);
-  const snapshot = async () => (await fixturePool.query(
-    "SELECT status, lease_id, attempts, revision FROM student_information_imports WHERE id=$1", [run.id],
-  )).rows[0];
-  const before = await snapshot();
-  const previous = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
-  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "off";
-  try {
-    assert.deepEqual(await claimStudentInformationJobs({ database }), []);
-    assert.deepEqual(await processStudentInformationClaim(claim), { id: run.id, status: "paused" });
-    assert.deepEqual(await snapshot(), before);
-    const current = await getInformationImport(f.actor, run.id);
-    await cancelInformationImport(f.actor, run.id, { requestId: randomUUID(), revision: current.revision });
-    assert.equal((await snapshot()).status, "cancelled");
-  } finally {
-    if (previous === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
-    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previous;
-  }
 });

@@ -568,6 +568,36 @@ async function disciplineCommit(f: Fixture, run: ImportRun) {
   const receipt = z.object({ receipt: z.object({ notes: z.array(z.unknown()), records: z.array(z.object({ itemId: z.string(), recordId: z.string() })) }) }).parse(response.data).receipt;
   return { response, input, receipt };
 }
+test("a global pause holds queued paperwork and already claimed work while allowing review and cancellation", async () => {
+  const f = await fixture();
+  let run = await createRun(f);
+  ({ run } = await uploadSource(f, run));
+  run = await start(f, run);
+  const claimed = await claimMyDeskImportJobs({ database: fixtureDb });
+  const claim = claimed.find(job => job.id === run.id);
+  assert.ok(claim);
+  const snapshot = async () => (await fixturePool.query(
+    "SELECT status, lease_id, attempts, revision FROM mydesk_imports WHERE id=$1", [run.id],
+  )).rows[0];
+  const before = await snapshot();
+  const previous = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "off";
+  try {
+    assert.deepEqual(await claimMyDeskImportJobs({ database: fixtureDb }), []);
+    assert.deepEqual(await processClaimedMyDeskImport(claim), { id: run.id, status: "paused" });
+    assert.deepEqual(await processPipelinedMyDeskImport(claim), { id: run.id, status: "paused" });
+    assert.deepEqual(await snapshot(), before);
+    assert.equal((await request(f, "/imports", "POST", { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1 })).status, 404);
+    const review = await getRun(f, run.id);
+    const cancelled = await request(f, `/imports/${run.id}`, "DELETE", { requestId: randomUUID(), revision: review.revision });
+    assert.equal(cancelled.status, 200, cancelled.text);
+    assert.equal((await snapshot()).status, "cancelled");
+  } finally {
+    if (previous === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
+    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previous;
+  }
+});
+
 test("discipline destination is immutable and personal groups cannot expand shared access", async () => {
   const f = await fixture();
   const denied = await request(f, "/imports", "POST", { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, destination: "discipline" });
@@ -2207,34 +2237,5 @@ test("capabilities publish the same configured import limits enforced by quota a
     if (originalGate === undefined)
       delete process.env.MYDESK_AI_IMPORT_MODE;
     else process.env.MYDESK_AI_IMPORT_MODE = originalGate;
-  }
-});
-
-test("a global pause holds queued paperwork and already claimed work while allowing review and cancellation", async () => {
-  const f = await fixture();
-  let run = await createRun(f);
-  ({ run } = await uploadSource(f, run));
-  run = await start(f, run);
-  const [claim] = await claimMyDeskImportJobs({ database: fixtureDb });
-  assert.ok(claim && claim.id === run.id);
-  const snapshot = async () => (await fixturePool.query(
-    "SELECT status, lease_id, attempts, revision FROM mydesk_imports WHERE id=$1", [run.id],
-  )).rows[0];
-  const before = await snapshot();
-  const previous = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
-  process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = "off";
-  try {
-    assert.deepEqual(await claimMyDeskImportJobs({ database: fixtureDb }), []);
-    assert.deepEqual(await processClaimedMyDeskImport(claim), { id: run.id, status: "paused" });
-    assert.deepEqual(await processPipelinedMyDeskImport(claim), { id: run.id, status: "paused" });
-    assert.deepEqual(await snapshot(), before);
-    assert.equal((await request(f, "/imports", "POST", { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1 })).status, 404);
-    const review = await getRun(f, run.id);
-    const cancelled = await request(f, `/imports/${run.id}`, "DELETE", { requestId: randomUUID(), revision: review.revision });
-    assert.equal(cancelled.status, 200, cancelled.text);
-    assert.equal((await snapshot()).status, "cancelled");
-  } finally {
-    if (previous === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
-    else process.env.SCHOOLPILOT_EXTERNAL_AI_MODE = previous;
   }
 });
