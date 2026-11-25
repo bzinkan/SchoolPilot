@@ -37,7 +37,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: November 10, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 25, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -227,10 +227,10 @@ export default function PrivacyPolicy() {
               <li>With your explicit consent</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              For ClassPilot browser classification, the URL and page title may be sent to Google's
-              Gemini API during authorized monitoring, including configured after-hours safety monitoring.
-              Student roster identities are not attached to that request, but URLs and titles can contain
-              personal information, search terms, or access tokens. See our{" "}
+              ClassPilot browser classification with Google's Gemini API is paused pending legal approval.
+              ClassPilot uses local rules during authorized monitoring, including configured after-hours
+              monitoring, and does not send browsing URLs or page titles to Gemini. Earlier requests could
+              include URLs and titles containing personal information, search terms, or access tokens. See our{" "}
               <a href="/ai-transparency" className="text-blue-600 underline">AI Transparency</a> page and{" "}
               <a href="#service-providers" className="text-blue-600 underline">Service Providers</a> section for the
               disclosed data flows. Schoolpilot's deletion of data does not itself delete provider-retained data.

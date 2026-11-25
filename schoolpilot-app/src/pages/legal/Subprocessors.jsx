@@ -149,8 +149,8 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (Gemini API)</td>
-                    <td className="px-4 py-3 text-slate-700">ClassPilot browser-activity classification and potential safety concerns</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification, which may contain personal information, search terms, or access tokens embedded in those fields</td>
+                    <td className="px-4 py-3 text-slate-700">Browser classification with Gemini is paused pending legal approval.</td>
+                    <td className="px-4 py-3 text-slate-700">ClassPilot does not currently send browsing URLs or page titles to Gemini. Previous requests could include URLs and titles containing personal information, search terms, or access tokens.</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
@@ -161,9 +161,8 @@ export default function Subprocessors() {
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
-              API for ClassPilot student chat/poll safety enrichment, limited MailPilot and assistant workflows,
-              and for teacher-started paperwork-import
+              Schoolpilot uses Anthropic's API for the ClassPilot chat and poll safety review described
+              above, for separately enabled MailPilot and assistant workflows, and for teacher-started paperwork-import
               workflows when My Desk is available (it is currently paused). MailPilot email safety classification may
               process student Gmail message text only when a school has separately enabled MailPilot.
               The optional AI assistant is not available in the current app interface and its backend is

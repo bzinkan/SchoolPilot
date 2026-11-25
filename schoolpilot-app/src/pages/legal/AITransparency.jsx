@@ -28,14 +28,14 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: November 9, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: November 25, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI-Powered Content Classification</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">How ClassPilot Reviews Browsing</h2>
             <p className="text-slate-700 leading-relaxed">
-              Schoolpilot uses <strong>Google's Gemini API</strong> to help classify browser activity
-              and identify potential safety concerns in ClassPilot. When a school separately enables
+              Browser classification with Google's Gemini API is paused pending legal approval. ClassPilot
+              does not send browsing URLs or page titles to Gemini. When a school separately enables
               MailPilot, Schoolpilot uses Anthropic's Claude API for email safety classification.
               ClassPilot can also use Anthropic for safety review of student chat and text poll responses.
               Classification supports school staff review; it does not establish whether a student
@@ -46,10 +46,9 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              During authorized Chromebook monitoring, Schoolpilot may send the active page's URL and
-              page title to Google's Gemini API. This can also occur when a school's configured
-              after-hours safety monitoring is active. Reviewed website and search rules handle some
-              observations without a model request. Browser activity categories are:
+              During school-authorized monitoring, ClassPilot applies local website and search rules.
+              These rules also apply to configured after-hours safety monitoring. An unfamiliar page can
+              remain unclassified and appear as Unknown. The activity categories are:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
               <li><strong>Educational</strong> — Content related to learning, research, or school work</li>
@@ -63,14 +62,13 @@ export default function AITransparency() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">What Data Is Sent</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Previous Browser Classification Requests</h2>
             <p className="text-slate-700 leading-relaxed">
-              The browsing inputs in a ClassPilot website-classification request are the
-              <strong> URL and page title</strong>, alongside classification instructions. Schoolpilot
-              does not attach student roster names, student IDs, device IDs, screenshots, page bodies,
-              or full browsing history to that request. However, URLs and titles can themselves contain
-              names, email addresses, search terms, or access tokens. Those embedded values may reach
-              the provider; the inputs are not guaranteed to be anonymous or free of personal information.
+              Before the pause, ClassPilot could send the active URL and page title to Gemini with
+              classification instructions. Those requests did not include separate roster identifiers,
+              screenshots, page bodies, or full browsing histories. URLs and titles can themselves contain
+              names, email addresses, search terms, or access tokens. Provider terms and account settings
+              govern retention of data previously sent.
             </p>
           </section>
 
@@ -153,8 +151,7 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Providers</h2>
             <p className="text-slate-700 leading-relaxed">
-              ClassPilot website classification uses <strong>Google Gemini</strong>. Provider terms are
-              described in the{" "}
+              For the terms applicable to previous browser-classification requests, see Google's{" "}
               <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Gemini API Terms
               </a>. Schoolpilot also uses Anthropic's API. Anthropic's{" "}
