@@ -1,6 +1,8 @@
 import { before,after,test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import express from "express";
 import { setTimeout as delay } from "node:timers/promises";
 
 process.env.SCHEDULER_ENABLED="true";
@@ -224,4 +226,72 @@ test('case and approval cursors preserve PostgreSQL microseconds without skippin
   assert.deepEqual(rules.items.map(row=>row.id),expected.slice(0,100));assert.ok(rules.nextCursor);
   const remaining=await inSchool(schoolA,()=>safety.listSafetyUrlExceptions(schoolA,rules.nextCursor!));
   assert.equal(remaining.items[0]?.id,expected[100]);
+});
+
+test("the case report distinguishes no initial recipients, legacy evidence, and a later loss of recipient eligibility", async () => {
+  await postponeExistingPendingMail();
+  const setMembership = (status: string) => pool.query(
+    "UPDATE school_memberships SET status=$3 WHERE school_id=$1 AND user_id=$2", [schoolB, otherAdmin, status],
+  );
+  const create = (path: string) => inSchool(schoolB, () => safety.recordSafetyAlert(
+    observation(studentOther, `https://coverage.example.test/${path}`, "violence", schoolB),
+  ));
+  try {
+    await setMembership("inactive");
+    const none = await create("no-recipients");
+    assert.ok(none.alertId && none.caseId);
+    await setMembership("active");
+    const revoked = await create("revoked");
+    assert.ok(revoked.alertId && revoked.caseId);
+    const legacy = await create("legacy");
+    assert.ok(legacy.alertId);
+    await pool.query(
+      "UPDATE student_safety_case_events SET metadata=metadata-'recipientCount' WHERE school_id=$1 AND alert_id=$2 AND kind='alert_created'",
+      [schoolB, legacy.alertId],
+    );
+    await setMembership("inactive");
+    let sends = 0;
+    await dispatchSafetyNotifications({ providerConfigured: true, send: async () => { sends++; return { status: "sent" }; } });
+    assert.equal(sends, 0);
+    await setMembership("active");
+    const report = await inSchool(schoolB, () => safety.getSafetyReport(schoolB, revoked.caseId!));
+    const { alerts, notifications } = report;
+    assert.ok(alerts && notifications);
+    const alertRecord = (id: string) => alerts.find(alert => alert.id === id);
+    assert.equal(alertRecord(none.alertId)?.no_recipient_at_creation, true);
+    assert.equal(alertRecord(revoked.alertId)?.no_recipient_at_creation, false);
+    assert.equal(alertRecord(legacy.alertId)?.no_recipient_at_creation, false, "missing provenance cannot establish zero recipients");
+    assert.equal(notifications.some(row => row.alert_id === none.alertId), false);
+    const initial = notifications.find(row => row.alert_id === revoked.alertId && row.kind === "initial");
+    assert.equal(initial?.status, "cancelled");
+    assert.equal(initial?.error_code, "RECIPIENT_NO_LONGER_ELIGIBLE");
+    await assert.rejects(inSchool(schoolA, () => safety.getSafetyReport(schoolA, revoked.caseId!)), { status: 404 });
+
+    const { default: router } = await import("../dist/routes/classpilot/safetyCenter.js");
+    const { signUserToken } = await import("../dist/services/jwt.js");
+    const server = createServer(express().use("/api/classpilot/safety-center", router));
+    try {
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      assert.ok(address && typeof address === "object");
+      const request = (user: string, tenant: string) => fetch(
+        `http://127.0.0.1:${address.port}/api/classpilot/safety-center/cases/${revoked.caseId}`,
+        { headers: { "x-school-id": tenant, authorization: `Bearer ${signUserToken({ userId: user, email: `${user}@example.test`, authVersion: 1 })}` } },
+      );
+      const authorized = await request(otherAdmin, schoolB);
+      assert.equal(authorized.status, 200);
+      assert.match(await authorized.text(), /RECIPIENT_NO_LONGER_ELIGIBLE/);
+      const teacherDenied = await request(teacher, schoolA);
+      assert.equal(teacherDenied.status, 403);
+      assert.doesNotMatch(await teacherDenied.text(), /RECIPIENT_NO_LONGER_ELIGIBLE/);
+      const otherSchool = await request(admin, schoolA);
+      assert.equal(otherSchool.status, 404);
+      assert.doesNotMatch(await otherSchool.text(), /RECIPIENT_NO_LONGER_ELIGIBLE/);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  } finally {
+    await setMembership("active");
+  }
 });

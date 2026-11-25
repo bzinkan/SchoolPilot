@@ -19,8 +19,13 @@ try {
   page.on('pageerror',error=>errors.push(error.message));
   const report={case:{id:'case-a',student_id:'student-a',first_name:'Sample',last_name:'Student',status:'open',revision:1,opened_at:'2026-09-05T14:00:00Z',assigned_to:null},timezone:'America/New_York',administrators:[{id:'admin-a',first_name:'School',last_name:'Admin',email:'admin@example.test'}],events:[],notifications:[{alert_id:'alert-a',recipient:'admin@example.test',kind:'initial',status:'sent',completed_at:'2026-09-05T14:01:00Z'}],alerts:[
     {id:'alert-a',revision:0,concern:'self-harm',severity:'high',classification_source:'search',matched_term:'sample rule',reason:'A reviewed search rule matched this observation.',confidence:null,first_seen_at:'2026-09-05T14:00:00Z',last_seen_at:'2026-09-05T14:04:00Z',observation_count:12,url:'https://example.test/search?q=sample&x=1#one',domain:'example.test',websitePolicy:{policyRevision:7,blocked:false,enforcement:{pending:2}}},
-    {id:'alert-b',revision:0,concern:'bullying',severity:'low',source_type:'mailpilot',confidence:null,first_seen_at:'2026-09-05T14:03:00Z',last_seen_at:'2026-09-05T14:03:00Z',observation_count:1,url:null,domain:null},
+    {id:'alert-b',no_recipient_at_creation:true,revision:0,concern:'bullying',severity:'low',source_type:'mailpilot',confidence:null,first_seen_at:'2026-09-05T14:03:00Z',last_seen_at:'2026-09-05T14:03:00Z',observation_count:1,url:null,domain:null},
   ]};
+  report.notifications.push(
+    { alert_id: 'alert-a', recipient: 'former-admin@example.test', kind: 'initial', status: 'cancelled', error_code: 'RECIPIENT_NO_LONGER_ELIGIBLE' },
+    { alert_id: 'alert-a', recipient: 'unconfirmed@example.test', kind: 'initial', status: 'unknown' },
+    { alert_id: 'alert-a', recipient: 'retry@example.test', kind: 'initial', status: 'pending', attempts: 1 },
+  );
   await page.route('https://fonts.**/**',route=>route.fulfill({body:''}));
   await page.route('**/api/**',async route=>{
     const request=route.request();const url=new URL(request.url());let body={};let status=200;
@@ -29,7 +34,7 @@ try {
       else if(url.pathname.endsWith('/cases/case-a')){
         const olderAlerts=url.searchParams.has('alertCursor'),olderEvents=url.searchParams.has('eventCursor');
         body=denied?{error:'Forbidden'}:{...report,
-          alerts:olderAlerts?[{...report.alerts[1],id:'alert-older',reason:'An older retained concern.'}]:report.alerts,
+          alerts:olderAlerts?[{...report.alerts[1],id:'alert-older',no_recipient_at_creation:false,reason:'An older retained concern.'}]:report.alerts,
           alertPage:{nextCursor:olderAlerts?null:'alert-page-two'},
           events:[{id:olderEvents?'event-older':'event-newer',kind:'case_note',actor_id:'admin-a',created_at:'2026-09-05T14:04:00Z',note:olderEvents?'Older administrator note.':'Latest administrator note.'}],
           eventPage:{nextCursor:olderEvents?null:'event-page-two'},
@@ -57,6 +62,54 @@ try {
   });
   await page.goto(`${base}/safety-center-regression.html?case=case-a`,{waitUntil:'networkidle'});
   await page.getByRole('heading',{name:'Sample Student',exact:true}).waitFor();
+  const reportMain = page.getByRole('main').first();
+  const returnTo = page.getByRole('button', { name: 'Block website: example.test', exact: true });
+  const approve = page.getByRole('button', { name: 'Stop alerts for this URL', exact: true }).first();
+  for (const width of [320, 375, 640, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const clipped = await reportMain.evaluate(main => {
+      const controls = [...main.querySelectorAll('button, select, input, textarea, summary')];
+      return controls.filter(el => {
+        const box = el.getBoundingClientRect();
+        return box.width && (box.right > window.innerWidth + 1 || box.left < -1);
+      }).map(el => el.textContent.trim() || el.getAttribute('aria-label') || el.tagName);
+    });
+    assert.deepEqual(clipped, [], `all report controls fit at ${width} CSS pixels`);
+  }
+  await page.setViewportSize({ width: 320, height: 900 });
+  for (const trigger of [returnTo, approve]) {
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('alertdialog');
+    await dialog.waitFor();
+    assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(el => document.activeElement === el, await trigger.elementHandle(), { timeout: 2000 });
+  }
+  const longDomain = 'a'.repeat(55) + '.' + 'b'.repeat(55) + '.example.test';
+  report.alerts[0].domain = longDomain;
+  report.administrators[0].email = 'administration-notifications-for-synthetic-school@example.test';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  const longButton = page.getByRole('button', { name: 'Block website: ' + longDomain, exact: true });
+  await longButton.waitFor();
+  assert.ok(await longButton.evaluate(el => el.getBoundingClientRect().right <= 321));
+  assert.ok(await reportMain.evaluate(main => main.scrollWidth <= 321));
+  await longButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('alertdialog').waitFor();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).press('Enter');
+  await page.waitForFunction(el => document.activeElement === el, await longButton.elementHandle(), { timeout: 2000 });
+  report.alerts[0].domain = 'example.test';
+  report.administrators[0].email = 'admin@example.test';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await returnTo.waitFor();
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.getByText('An intended administrator was no longer eligible', { exact: false }).waitFor();
+  await page.getByText('An initial email failed', { exact: false }).waitFor();
+  await page.getByText('An initial email is waiting to retry.', { exact: false }).waitFor();
+  await page.getByText('No administrator email was queued when this alert was created.', { exact: false }).waitFor();
+
   assert.equal(await page.getByRole('button',{name:'Block website',exact:true}).isDisabled(),true,'Mail alert cannot invent a browser URL');
   assert.equal(await page.getByRole('button',{name:'Stop alerts for this URL',exact:true}).nth(1).isDisabled(),true);
   await page.getByRole('button',{name:'Acknowledge current alerts',exact:true}).click();
@@ -85,6 +138,7 @@ try {
   assert.equal(actions.at(-1).body.policyRevision,7);
   await page.getByRole('button',{name:'Older alerts',exact:true}).click();
   await page.getByText('An older retained concern.',{exact:true}).waitFor();
+  await page.getByText('No initial email delivery record is available', { exact: false }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('alertCursor'),'alert-page-two');
   await page.getByRole('button',{name:'Older actions',exact:true}).click();
   await page.getByText('Older administrator note.',{exact:true}).waitFor();
@@ -117,5 +171,5 @@ try {
   denied=true;await page.getByRole('button',{name:'Refresh',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'unavailable'}).waitFor();
   assert.deepEqual(errors,[]);
-  console.log('Safety Center browser: acknowledgment stops follow-up without assessment, review, exact approval/revoke, website block, independent alert/action pagination, unavailable URL, denied report, and Monitoring Hours readonly canonical timezone/save payload passed.');
+  console.log('Safety Center browser: 320/375/640/1280px control reflow, long domain and administrator addresses, Escape/Cancel focus, recipient-coverage outcomes, acknowledgment stops follow-up without assessment, review, exact approval/revoke, website block, independent alert/action pagination, unavailable URL, denied report, and Monitoring Hours readonly canonical timezone/save payload passed.');
 } finally {await browser?.close();server.kill();}

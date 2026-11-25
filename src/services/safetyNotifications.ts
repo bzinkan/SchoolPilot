@@ -107,7 +107,8 @@ export async function dispatchSafetyNotifications(options:{send?:(message:EmailS
       ORDER BY o.due_at,o.id`)).rows as Row[]:[];
       const eligibleIds=new Set(eligible.map(e=>e.id));
       const cancelledIds=entries.filter(e=>!eligibleIds.has(e.id)).map(e=>e.id);
-      if(cancelledIds.length) await tx.execute(sql`UPDATE safety_notification_outbox SET status='cancelled',completed_at=now()
+      if(cancelledIds.length) await tx.execute(sql`UPDATE safety_notification_outbox SET status='cancelled',completed_at=now(),
+        error_code=CASE WHEN ${entitlement.entitled && members.length === 0} THEN 'RECIPIENT_NO_LONGER_ELIGIBLE' ELSE error_code END
         WHERE id=ANY(${sql.param(cancelledIds)}::text[]) AND school_id=${schoolId} AND status='sending' AND submission_started_at IS NULL`);
       if(eligible.length) await tx.execute(sql`UPDATE safety_notification_outbox SET submission_started_at=now(),claimed_at=now(),attempts=attempts+1
         WHERE school_id=${schoolId} AND id=ANY(${sql.param(eligible.map(e=>e.id))}::text[])`);

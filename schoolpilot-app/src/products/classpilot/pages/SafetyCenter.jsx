@@ -1,5 +1,5 @@
 import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, ShieldAlert, RefreshCw, FileArchive } from "lucide-react";
@@ -23,6 +23,35 @@ function time(value, timezone) {
 const name = row => [row?.first_name, row?.last_name].filter(Boolean).join(" ") || "Student";
 const selectClass = "rounded-md border bg-background p-2 text-sm";
 
+function AlertDelivery({ alert, notifications, timezone }) {
+  const initial = notifications.filter(item => item.kind === "initial");
+  return <>
+    {alert.no_recipient_at_creation && (
+      <p className="text-sm font-medium">No administrator email was queued when this alert was created. Confirm who will respond.</p>
+    )}
+    {initial.some(item => item.error_code === "RECIPIENT_NO_LONGER_ELIGIBLE") && (
+      <p className="text-sm font-medium">An intended administrator was no longer eligible when the initial email was due. Confirm who will respond.</p>
+    )}
+    {initial.some(item => item.status === "failed" || item.status === "unknown") && (
+      <p className="text-sm font-medium">An initial email failed or its submission could not be confirmed. Check the delivery details.</p>
+    )}
+    {initial.some(item => item.status === "pending" && item.attempts > 0) && (
+      <p className="text-sm font-medium">An initial email is waiting to retry. Check the delivery details.</p>
+    )}
+    {!alert.no_recipient_at_creation && initial.length === 0 && (
+      <p className="text-sm">No initial email delivery record is available for this alert. Confirm who will respond.</p>
+    )}
+    {notifications.length > 0 && <details className="text-xs">
+      <summary className="cursor-pointer">Email delivery and follow-up</summary>
+      <ul className="mt-2 space-y-1">
+        {notifications.map(item => <li key={`${item.recipient}:${item.kind}`}>
+          {item.recipient} · {item.kind} · {item.status === "sent" ? "Accepted by email provider" : item.status} · {time(item.completed_at || item.due_at, timezone)}{item.error_code ? ` · ${item.error_code}` : ""}
+        </li>)}
+      </ul>
+    </details>}
+  </>;
+}
+
 export default function SafetyCenter() {
   const adminShell = useAdminShell();
   const { navigate } = useAdminNavigation();
@@ -39,6 +68,21 @@ export default function SafetyCenter() {
   const [notes, setNotes] = useState({});
   const [caseNote, setCaseNote] = useState("");
   const [confirmation, setConfirmation] = useState(null);
+  const confirmationTrigger = useRef(null);
+  const reportHeading = useRef(null);
+  const openConfirmation = (event, alert, action) => {
+    confirmationTrigger.current = event.currentTarget;
+    setConfirmation({ alert, action });
+  };
+  const restoreConfirmationFocus = event => {
+    const trigger = confirmationTrigger.current;
+    const target = trigger?.isConnected && !trigger.disabled ? trigger : reportHeading.current;
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+    confirmationTrigger.current = null;
+  };
   const [packet, setPacket] = useState(null);
   const caseId = params.get("case");
   const alertCursor = params.get("alertCursor");
@@ -93,22 +137,22 @@ export default function SafetyCenter() {
 {adminShell && (<div className="flex justify-end"><Button variant="outline" onClick={refresh}><RefreshCw className="mr-2 size-4" />Refresh</Button></div>)}
     <main className="mx-auto max-w-7xl space-y-5 px-6 py-6">
       <div className="flex flex-wrap gap-2"><Button variant={view === "reports" ? "default" : "outline"} onClick={() => setView("reports")}>Student reports</Button><Button variant={view === "approved" ? "default" : "outline"} onClick={() => setView("approved")}>Approved URLs</Button></div>
-      <p className="text-sm text-muted-foreground">All new distinct safety alerts notify every active school administrator. Repeated observations are grouped. An unacknowledged alert receives one follow-up after fifteen minutes.</p>
+      <p className="text-sm text-muted-foreground">New alerts queue email for eligible school administrators. Email can be delayed or fail. Follow your school’s response procedure for urgent concerns. Repeated observations are grouped. An unacknowledged alert can generate one follow-up after fifteen minutes.</p>
       {view === "approved" ? <Card><CardHeader><CardTitle>Approved URLs</CardTitle></CardHeader><CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">These exact pages do not generate new safety alerts for students in this school. Other pages, queries and fragments remain eligible. Website blocks still apply.</p>
         {approved.isPending ? <p>Loading approved URLs…</p> : approved.isError ? <p role="alert">Approved URLs could not be loaded.</p> : !approved.data?.items?.length ? <p>No approved URLs.</p> : approved.data.items.map(rule => <div key={rule.id} className="flex flex-wrap items-start justify-between gap-3 rounded-md border p-3"><div className="min-w-0 flex-1"><p className="break-all text-sm">{rule.url || "URL unavailable"}</p><p className="mt-1 text-xs text-muted-foreground">Approved {time(rule.created_at, zone)}</p></div><Button variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate({ method: "DELETE", path: `/approved-urls/${rule.id}` })}>Revoke approval</Button></div>)}
         <div className="flex gap-2">{approvedCursor && <Button variant="outline" onClick={() => setApprovedCursor(null)}>First page</Button>}{approved.data?.nextCursor && <Button variant="outline" onClick={() => setApprovedCursor(approved.data.nextCursor)}>Next page</Button>}</div>
-      </CardContent></Card> : <div className="grid gap-5 lg:grid-cols-[330px_1fr]">
+      </CardContent></Card> : <div className="grid grid-cols-1 gap-5 lg:grid-cols-[330px_minmax(0,1fr)]">
         <Card><CardHeader><CardTitle className="flex gap-2 text-base"><ShieldAlert className="h-5 w-5" />Student reports</CardTitle></CardHeader><CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-2"><label className="text-xs">Case status<select className={`${selectClass} mt-1 w-full`} value={status} onChange={e => changeFilter(setStatus, e.target.value)}><option value="">All cases</option><option value="open">Open</option><option value="closed">Closed</option></select></label><label className="text-xs">Review status<select className={`${selectClass} mt-1 w-full`} value={review} onChange={e => changeFilter(setReview, e.target.value)}><option value="">All alerts</option><option value="unreviewed">Unreviewed</option><option value="reviewed">Reviewed</option></select></label></div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><label className="text-xs">Case status<select className={`${selectClass} mt-1 w-full`} value={status} onChange={e => changeFilter(setStatus, e.target.value)}><option value="">All cases</option><option value="open">Open</option><option value="closed">Closed</option></select></label><label className="text-xs">Review status<select className={`${selectClass} mt-1 w-full`} value={review} onChange={e => changeFilter(setReview, e.target.value)}><option value="">All alerts</option><option value="unreviewed">Unreviewed</option><option value="reviewed">Reviewed</option></select></label></div>
           <label className="block text-xs">Student name<Input className="mt-1" value={studentId} onChange={e => changeFilter(setStudentId, e.target.value)} placeholder="Find a student" /></label>
-          <div className="grid grid-cols-2 gap-2"><label className="text-xs">From<Input type="date" value={from} onChange={e => changeFilter(setFrom, e.target.value)} /></label><label className="text-xs">Through<Input type="date" value={to} onChange={e => changeFilter(setTo, e.target.value)} /></label></div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><label className="text-xs">From<Input type="date" value={from} onChange={e => changeFilter(setFrom, e.target.value)} /></label><label className="text-xs">Through<Input type="date" value={to} onChange={e => changeFilter(setTo, e.target.value)} /></label></div>
           {cases.isPending ? <p>Loading reports…</p> : cases.isError ? <p role="alert">Reports could not be loaded. Try Refresh.</p> : !cases.data?.items?.length ? <p className="text-sm text-muted-foreground">No reports match these filters.</p> : cases.data.items.map(item => <button type="button" key={item.id} className={`w-full rounded-md border p-3 text-left ${caseId === item.id ? "border-primary bg-muted" : "hover:bg-muted"}`} onClick={() => { setParams({ case: item.id }); setCaseNote(""); setPacket(null); }}><p className="font-medium">{name(item)}</p><p className="mt-1 text-xs text-muted-foreground">{item.status} · {item.unreviewed_count} unreviewed</p><p className="text-xs text-muted-foreground">{time(item.opened_at, zone)}</p></button>)}
           <div className="flex gap-2">{cursor && <Button variant="outline" size="sm" onClick={() => setCursor(null)}>First page</Button>}{cases.data?.nextCursor && <Button variant="outline" size="sm" onClick={() => setCursor(cases.data.nextCursor)}>Next page</Button>}</div>
         </CardContent></Card>
-        <div className="space-y-4">{!caseId ? <Card><CardContent className="py-8 text-muted-foreground">Choose a student report.</CardContent></Card> : report.isPending ? <p>Loading student report…</p> : report.isError ? <p role="alert">The report is unavailable or you do not have access.</p> : data?.case && <>
-          <Card><CardHeader><CardTitle role="heading" aria-level={2}>{name(data.case)}</CardTitle><p className="text-sm text-muted-foreground">{data.case.status} · Times shown in {zone}</p></CardHeader><CardContent className="space-y-3">
-            <label className="block text-sm">Assigned administrator<select className={`${selectClass} ml-2`} value={data.case.assigned_to || ""} disabled={mutation.isPending} onChange={e => caseAction("assign", e.target.value)}><option value="">Unassigned</option>{data.administrators.map(admin => <option key={admin.id} value={admin.id}>{name(admin)} ({admin.email})</option>)}</select></label>
+        <div className="min-w-0 space-y-4 [overflow-wrap:anywhere]">{!caseId ? <Card><CardContent className="py-8 text-muted-foreground">Choose a student report.</CardContent></Card> : report.isPending ? <p>Loading student report…</p> : report.isError ? <p role="alert">The report is unavailable or you do not have access.</p> : data?.case && <>
+          <Card><CardHeader><CardTitle ref={reportHeading} tabIndex={-1} role="heading" aria-level={2}>{name(data.case)}</CardTitle><p className="text-sm text-muted-foreground">{data.case.status} · Times shown in {zone}</p></CardHeader><CardContent className="space-y-3">
+            <label className="flex flex-wrap items-center gap-2 text-sm">Assigned administrator<select className={`${selectClass} min-w-0 max-w-full`} value={data.case.assigned_to || ""} disabled={mutation.isPending} onChange={e => caseAction("assign", e.target.value)}><option value="">Unassigned</option>{data.administrators.map(admin => <option key={admin.id} value={admin.id}>{name(admin)} ({admin.email})</option>)}</select></label>
             <Textarea aria-label="Case note or resolution" value={caseNote} onChange={e => setCaseNote(e.target.value)} maxLength={2000} placeholder="Case note (required to close the case)" />
             <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={mutation.isPending || data.case.status === "closed"} onClick={() => caseAction("acknowledge")}>Acknowledge current alerts</Button><Button variant="outline" disabled={mutation.isPending || !caseNote.trim()} onClick={() => caseAction("note")}>Save note</Button><Button variant="outline" disabled={mutation.isPending || !caseNote.trim() || data.case.status === "closed"} onClick={() => caseAction("close")}>Close case</Button><Button variant="outline" disabled={packetMutation.isPending} onClick={() => packetMutation.mutate()}><FileArchive className="mr-2 h-4 w-4" />Export evidence</Button>{packet?.packetId && <Button asChild><a href={`/api/classpilot/evidence-packets/${packet.packetId}/download`}>Download packet</a></Button>}</div>
             {data.case.resolution_note && <p className="text-sm">Resolution: {data.case.resolution_note}</p>}
@@ -123,13 +167,13 @@ export default function SafetyCenter() {
             <p className="break-all rounded-md bg-muted p-3 text-sm">{alert.url || "No trustworthy retained browser URL is available. URL-specific actions are unavailable."}</p>
             {alert.domain && <p className="text-xs text-muted-foreground">Website: {alert.domain} · {alert.websitePolicy?.blocked ? "Block saved" : "Not blocked"} · Enforcement: {Object.entries(alert.websitePolicy?.enforcement || {}).map(([state, count]) => `${count} ${state}`).join(", ") || "No device confirmation available"}</p>}
             {alert.review_note && <p className="text-sm">Review: {alert.review_note}</p>}<Textarea aria-label={`Review note for ${alert.concern}`} rows={2} maxLength={2000} placeholder="Administrator review note (optional)" value={notes[alert.id] || ""} onChange={e => setNotes(previous => ({ ...previous, [alert.id]: e.target.value }))} />
-            <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => alertAction(alert, "review")}>Mark reviewed</Button><Button size="sm" variant="outline" disabled={mutation.isPending || !alert.url || alert.suppressed} onClick={() => setConfirmation({ alert, action: "suppress" })}>Stop alerts for this URL</Button><Button size="sm" variant="destructive" disabled={mutation.isPending || !alert.domain} onClick={() => setConfirmation({ alert, action: "block" })}>Block website{alert.domain ? `: ${alert.domain}` : ""}</Button></div>
-            <details className="text-xs"><summary className="cursor-pointer">Email delivery and follow-up</summary><ul className="mt-2 space-y-1">{data.notifications.filter(item => item.alert_id === alert.id).map((item, index) => <li key={index}>{item.recipient} · {item.kind} · {item.status} · {time(item.completed_at || item.due_at, zone)}{item.error_code ? ` · ${item.error_code}` : ""}</li>)}</ul></details>
+            <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => alertAction(alert, "review")}>Mark reviewed</Button><Button size="sm" variant="outline" disabled={mutation.isPending || !alert.url || alert.suppressed} onClick={event => openConfirmation(event, alert, "suppress")}>Stop alerts for this URL</Button><Button size="sm" variant="destructive" className="h-auto min-h-8 max-w-full whitespace-normal py-1.5" disabled={mutation.isPending || !alert.domain} onClick={event => openConfirmation(event, alert, "block")}>Block website{alert.domain ? `: ${alert.domain}` : ""}</Button></div>
+            <AlertDelivery alert={alert} notifications={data.notifications.filter(item => item.alert_id === alert.id)} timezone={zone} />
           </CardContent></Card>)}
           <Card><CardHeader><CardTitle className="text-base">Administrator action history</CardTitle></CardHeader><CardContent className="space-y-2">{data.events.map(event => <div key={event.id} className="border-b pb-2 text-sm"><p>{event.kind.replaceAll("_", " ")} · {time(event.created_at, zone)}</p>{event.note && <p className="text-muted-foreground">{event.note}</p>}<p className="text-xs text-muted-foreground">{data.administrators.find(admin => admin.id === event.actor_id)?.email || (event.actor_id ? "Former administrator" : "System")}</p></div>)}<div className="flex flex-wrap gap-2">{eventCursor && <Button size="sm" variant="outline" onClick={() => changeReportPage("eventCursor", null)}>Newest actions</Button>}{data.eventPage?.nextCursor && <Button size="sm" variant="outline" onClick={() => changeReportPage("eventCursor", data.eventPage.nextCursor)}>Older actions</Button>}</div></CardContent></Card>
         </>}</div>
       </div>}
     </main>
-    <AlertDialog open={!!confirmation} onOpenChange={open => { if (!open) setConfirmation(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirmation?.action === "block" ? "Block this website for the school?" : "Stop safety alerts for this exact URL?"}</AlertDialogTitle><AlertDialogDescription className="break-all">{confirmation?.action === "block" ? `${confirmation.alert.domain} will be added to the school website blocklist. Connected supported devices apply the policy; offline devices remain pending.` : `${confirmation?.alert.url || ""} — This approval applies across students in this school. Other URLs remain eligible. You can revoke it in Approved URLs.`}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction disabled={mutation.isPending} onClick={event => { event.preventDefault(); if (confirmation) alertAction(confirmation.alert, confirmation.action); }}>{confirmation?.action === "block" ? "Block website" : "Approve exact URL"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={!!confirmation} onOpenChange={open => { if (!open) setConfirmation(null); }}><AlertDialogContent onCloseAutoFocus={restoreConfirmationFocus}><AlertDialogHeader><AlertDialogTitle>{confirmation?.action === "block" ? "Block this website for the school?" : "Stop safety alerts for this exact URL?"}</AlertDialogTitle><AlertDialogDescription className="break-all">{confirmation?.action === "block" ? `${confirmation.alert.domain} will be added to the school website blocklist. Connected supported devices apply the policy; offline devices remain pending.` : `${confirmation?.alert.url || ""} — This approval applies across students in this school. Other URLs remain eligible. You can revoke it in Approved URLs.`}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction disabled={mutation.isPending} onClick={event => { event.preventDefault(); if (confirmation) alertAction(confirmation.alert, confirmation.action); }}>{confirmation?.action === "block" ? "Block website" : "Approve exact URL"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>;
 }
