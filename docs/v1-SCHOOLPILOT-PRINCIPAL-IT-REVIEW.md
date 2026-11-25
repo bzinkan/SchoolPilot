@@ -99,7 +99,7 @@ ClassPilot uses built-in domain and search rules during authorized monitoring. T
 
 Qualifying safety concerns enter Safety Center. Email is queued for eligible active school administrators. A school with no eligible recipients can have a recorded alert and no queued email. Delivery can be delayed or fail. Staff acknowledgment is a separate action. The school designates a primary responder and backup, checks the roster when staff change, and uses its own emergency procedures when urgent help is needed.
 
-External AI processing is paused pending legal approval. Google Gemini and Anthropic receive no new model requests from SchoolPilot. Local Class Chat and poll safety rules continue where enabled. See the [AI Transparency notice](https://school-pilot.net/ai-transparency).
+ClassPilot reviews browser activity, chat and text polls using local rules. Unfamiliar pages can remain unclassified.
 
 ### 2.6 Schedule & Auto-Sessions
 
@@ -185,7 +185,7 @@ A planned admin tool that will connect (read-only) to the school's Google Worksp
 
 ### 3.7 Email Monitoring Add-On (MailPilot)
 
-MailPilot’s external safety scanning is paused. New school Gmail messages receive no automated scan or model alert during the pause. Existing findings remain available to authorized staff. Review any gap in coverage with the school before resuming a separately authorized service.
+MailPilot does not analyze new school Gmail messages. Authorized staff can review existing findings.
 
 ---
 
@@ -322,7 +322,7 @@ SchoolPilot is building and evidencing the control families a SOC 2 Type II audi
 - Production `.env` files are gitignored; secrets live in the ECS task definition
 
 **Vendor management:**
-- Public subprocessors list at school-pilot.net/subprocessors (AWS, SendGrid, Stripe, Anthropic, Google)
+- [Service Providers](https://school-pilot.net/privacy#service-providers) identifies current providers, school-authorized integrations and previous classification providers.
 - Each subprocessor is selected for compliance posture (SOC 2 Type II or equivalent)
 
 ### 6.5 Google OAuth & Workspace Integration
@@ -352,7 +352,7 @@ ClassPilot integrates with Google Workspace using standard OAuth 2.0 with **read
 - Admins can also revoke access from their Google account at `myaccount.google.com/permissions`
 - Refresh-token rotation follows Google's standard schedule
 
-**Google sign-in and Workspace permissions.** Confirm the client, requested OAuth scopes and delegated administrator permissions in the school’s current Google Admin Console. Approving an OAuth scope grants only that service access. Separate agreements and school authorization govern any model use. SchoolPilot’s external model processing is paused.
+**Google sign-in and Workspace permissions.** Confirm the client, requested OAuth scopes and delegated administrator permissions in the school’s current Google Admin Console. Approving an OAuth scope grants access only to that service.
 
 ### 6.6 Privacy Posture (Plain English)
 
@@ -368,7 +368,6 @@ These are linked from `school-pilot.net`:
 - Terms of Service
 - Subprocessors list
 - Security overview
-- AI Transparency notice
 - Data Processing Agreement (on request)
 - WISP — Written Information Security Program (on request)
 - HECVAT Lite (on request)

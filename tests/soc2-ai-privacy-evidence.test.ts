@@ -36,7 +36,6 @@ function tempRoot() {
   write(root, "tests/ai-chat-tools.test.ts", "AI chat tool privacy and authorization");
   write(root, "tests/ai-classification.test.ts", "AI classification tests");
   write(root, "tests/soc2-ai-privacy-evidence.test.ts", "SOC 2 AI privacy evidence tests");
-  write(root, "schoolpilot-app/src/pages/legal/AITransparency.jsx", "Google Gemini API URL and page title classification Anthropic Claude email classification");
   write(root, "schoolpilot-app/src/pages/legal/Subprocessors.jsx", "Google Gemini API URL content classification Anthropic PBC optional AI assistant");
   write(root, "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx", "No student data used to train third-party AI/ML models.");
   write(root, "docs/HECVAT-LITE.md", "AI data not used for training.");

@@ -112,8 +112,7 @@ export default function EmailMonitoringSetup() {
       </div>)}
 {adminShell && (<Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring")}><ArrowLeft className="mr-2 size-4" />Back to Email monitoring</Button>)}
       <p className="text-sm text-muted-foreground">
-        Gmail safety scanning is paused pending legal approval. Setting up a mailbox watch does not
-        start message analysis while the pause is in effect.
+        New Gmail messages are not scanned. This setup manages school-authorized mailbox watches.
       </p>
       {!configured && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
@@ -171,7 +170,7 @@ export default function EmailMonitoringSetup() {
                 <CardDescription>Review the scope of school-authorized mailbox access.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <p>Before the pause, MailPilot could scan authorized student mailboxes for concerns including the following.</p>
+                <p>Existing MailPilot alerts may identify the following concerns.</p>
                 <ul className="list-disc pl-6 space-y-1">
                   <li><strong>Self-harm</strong> — suicidal ideation, self-injury, hopelessness</li>
                   <li><strong>Violence</strong> — threats of violence, weapons, graphic content</li>

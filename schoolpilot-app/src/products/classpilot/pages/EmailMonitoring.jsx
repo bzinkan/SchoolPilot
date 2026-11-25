@@ -111,12 +111,12 @@ export default function EmailMonitoring() {
               </div>
               <div>
                 <CardTitle>Email Monitoring</CardTitle>
-                <CardDescription>Gmail safety scanning is paused pending legal approval.</CardDescription>
+                <CardDescription>New Gmail messages are not scanned.</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p>Email Monitoring is not yet enabled for your school. Workspace setup can connect Gmail mailboxes, but new messages will not be analyzed during the pause.</p>
+            <p>Email Monitoring is not yet enabled for your school. Workspace setup manages authorized Gmail connections.</p>
             <div className="flex gap-2">
               <Button onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}>
                 Start setup
@@ -169,8 +169,7 @@ export default function EmailMonitoring() {
       </div>)}
 {adminShell && (<div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{statsData?.mailboxesMonitored ?? 0} Gmail mailbox connections</p><Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}><SettingsIcon className="mr-2 size-4" />Setup</Button></div>)}
       <p className="text-sm text-muted-foreground">
-        Gmail safety scanning is paused pending legal approval. No new messages are analyzed.
-        Existing alerts remain available for review.
+        New Gmail messages are not scanned. Administrators can review existing alerts.
       </p>
       {/* Stat cards */}
       {stats && (

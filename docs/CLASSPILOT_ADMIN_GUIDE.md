@@ -308,11 +308,11 @@ Review concerns, acknowledge notifications, and distinguish exact-tab safety act
 
 **Who can use this:** Administrator; entitlement is granted by a super administrator
 
-Gmail safety scanning is paused pending legal approval. Schools can manage their authorized mailbox connections and review existing alerts.
+Manage school-authorized Gmail connections and review existing alerts. MailPilot does not scan new messages.
 
 1. **Confirm entitlement and server setup.** An active ClassPilot school needs the Email Monitoring add-on. If service-account configuration is missing, contact SchoolPilot support before setup.
 2. **Authorize the displayed Gmail access.** Use the Email Monitoring setup wizard’s client ID and read-only Gmail scope in Google Admin domain-wide delegation. This is separate from the read-only Directory/Classroom Workspace Roster Connector.
-3. **Verify, then enable.** Verify access to an authorized school mailbox before starting Gmail watches. Review the watches-started and failed counts, mailbox errors and roster resync results. Active watches do not start safety scanning during the pause.
+3. **Verify, then enable.** Verify access to an authorized school mailbox before starting Gmail watches. Review the watches-started and failed counts, mailbox errors and roster resync results. Active watches receive mailbox-change notifications.
 4. **Review concerns and disable deliberately.** Existing email detections remain in Safety Center under the applicable retention rules and retain their notification and review trail. They do not supply a browser URL to approve or block. Disabling monitoring locally and revoking Google delegation are separate actions.
 
 [Open Email Monitoring](/classpilot/admin/email-monitoring)

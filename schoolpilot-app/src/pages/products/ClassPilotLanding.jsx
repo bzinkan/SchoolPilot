@@ -1021,20 +1021,6 @@ export default function ClassPilotLanding() {
 
             <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
-                Does ClassPilot send data to external AI providers?
-              </h3>
-              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
-                External AI processing with Google Gemini and Anthropic Claude is paused pending legal approval.
-                ClassPilot does not send browsing URLs or page titles to Gemini. Local rules still check
-                websites, searches, chat and text poll responses. Unfamiliar browsing activity can
-                remain unclassified. Normal teacher classroom controls remain available. See our{' '}
-                <a href="/ai-transparency" style={{ color: '#b45309' }}>AI Transparency</a> and{' '}
-                <a href="/subprocessors" style={{ color: '#b45309' }}>Subprocessors</a> pages for full details.
-              </p>
-            </div>
-
-            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
                 How is student data governed?
               </h3>
               <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
