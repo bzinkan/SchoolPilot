@@ -31,7 +31,7 @@ function redisConfigured(): boolean {
   return Boolean(process.env.REDIS_URL);
 }
 
-function hmacSecret(): string {
+export function hmacSecret(): string {
   const secret =
     process.env.AUTH_CODE_HMAC_SECRET ||
     process.env.SESSION_SECRET ||
