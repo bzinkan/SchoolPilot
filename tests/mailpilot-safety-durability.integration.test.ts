@@ -133,7 +133,7 @@ test("same Gmail identifier stays independent across tenants and disabled or mis
   await pool.query("UPDATE product_licenses SET status='active' WHERE school_id=$1 AND product='CLASSPILOT'",[schoolB]);
 });
 
-test("paused eligible Gmail push defers before reading content and preserves watch, scan counts and alerts", async () => {
+test("paused authenticated Gmail pushes defer before mailbox lookup and preserve watch, scan counts and alerts", async () => {
   const mode = process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
   const token = process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN;
   delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
@@ -159,14 +159,13 @@ test("paused eligible Gmail push defers before reading content and preserves wat
       headers: { "content-type": "application/json", authorization: "Bearer synthetic-pause-token" },
       body: JSON.stringify({ message: { data: Buffer.from(JSON.stringify({ emailAddress: email(studentA), historyId })).toString("base64") } }),
     });
-    assert.equal((await push("100")).status, 204, "already covered notifications can be acknowledged");
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await push("110");
+    for (const historyId of ["100", "110", "110"]) {
+      const response = await push(historyId);
       assert.equal(response.status, 503);
       assert.deepEqual(await response.json(), { error: "Email classification is paused", code: "MAILPILOT_EXTERNAL_AI_PAUSED" });
     }
     const stored = (await pool.query("SELECT history_id, status, last_error FROM mailpilot_watches WHERE id=$1", [watch.id])).rows[0];
-    assert.deepEqual(stored, { history_id: "100", status: "active", last_error: "MAILPILOT_EXTERNAL_AI_PAUSED" });
+    assert.deepEqual(stored, { history_id: "100", status: "active", last_error: null });
     assert.deepEqual(await counts(), before);
   } finally {
     if (mode === undefined) delete process.env.SCHOOLPILOT_EXTERNAL_AI_MODE;
