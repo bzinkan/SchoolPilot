@@ -76,7 +76,7 @@ The Chrome extension is released from the separate ClassPilot repository. Curren
 
 ## Classification and review contracts
 
-Gemini Flash-Lite classifies novel student browsing URLs/titles on each heartbeat. Uses `GEMINI_API_KEY`; Anthropic handles MailPilot email review, the optional staff assistant, and separately enabled teacher-started My Desk paperwork imports under `docs/MYDESK_AI_IMPORT.md`.
+Browser classification defaults to local rules. Novel URLs and titles remain unclassified unless `CLASSPILOT_BROWSER_GEMINI_MODE=on` is explicitly authorized for the deployment and `GEMINI_API_KEY` is configured. The same gate covers Chrome, Windows and after-hours browser classification. Changing the mode requires replacing the running tasks. Historical alerts retain their recorded provenance. Anthropic handles MailPilot email review, the optional staff assistant, and separately enabled teacher-started My Desk paperwork imports under `docs/MYDESK_AI_IMPORT.md`.
 
 - **Service**: `src/services/aiClassification.ts` — `classifyUrl()` with 30-min domain caching for reviewed rules and separately hashed exact URL/title caching and in-flight deduplication for model results. Preserve queries, fragments, title, school-domain context, model and ruleset version; never reuse a model safety decision across a hostname.
 - **Categories**: `educational`, `non-educational`, `unknown`

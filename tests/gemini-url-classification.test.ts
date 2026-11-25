@@ -9,6 +9,7 @@ function modelResponse(safetyAlert = "none", category = "educational"): Response
 }
 
 describe("Gemini Flash-Lite URL classification", () => {
+  const priorBrowserMode = process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
   const priorKey = process.env.GEMINI_API_KEY;
   const priorFetch = globalThis.fetch;
   let classifyUrl: ClassifyUrl;
@@ -18,6 +19,7 @@ describe("Gemini Flash-Lite URL classification", () => {
   let respond: () => Response | Promise<Response>;
 
   before(async () => {
+    process.env.CLASSPILOT_BROWSER_GEMINI_MODE = "on";
     process.env.GEMINI_API_KEY = "test-gemini-key";
     globalThis.fetch = async (input, init) => {
       requestUrl = String(input);
@@ -35,6 +37,8 @@ describe("Gemini Flash-Lite URL classification", () => {
 
   after(() => {
     globalThis.fetch = priorFetch;
+    if (priorBrowserMode === undefined) delete process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
+    else process.env.CLASSPILOT_BROWSER_GEMINI_MODE = priorBrowserMode;
     if (priorKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = priorKey;
   });

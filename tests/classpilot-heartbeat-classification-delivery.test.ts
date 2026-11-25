@@ -268,10 +268,12 @@ test("null-classification completion also waits for foreground metadata and drai
 });
 
 test("privacy-unavailable classification completes heartbeat history and realtime without safety effects", async () => {
+  const priorBrowserMode = process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
   const priorKey = process.env.GEMINI_API_KEY;
   const priorAnthropicKey = process.env.ANTHROPIC_API_KEY;
   const priorFetch = globalThis.fetch;
   let providerCalls = 0;
+  process.env.CLASSPILOT_BROWSER_GEMINI_MODE = "on";
   process.env.GEMINI_API_KEY = "synthetic-delivery-provider-key";
   delete process.env.ANTHROPIC_API_KEY;
   globalThis.fetch = async () => { providerCalls += 1; throw new Error("Privacy denial must precede fetch"); };
@@ -297,6 +299,8 @@ test("privacy-unavailable classification completes heartbeat history and realtim
     for (const step of ["safety-timeline", "safety-local-alert", "safety-remote-alert"]) assert.equal(f.order.includes(step), false, step);
   } finally {
     globalThis.fetch = priorFetch;
+    if (priorBrowserMode === undefined) delete process.env.CLASSPILOT_BROWSER_GEMINI_MODE;
+    else process.env.CLASSPILOT_BROWSER_GEMINI_MODE = priorBrowserMode;
     if (priorKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = priorKey;
     if (priorAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;

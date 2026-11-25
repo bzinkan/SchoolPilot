@@ -15,7 +15,10 @@ import {
 } from "./runtimePerformanceMetrics.js";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Browser model fallback is opt-in independently of the shared deployment's key binding.
+const GEMINI_API_KEY = process.env.CLASSPILOT_BROWSER_GEMINI_MODE === "on"
+  ? process.env.GEMINI_API_KEY
+  : undefined;
 const GEMINI_URL_CLASSIFICATION_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_GENERATE_CONTENT_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_URL_CLASSIFICATION_MODEL}:generateContent`;
 
@@ -603,7 +606,7 @@ function classifyUnsafeSearch(url: string, domain: string): AiClassification | n
 function resolveImmediateUrlClassification(url: string, options: AiClassificationOptions) {
   const domain = extractDomain(url);
   const schoolDomain = normalizeDomainValue(options.schoolDomain);
-  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${options.useAiFallback === false ? "off" : "on"}`;
+  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${GEMINI_API_KEY && options.useAiFallback !== false ? "on" : "off"}`;
   let cacheHit = false;
   const classify = (): AiClassification | null | undefined => {
     // Unsafe searches are query-specific and must run before the domain cache,
