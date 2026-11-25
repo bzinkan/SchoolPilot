@@ -76,12 +76,12 @@ export default function PrivacyPolicy() {
               <li>Active-tab and open-tab activity, including tab URLs, titles, favicons, and timestamps during authorized monitoring</li>
               <li>Screen capture thumbnails for an authorized classroom, supervision, or administrator observation context, and separately authorized safety evidence captures, which may contain visible website content</li>
               <li>Student and teacher communications sent through ClassPilot</li>
-              <li>Existing alerts from separately authorized MailPilot scanning may contain Gmail sender, recipients, subject and a bounded excerpt. New email safety scanning is paused</li>
+              <li>Existing alerts from separately authorized MailPilot scanning may contain Gmail sender, recipients, subject and a bounded excerpt. MailPilot does not scan new messages</li>
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
               <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
-              <li>Private notes, filing preferences, seating layouts, and attachments that authors saved in My Desk before it was paused. My Desk, including its AI paperwork and contact imports, is paused and not available in ClassPilot until further notice, so no new My Desk content is collected through ClassPilot while it is paused</li>
-              <li>School discipline records explicitly submitted by a teacher before My Desk was paused, with selected evidence copies and correction/withdrawal history; these are separate from private notebook content</li>
+              <li>Previously saved My Desk private notes, filing preferences, seating layouts and attachments. My Desk is unavailable in ClassPilot and does not collect new content</li>
+              <li>School discipline records previously submitted by a teacher, including selected evidence copies and correction or withdrawal history. These are separate from private notebook content</li>
             </ul>
 
             <h3 className="text-xl font-medium text-slate-800 mb-3">2.3 Technical Data</h3>
@@ -96,6 +96,9 @@ export default function PrivacyPolicy() {
               Schoolpilot immediately converts it to school-scoped opaque identifiers. The raw directory identifier
               is not stored, logged, returned to the browser, or placed in a URL. The resulting continuity identifier
               does not replace student sign-in credentials or the kiosk PIN or signed-token authorization requirement.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              <a href="https://developer.chrome.com/docs/webstore/program-policies/limited-use" className="text-blue-600 underline">ClassPilot will follow the Chrome Web Store User Data Policy, including its Limited Use requirements, when handling extension data.</a>
             </p>
           </section>
 
@@ -116,7 +119,7 @@ export default function PrivacyPolicy() {
               <li>During normal monitored browsing, request closure of a specific current tab for qualifying harmful-search or unsafe-page detections after authorization and target checks; after-hours safety-only collection remains reporting-only, and a sent closure request is not proof of client-confirmed closure</li>
               <li>Check student-authored ClassPilot chat and text poll responses with local safety rules and flag matches for school staff review</li>
               <li>Make previously generated MailPilot alerts available for authorized administrator review, subject to the retention rules below</li>
-              <li>My Desk (private notes, school discipline records, student contact profiles, seating charts, and AI-assisted paperwork and contact imports) is paused and not available in ClassPilot until further notice. No paperwork or contact documents can be submitted for AI extraction through ClassPilot while it is paused. My Desk content saved before the pause is retained and deleted as described in Section 4</li>
+              <li>Retain previously saved My Desk content as described in Section 4. New paperwork and contact imports are unavailable in ClassPilot</li>
               <li>Maintain and improve our service</li>
               <li>Communicate important updates about the service</li>
               <li>Ensure compliance with school policies and legal requirements</li>
@@ -137,10 +140,10 @@ export default function PrivacyPolicy() {
               <li><strong>Hall pass records:</strong> Policy requires retention for the current school year for analytics</li>
               <li><strong>PassPilot pass rules (when a school turns them on):</strong> PassPilot rule denial records are kept for 400 days and then deleted automatically. Destination capacity, pass limits and encounter restrictions remain until an administrator deletes them or the school's data is destroyed under the executed agreement. A denial never records another student's identity</li>
               <li><strong>Dismissal records:</strong> Policy requires retention for the current school year for safety audits</li>
-              <li><strong>MailPilot alerts and scan logs (when enabled):</strong> Reviewed email alerts and scan logs are purged after the deployment's retention period, default 90 days. Unreviewed email alerts remain for administrator resolution. Minimal safety-case provenance can remain under separate case-retention rules after email content is removed</li>
+              <li><strong>Existing MailPilot alerts and scan logs:</strong> Reviewed email alerts and scan logs are purged after the deployment's retention period, default 90 days. Unreviewed email alerts remain for administrator resolution. Minimal safety-case provenance can remain under separate case-retention rules after email content is removed</li>
               <li><strong>My Desk private notes and approved attachments:</strong> Retained until author deletion or the agreed account-destruction process</li>
               <li><strong>Submitted school discipline records:</strong> Independent school-owned snapshots, selected evidence copies and version history remain under the executed agreement and verified school destruction process. Private-source deletion or staff departure does not erase them; correction and withdrawal preserve earlier versions. Abandoned evidence preparations expire after 24 hours and enter durable cleanup</li>
-              <li><strong>My Desk AI paperwork imports (not available while My Desk is paused):</strong> Incomplete uploads expire after 24 hours, and review expires seven days after upload completion. Completion, cancellation, or expiry scrubs drafts and queues temporary source files for deletion. Minimal operational retry and cleanup records remain. Local deletion does not establish deletion of provider-retained data; reviewed provider/account terms apply</li>
+              <li><strong>Previously started My Desk paperwork imports:</strong> Incomplete uploads expire after 24 hours, and review expires seven days after upload completion. Completion, cancellation, or expiry scrubs drafts and queues temporary source files for deletion. Minimal operational retry and cleanup records remain. Local deletion does not establish deletion of provider-retained data; reviewed provider/account terms apply</li>
               <li><strong>Reviewed contact profiles:</strong> Approved values and immutable version history remain school-owned under the executed agreement and verified destruction process. Contact import sources, previews and unapproved suggestions are temporary: unfinished uploads expire after 24 hours, review expires after seven days, and completion/cancellation/expiry queues durable cleanup. These sources are not retained as permanent student attachments</li>
               <li><strong>Account, audit, and teacher-downloaded files:</strong> Follow separate documented or contractual policies and are not governed by the ClassPilot heartbeat-retention setting</li>
             </ul>
@@ -227,25 +230,16 @@ export default function PrivacyPolicy() {
               <li>With your explicit consent</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              External AI processing with Google Gemini and Anthropic Claude is paused pending legal approval.
-              ClassPilot uses local rules during authorized monitoring, including configured after-hours
-              monitoring, and does not send browsing URLs or page titles to Gemini. Earlier requests could
-              include URLs and titles containing personal information, search terms, or access tokens. See our{" "}
-              <a href="/ai-transparency" className="text-blue-600 underline">AI Transparency</a> page and{" "}
-              <a href="#service-providers" className="text-blue-600 underline">Service Providers</a> section for the
-              disclosed data flows. Schoolpilot's deletion of data does not itself delete provider-retained data.
+              ClassPilot applies local rules to browsing activity, student chat and text polls during
+              authorized monitoring. Unfamiliar browsing activity can remain unclassified. MailPilot
+              does not scan new Gmail messages. School-authorized Google sign-in, Workspace
+              directory and Classroom integrations continue.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
-              MailPilot does not analyze new Gmail messages during the pause. Previously, separately
-              authorized scans could send Anthropic message direction, sender, recipients, subject
-              and up to 4,000 characters of text. The optional staff assistant and My Desk paperwork
-              and contact imports are unavailable. School-authorized Google sign-in and Workspace
-              integrations continue.
-            </p>
-            <p className="text-slate-700 leading-relaxed mt-4">
-              ClassPilot continues local safety checks on student chat and text poll responses. Before
-              the pause, up to 500 characters of text that matched a local rule could be sent to
-              Anthropic for severity assessment. That text could contain personal information.
+              The <a href="#service-providers" className="text-blue-600 underline">Service Providers</a> section
+              describes previous classification requests, including the data they could contain.
+              Provider agreements and account settings govern data previously sent. Deleting data
+              within Schoolpilot does not itself delete a provider's retained copy.
             </p>
             <Subprocessors />
           </section>

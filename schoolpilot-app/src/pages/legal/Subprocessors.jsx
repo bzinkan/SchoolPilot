@@ -63,7 +63,7 @@ export default function Subprocessors() {
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (OAuth, Workspace API, Classroom API)</td>
                     <td className="px-4 py-3 text-slate-700">Sign-in, school-authorized Workspace directory and Classroom imports; existing Gmail connections for separately authorized MailPilot</td>
-                    <td className="px-4 py-3 text-slate-700">Account identifiers, email, names, roster/class membership and selected Classroom resources; existing Gmail connections may receive mailbox-change notifications while new email safety scans are paused</td>
+                    <td className="px-4 py-3 text-slate-700">Account identifiers, email, names, roster/class membership and selected Classroom resources; authorized Gmail connections may receive mailbox-change notifications. MailPilot does not analyze new messages</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Microsoft Corporation</strong> (Entra ID; only when enabled)</td>
@@ -136,7 +136,7 @@ export default function Subprocessors() {
           </section>
 
           <section>
-            <h4 className="text-lg font-semibold text-slate-900 mb-4">AI / Content Classification</h4>
+            <h4 className="text-lg font-semibold text-slate-900 mb-4">Previous Classification Providers</h4>
             <div className="overflow-x-auto">
               <table className="w-full border border-slate-200 rounded-lg">
                 <thead className="bg-slate-100">
@@ -149,20 +149,20 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (Gemini API)</td>
-                    <td className="px-4 py-3 text-slate-700">Browser classification with Gemini is paused pending legal approval.</td>
-                    <td className="px-4 py-3 text-slate-700">ClassPilot does not currently send browsing URLs or page titles to Gemini. Previous requests could include URLs and titles containing personal information, search terms, or access tokens.</td>
+                    <td className="px-4 py-3 text-slate-700">Previous browser activity classification</td>
+                    <td className="px-4 py-3 text-slate-700">Requests could include the active URL and page title. These fields could contain personal information, search terms or access tokens. Requests did not include separate roster identifiers, screenshots, page bodies or full browsing histories.</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">Anthropic processing is paused pending legal approval. Affected features are chat and text-poll safety enrichment, MailPilot scanning, the optional staff assistant, and My Desk paperwork and contact imports.</td>
-                    <td className="px-4 py-3 text-slate-700">Before the pause, a chat or poll request could include up to 500 characters of matching text. A school-authorized MailPilot request could include direction, sender, recipients, subject and up to 4,000 characters of email text. The optional assistant is designed to use staff prompts, conversation history and authorized tool results. My Desk imports are designed to use staff-selected images or extracted text that may contain student names, conduct details, adult relationships, phone numbers or email addresses.</td>
+                    <td className="px-4 py-3 text-slate-700">Previous chat or text-poll safety review and separately authorized MailPilot email classification</td>
+                    <td className="px-4 py-3 text-slate-700">A chat or text-poll request could include up to 500 characters of student-authored text that matched a local safety rule. A separately authorized MailPilot request could include direction, sender, recipients, subject and up to 4,000 characters of Gmail text.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              No new requests go to Anthropic during the pause. ClassPilot's local chat and text-poll safety
-              rules continue, and schools may review existing alerts. Anthropic's{" "}
+              Historical data handling depends on the applicable provider agreements and account settings.
+              See Google's <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">Gemini API Terms</a> and Anthropic's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
                 Commercial Terms
               </a>{" "}
@@ -170,14 +170,14 @@ export default function Subprocessors() {
               <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
                 Privacy Center
               </a>{" "}
-              explain Anthropic's training-use limits for customer API inputs and outputs. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
+              for their published terms on customer API data.
             </p>
             <p className="text-slate-600 text-sm mt-2">
-              My Desk AI imports are paused with My Desk and cannot be started in ClassPilot until
-              further notice. When available, they require separate operational activation and an
-              explicit author upload or saved-attachment selection.
-              Provider account retention and access terms are reviewed before activation. Deleting
-              Schoolpilot's temporary source files does not itself delete provider-retained data.
+              The optional staff assistant and My Desk imports are unavailable. If previously used,
+              staff-assistant requests could have included staff prompts, conversation history and
+              authorized tool results. School-selected import materials could have contained student or
+              adult names, conduct details and contact information. Local deletion of temporary files
+              does not establish deletion by a provider.
             </p>
           </section>
 

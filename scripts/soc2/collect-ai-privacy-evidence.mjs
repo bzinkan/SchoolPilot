@@ -27,14 +27,12 @@ const SOURCE_HASH_FILES = [
   { key: "systemPrompt", label: "AI system prompt source hash only", path: "src/prompts/systemPrompt.ts" },
   { key: "aiChatToolTests", label: "AI chat privacy and authorization tests", path: "tests/ai-chat-tools.test.ts" },
   { key: "aiClassificationTests", label: "AI classification tests", path: "tests/ai-classification.test.ts" },
-  { key: "aiTransparencyPage", label: "AI Transparency page", path: "schoolpilot-app/src/pages/legal/AITransparency.jsx" },
   { key: "subprocessorsPage", label: "Subprocessors page", path: "schoolpilot-app/src/pages/legal/Subprocessors.jsx" },
   { key: "privacyPolicyPage", label: "Privacy Policy page", path: "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx" },
   { key: "claimRegister", label: "SOC 2 claim register", path: "docs/soc2/claim-register.md" },
 ];
 
 const PUBLIC_CLAIM_FILES = [
-  "schoolpilot-app/src/pages/legal/AITransparency.jsx",
   "schoolpilot-app/src/pages/legal/Subprocessors.jsx",
   "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx",
   "docs/HECVAT-LITE.md",
@@ -259,7 +257,7 @@ function buildPublicClaimFindings(rootDir) {
   const publicOpenAiClaims = PUBLIC_CLAIM_FILES
     .filter((relativePath) => readText(rootDir, relativePath).includes("OpenAI"));
   const mailpilotClassifierPresent = readText(rootDir, "src/services/aiClassification.ts").includes("classifyEmail");
-  const aiTransparencyMentionsMailPilot = /MailPilot|email|Gmail/i.test(readText(rootDir, "schoolpilot-app/src/pages/legal/AITransparency.jsx"));
+  const privacyPolicyMentionsMailPilot = /MailPilot|email|Gmail/i.test(readText(rootDir, "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx"));
   const subprocessorMentionsMailPilot = /MailPilot|email|Gmail/i.test(readText(rootDir, "schoolpilot-app/src/pages/legal/Subprocessors.jsx"));
   const claimRegisterNeedsRemediation = /CLAIM-003[\s\S]*Needs remediation/.test(readText(rootDir, "docs/soc2/claim-register.md"));
   const findings = [];
@@ -273,14 +271,14 @@ function buildPublicClaimFindings(rootDir) {
     });
   }
 
-  if (mailpilotClassifierPresent && (!aiTransparencyMentionsMailPilot || !subprocessorMentionsMailPilot)) {
+  if (mailpilotClassifierPresent && (!privacyPolicyMentionsMailPilot || !subprocessorMentionsMailPilot)) {
     findings.push({
       findingId: "AI-CLAIM-MAILPILOT-DISCLOSURE-REVIEW",
       status: REVIEW_REQUIRED,
-      summary: "MailPilot email safety classification exists in implementation and should be reviewed against AI Transparency/Subprocessors disclosures before SOC2-002 closure.",
+      summary: "MailPilot email safety classification exists in implementation and should be reviewed against Privacy Policy and Service Providers disclosures before SOC2-002 closure.",
       evidencePointers: [
         "src/services/aiClassification.ts",
-        "schoolpilot-app/src/pages/legal/AITransparency.jsx",
+        "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx",
         "schoolpilot-app/src/pages/legal/Subprocessors.jsx",
       ],
     });

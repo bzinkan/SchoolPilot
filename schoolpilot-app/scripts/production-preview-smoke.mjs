@@ -158,8 +158,24 @@ const cases = [
       await page
         .getByRole('heading', { name: /School management tools that work together/ })
         .waitFor({ state: 'visible' });
+      const footer = page.locator('footer');
+      await footer.getByRole('link', { name: 'Privacy', exact: true }).waitFor();
+      assert.equal(await footer.locator('a[href="/ai-transparency"]').count(), 0);
     },
     surface: 'public homepage for signed-out visitors',
+  },
+  {
+    requestedPath: '/ai-transparency',
+    expectedPath: '/privacy',
+    expectRedirect: true,
+    persona: personas.anonymous,
+    assertion: async page => {
+      await page.getByRole('heading', { name: 'Privacy Policy', level: 1 }).waitFor();
+      const commitment = page.getByRole('link', { name: 'ClassPilot will follow the Chrome Web Store User Data Policy, including its Limited Use requirements, when handling extension data.', exact: true });
+      assert.equal(await commitment.getAttribute('href'), 'https://developer.chrome.com/docs/webstore/program-policies/limited-use');
+      assert.equal(await page.getByText('AI Transparency', { exact: true }).count(), 0);
+    },
+    surface: 'legacy privacy disclosure bookmark',
   },
   {
     requestedPath: '/',

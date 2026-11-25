@@ -13,7 +13,7 @@ export const SECURITY_POSTURE = [
     items: [
       { status: 'in_place', label: 'FERPA', detail: 'Acts as a "school official" under the school\'s direct control' },
       { status: 'in_place', label: 'COPPA', detail: 'Relies on the school consent exception; children never sign up directly' },
-      { status: 'in_place', label: 'Student data use policy', detail: 'Schoolpilot prohibits sale, advertising and AI-model training with student data; provider-account limitations are described in AI Transparency' },
+      { status: 'in_place', label: 'Student data use policy', detail: 'Schoolpilot prohibits sale, advertising and AI-model training with student data; the Privacy Policy describes historical provider processing and retention limits' },
       { status: 'in_place', label: 'Data privacy agreements', detail: 'Signs the NDPA and state variants (CA, TX, IL, NY) on request' },
       { status: 'in_place', label: 'Parent rights', detail: 'Access requests answered within 45 days; corrections within 15 business days' },
       { status: 'in_place', label: 'End of contract', detail: 'School-directed data return and destruction follow the executed agreement and a verified operator process' },
